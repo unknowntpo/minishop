@@ -12,6 +12,7 @@ Supporting design notes:
 - [Storage schema](design/storage.md)
 - [Schema conventions](design/schema-conventions.md)
 - [State transitions](design/transitions.md)
+- [Frontend UI/UX pattern](design/frontend-uiux.md)
 - [Day 1 benchmark](design/benchmark.md)
 
 ## Goals / Non-Goals

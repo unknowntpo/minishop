@@ -41,6 +41,8 @@
 - [ ] 5.1 Implement Client Polling UX endpoints for checkout intent status and SKU inventory
 - [ ] 5.2 Implement product page SSR using projection-backed initial product and inventory data
 - [ ] 5.3 Implement Use polling before SSE or WebSocket in client state flow
+- [ ] 5.4 Implement product page UI using the frontend UI/UX pattern for direct Buy, status polling, and projection-backed inventory display
+- [ ] 5.5 Implement non-production benchmark operator strip for SKU counters, projection event ids, and projection lag hints
 
 ## 6. Deferred Kafka Path
 

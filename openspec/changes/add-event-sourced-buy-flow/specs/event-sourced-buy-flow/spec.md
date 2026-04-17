@@ -336,6 +336,16 @@ The system SHALL use SSR for initial product and inventory data and polling for 
 - **WHEN** the user has an accepted checkout intent
 - **THEN** the client SHALL poll the checkout intent status endpoint until the intent reaches a terminal or payment state
 
+#### Scenario: Accepted checkout intent is not a reservation
+
+- **WHEN** `POST /api/checkout-intents` returns an accepted checkout intent
+- **THEN** the client SHALL show that the request was received without presenting inventory as reserved until the checkout intent projection reaches a reserved or payment state
+
+#### Scenario: Inventory display updates
+
+- **WHEN** inventory projection data changes after asynchronous processing
+- **THEN** the client SHALL update visible SKU inventory from the inventory polling endpoint rather than decrementing inventory optimistically in the Buy request path
+
 ### Requirement: Deferred Kafka Integration
 
 The system SHALL start without Kafka in the initial implementation. When Kafka becomes part of the formal processing path, the system SHALL use an outbox relay to publish committed PostgreSQL events.

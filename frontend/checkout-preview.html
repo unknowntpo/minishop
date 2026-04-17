@@ -1,0 +1,794 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Minishop Checkout Preview</title>
+    <style>
+      :root {
+        --ms-canvas: #f8f7f4;
+        --ms-surface: #ffffff;
+        --ms-subtle: #f1f0ec;
+        --ms-ink: #1f1b17;
+        --ms-muted: #6b625a;
+        --ms-line: #ded9d0;
+        --ms-line-soft: #ebe7df;
+        --ms-accent: #b75f4b;
+        --ms-blue: #2f6fd6;
+        --ms-blue-soft: #e7eefb;
+        --ms-green: #2f8f5b;
+        --ms-green-soft: #e8f4ed;
+        --ms-warn: #c77a25;
+        --ms-warn-soft: #fff1df;
+        --ms-danger: #c73d3d;
+        --ms-danger-soft: #fae6e6;
+        --ms-radius: 8px;
+        --ms-shadow: 0 18px 52px rgba(31, 27, 23, 0.12);
+        --ms-font:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-width: 320px;
+        background: var(--ms-canvas);
+        color: var(--ms-ink);
+        font-family: var(--ms-font);
+        line-height: 1.55;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      button {
+        font: inherit;
+      }
+
+      .topbar {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        padding: 14px clamp(18px, 4vw, 56px);
+        border-bottom: 1px solid var(--ms-line-soft);
+        background: rgba(248, 247, 244, 0.92);
+        backdrop-filter: blur(12px);
+      }
+
+      .brand,
+      .nav,
+      .language-toggle,
+      .button-row,
+      .status-line,
+      .metric-grid {
+        display: flex;
+        align-items: center;
+      }
+
+      .brand {
+        gap: 10px;
+        min-width: 0;
+      }
+
+      .brand-mark {
+        width: 30px;
+        height: 30px;
+        border: 1px solid var(--ms-line);
+        border-radius: var(--ms-radius);
+        background:
+          linear-gradient(135deg, rgba(183, 95, 75, 0.9), rgba(47, 111, 214, 0.86)),
+          var(--ms-surface);
+      }
+
+      .nav {
+        justify-content: flex-end;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      .nav a,
+      .language-toggle button,
+      .button {
+        min-height: 40px;
+        border: 1px solid var(--ms-line);
+        border-radius: var(--ms-radius);
+        background: var(--ms-surface);
+        color: var(--ms-ink);
+        padding: 8px 11px;
+        text-decoration: none;
+        font-size: 14px;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      .language-toggle {
+        gap: 6px;
+      }
+
+      .language-toggle button[aria-pressed="true"],
+      .button.primary {
+        border-color: var(--ms-ink);
+        background: var(--ms-ink);
+        color: #ffffff;
+      }
+
+      .button.full {
+        width: 100%;
+        justify-content: center;
+      }
+
+      .shell {
+        max-width: 1160px;
+        margin: 0 auto;
+        padding: 34px clamp(18px, 4vw, 32px) 56px;
+      }
+
+      .preview-layout {
+        display: grid;
+        grid-template-columns: minmax(0, 1.08fr) minmax(330px, 0.92fr);
+        gap: 28px;
+        align-items: start;
+      }
+
+      .media-panel,
+      .purchase-panel,
+      .status-panel,
+      .operator-panel,
+      .notification-panel {
+        border: 1px solid var(--ms-line);
+        border-radius: var(--ms-radius);
+        background: var(--ms-surface);
+      }
+
+      .media-panel {
+        overflow: hidden;
+        box-shadow: var(--ms-shadow);
+      }
+
+      .media-panel img {
+        display: block;
+        width: 100%;
+        height: min(62vh, 620px);
+        min-height: 430px;
+        object-fit: cover;
+      }
+
+      .purchase-stack {
+        display: grid;
+        gap: 14px;
+      }
+
+      .purchase-panel,
+      .status-panel,
+      .operator-panel,
+      .notification-panel {
+        padding: 20px;
+      }
+
+      .eyebrow {
+        margin: 0 0 12px;
+        color: var(--ms-accent);
+        font-size: 13px;
+        font-weight: 800;
+        letter-spacing: 0;
+        text-transform: uppercase;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin-top: 0;
+      }
+
+      h1 {
+        margin-bottom: 10px;
+        font-size: clamp(36px, 5vw, 58px);
+        line-height: 1;
+        letter-spacing: 0;
+      }
+
+      h2 {
+        margin-bottom: 8px;
+        font-size: 24px;
+        line-height: 1.15;
+        letter-spacing: 0;
+      }
+
+      .muted {
+        color: var(--ms-muted);
+      }
+
+      .price {
+        margin: 18px 0;
+        font-size: 34px;
+        font-weight: 850;
+      }
+
+      .inventory {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 12px;
+        margin: 0 0 16px;
+        padding: 12px;
+        border: 1px solid var(--ms-line-soft);
+        border-radius: var(--ms-radius);
+        background: var(--ms-subtle);
+      }
+
+      .button-row {
+        gap: 10px;
+        margin-top: 12px;
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        min-height: 28px;
+        border: 1px solid var(--ms-line);
+        border-radius: var(--ms-radius);
+        padding: 4px 9px;
+        background: var(--ms-surface);
+        color: var(--ms-muted);
+        font-size: 13px;
+        font-weight: 800;
+        white-space: nowrap;
+      }
+
+      .badge.neutral {
+        background: var(--ms-subtle);
+      }
+
+      .badge.info {
+        border-color: var(--ms-blue-soft);
+        background: var(--ms-blue-soft);
+        color: var(--ms-blue);
+      }
+
+      .badge.success {
+        border-color: var(--ms-green-soft);
+        background: var(--ms-green-soft);
+        color: var(--ms-green);
+      }
+
+      .badge.warning {
+        border-color: var(--ms-warn-soft);
+        background: var(--ms-warn-soft);
+        color: var(--ms-warn);
+      }
+
+      .badge.danger {
+        border-color: var(--ms-danger-soft);
+        background: var(--ms-danger-soft);
+        color: var(--ms-danger);
+      }
+
+      .status-list {
+        display: grid;
+        gap: 10px;
+        margin-top: 14px;
+      }
+
+      .status-line {
+        justify-content: space-between;
+        gap: 14px;
+        min-height: 64px;
+        padding: 12px;
+        border: 1px solid var(--ms-line-soft);
+        border-radius: var(--ms-radius);
+        background: var(--ms-surface);
+      }
+
+      .status-line.active {
+        border-color: rgba(31, 27, 23, 0.22);
+        box-shadow: inset 0 0 0 1px rgba(31, 27, 23, 0.04);
+      }
+
+      .cart-list,
+      .notification-list {
+        display: grid;
+        gap: 10px;
+        margin-top: 14px;
+      }
+
+      .cart-item,
+      .notification-item {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        gap: 12px;
+        align-items: center;
+        min-height: 62px;
+        padding: 12px;
+        border: 1px solid var(--ms-line-soft);
+        border-radius: var(--ms-radius);
+        background: var(--ms-surface);
+      }
+
+      .cart-thumb {
+        width: 42px;
+        height: 42px;
+        border: 1px solid var(--ms-line-soft);
+        border-radius: var(--ms-radius);
+        background:
+          linear-gradient(135deg, rgba(183, 95, 75, 0.18), rgba(47, 111, 214, 0.16)),
+          var(--ms-subtle);
+      }
+
+      .floating-cart {
+        position: fixed;
+        right: clamp(16px, 3vw, 32px);
+        bottom: 18px;
+        z-index: 30;
+        width: min(460px, calc(100vw - 32px));
+        border: 1px solid var(--ms-line);
+        border-radius: var(--ms-radius);
+        background: var(--ms-surface);
+        box-shadow: var(--ms-shadow);
+      }
+
+      .floating-cart:not([open]) {
+        width: 58px;
+        height: 58px;
+        border-radius: var(--ms-radius);
+      }
+
+      .floating-cart summary {
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        min-height: 58px;
+        padding: 12px 14px;
+        cursor: pointer;
+        list-style: none;
+      }
+
+      .floating-cart summary::-webkit-details-marker {
+        display: none;
+      }
+
+      .cart-summary-text {
+        display: grid;
+        gap: 2px;
+      }
+
+      .cart-icon {
+        display: none;
+        width: 26px;
+        height: 26px;
+        color: var(--ms-ink);
+      }
+
+      .cart-count {
+        position: absolute;
+        top: -7px;
+        right: -7px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 24px;
+        height: 24px;
+        border: 2px solid var(--ms-surface);
+        border-radius: 999px;
+        background: var(--ms-ink);
+        color: #ffffff;
+        font-size: 12px;
+        font-weight: 850;
+      }
+
+      .floating-cart[open] .cart-count {
+        display: none;
+      }
+
+      .floating-cart:not([open]) summary {
+        justify-content: center;
+        padding: 0;
+      }
+
+      .floating-cart:not([open]) .cart-icon {
+        display: block;
+      }
+
+      .floating-cart:not([open]) .cart-summary-text,
+      .floating-cart:not([open]) .cart-status {
+        display: none;
+      }
+
+      .cart-drawer {
+        padding: 0 14px 14px;
+        border-top: 1px solid var(--ms-line-soft);
+      }
+
+      .spinner {
+        width: 18px;
+        height: 18px;
+        border: 2px solid var(--ms-line);
+        border-top-color: var(--ms-blue);
+        border-radius: 999px;
+        animation: spin 0.8s linear infinite;
+      }
+
+      .spinner.small {
+        width: 14px;
+        height: 14px;
+      }
+
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .spinner {
+          animation: none;
+        }
+      }
+
+      .notification-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 28px;
+        height: 28px;
+        border-radius: var(--ms-radius);
+        background: var(--ms-blue-soft);
+        color: var(--ms-blue);
+        font-size: 13px;
+        font-weight: 850;
+      }
+
+      .metric-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .metric {
+        min-width: 0;
+        border: 1px solid var(--ms-line-soft);
+        border-radius: var(--ms-radius);
+        padding: 12px;
+        background: var(--ms-subtle);
+      }
+
+      .metric strong {
+        display: block;
+        font-size: 24px;
+      }
+
+      .fine-print {
+        margin: 16px 0 0;
+        color: var(--ms-muted);
+        font-size: 14px;
+      }
+
+      @media (max-width: 900px) {
+        .preview-layout,
+        .metric-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .media-panel img {
+          height: 420px;
+          min-height: 0;
+        }
+      }
+
+      @media (max-width: 620px) {
+        .topbar {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+
+        .nav {
+          justify-content: flex-start;
+        }
+
+        .inventory,
+        .status-line,
+        .cart-item,
+        .notification-item {
+          flex-direction: column;
+          grid-template-columns: 1fr;
+          align-items: flex-start;
+        }
+
+        .floating-cart {
+          right: 12px;
+          bottom: 12px;
+          width: calc(100vw - 24px);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <strong data-i18n="brand">Minishop FE Preview</strong>
+      </div>
+      <nav class="nav" aria-label="Preview navigation">
+        <a href="design-pattern.html" data-i18n="back">Design decisions</a>
+        <div class="language-toggle" aria-label="Language">
+          <button type="button" data-locale="en" aria-pressed="true">EN</button>
+          <button type="button" data-locale="zh" aria-pressed="false">中</button>
+        </div>
+      </nav>
+    </header>
+
+    <main class="shell">
+      <section class="preview-layout" aria-labelledby="preview-title">
+        <div class="media-panel">
+          <img
+            src="https://images.unsplash.com/photo-1542291026-7eec264c27ff?auto=format&fit=crop&w=1400&q=80"
+            alt="Minimal product photo for the checkout preview"
+          />
+        </div>
+
+        <div class="purchase-stack">
+          <section class="purchase-panel">
+            <p class="eyebrow" data-i18n="eyebrow">Direct Buy preview</p>
+            <h1 id="preview-title" data-i18n="title">Limited Runner</h1>
+            <p class="muted" data-i18n="subtitle">SKU hot-001 · one hot product · event-sourced checkout</p>
+            <div class="price">TWD 1,000</div>
+            <div class="inventory">
+              <div>
+                <strong data-i18n="inventoryTitle">Available now: 100</strong>
+                <p class="muted" data-i18n="inventoryBody">Reservation is confirmed after checkout processing.</p>
+              </div>
+              <span class="badge neutral">projection</span>
+            </div>
+            <button class="button primary full" type="button" data-i18n="buy">Buy</button>
+            <p class="fine-print" data-i18n="finePrint">
+              This preview does not decrement inventory after pressing Buy. Inventory changes only after projection refresh.
+            </p>
+          </section>
+
+          <section class="status-panel" aria-labelledby="status-title">
+            <p class="eyebrow" data-i18n="statusEyebrow">Checkout status</p>
+            <h2 id="status-title" data-i18n="statusTitle">Accepted does not mean reserved.</h2>
+            <div class="status-list">
+              <div class="status-line active">
+                <div>
+                  <strong data-i18n="queuedTitle">Request received</strong>
+                  <p class="muted" data-i18n="queuedBody">Your checkout request is waiting to be processed.</p>
+                </div>
+                <span class="badge neutral">queued</span>
+              </div>
+              <div class="status-line">
+                <div>
+                  <strong data-i18n="reservingTitle">Checking availability</strong>
+                  <p class="muted" data-i18n="reservingBody">Inventory is being reserved for this checkout.</p>
+                </div>
+                <span class="badge warning"><span class="spinner small" aria-hidden="true"></span>&nbsp;reserving</span>
+              </div>
+              <div class="status-line">
+                <div>
+                  <strong data-i18n="reservedTitle">Reserved</strong>
+                  <p class="muted" data-i18n="reservedBody">Inventory is reserved. Payment will start next.</p>
+                </div>
+                <span class="badge success">reserved</span>
+              </div>
+            </div>
+          </section>
+
+          <section class="notification-panel" aria-labelledby="notification-title">
+            <p class="eyebrow" data-i18n="notificationEyebrow">Notification center</p>
+            <h2 id="notification-title" data-i18n="notificationTitle">Unified checkout updates</h2>
+            <div class="notification-list">
+              <div class="notification-item">
+                <span class="notification-icon" aria-hidden="true">1</span>
+                <div>
+                  <strong data-i18n="notificationOne">Checkout request accepted</strong>
+                  <p class="muted" data-i18n="notificationOneBody">Intent chk_8f2 is queued for reservation processing.</p>
+                </div>
+                <span class="badge neutral">queued</span>
+              </div>
+              <div class="notification-item">
+                <span class="notification-icon" aria-hidden="true">2</span>
+                <div>
+                  <strong data-i18n="notificationTwo">Cart reservation update</strong>
+                  <p class="muted" data-i18n="notificationTwoBody">1 of 3 products is reserved. Remaining products are still processing.</p>
+                </div>
+                <span class="badge warning">update</span>
+              </div>
+              <div class="notification-item">
+                <span class="notification-icon" aria-hidden="true">3</span>
+                <div>
+                  <strong data-i18n="notificationThree">Inventory projection refreshed</strong>
+                  <p class="muted" data-i18n="notificationThreeBody">Visible inventory counters were refreshed from projection data.</p>
+                </div>
+                <span class="badge info">poll</span>
+              </div>
+            </div>
+          </section>
+
+          <section class="operator-panel" aria-labelledby="operator-title">
+            <p class="eyebrow" data-i18n="operatorEyebrow">Dev-only operator strip</p>
+            <h2 id="operator-title" data-i18n="operatorTitle">Projection counters</h2>
+            <div class="metric-grid">
+              <div class="metric"><span class="muted">on_hand</span><strong>100</strong></div>
+              <div class="metric"><span class="muted">reserved</span><strong>24</strong></div>
+              <div class="metric"><span class="muted">sold</span><strong>76</strong></div>
+              <div class="metric"><span class="muted">lag</span><strong>42ms</strong></div>
+            </div>
+          </section>
+        </div>
+      </section>
+    </main>
+
+    <details class="floating-cart">
+      <summary aria-label="Cart checkout progress">
+        <svg class="cart-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path
+            d="M6.2 6.8h14.1l-1.5 7.3a2 2 0 0 1-2 1.6H9.1a2 2 0 0 1-2-1.7L5.7 4.9H3.5"
+            fill="none"
+            stroke="currentColor"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+          />
+          <circle cx="9.5" cy="19" r="1.3" fill="currentColor" />
+          <circle cx="17" cy="19" r="1.3" fill="currentColor" />
+        </svg>
+        <span class="cart-count" aria-label="3 products in cart">3</span>
+        <span class="cart-summary-text">
+          <strong data-i18n="cartSummaryTitle">Cart · 3 products</strong>
+          <span class="muted" data-i18n="cartSummaryBody">Reservation progress is available.</span>
+        </span>
+        <span class="badge warning cart-status"><span class="spinner small" aria-hidden="true"></span>&nbsp;<span data-i18n="cartSummaryBadge">processing</span></span>
+      </summary>
+      <div class="cart-drawer" aria-labelledby="cart-title">
+        <p class="eyebrow" data-i18n="cartEyebrow">Cart checkout products</p>
+        <h2 id="cart-title" data-i18n="cartTitle">Per-item reservation progress</h2>
+        <p class="muted" data-i18n="cartBody">
+          Spinners mark async work still in progress. Completed rows stop spinning and show the projection result.
+        </p>
+        <div class="cart-list">
+          <div class="cart-item">
+            <span class="cart-thumb" aria-hidden="true"></span>
+            <div>
+              <strong data-i18n="cartItemOne">Limited Runner</strong>
+              <p class="muted" data-i18n="cartItemOneBody">1 item · reservation requested</p>
+            </div>
+            <span class="spinner" aria-label="Reservation in progress"></span>
+          </div>
+          <div class="cart-item">
+            <span class="cart-thumb" aria-hidden="true"></span>
+            <div>
+              <strong data-i18n="cartItemTwo">Everyday Tee</strong>
+              <p class="muted" data-i18n="cartItemTwoBody">2 items · inventory reserved</p>
+            </div>
+            <span class="badge success">reserved</span>
+          </div>
+          <div class="cart-item">
+            <span class="cart-thumb" aria-hidden="true"></span>
+            <div>
+              <strong data-i18n="cartItemThree">Travel Cap</strong>
+              <p class="muted" data-i18n="cartItemThreeBody">1 item · waiting for projection update</p>
+            </div>
+            <span class="spinner" aria-label="Projection update in progress"></span>
+          </div>
+        </div>
+      </div>
+    </details>
+
+    <script>
+      const messages = {
+        en: {
+          brand: "Minishop FE Preview",
+          back: "Design decisions",
+          eyebrow: "Direct Buy preview",
+          title: "Limited Runner",
+          subtitle: "SKU hot-001 · one hot product · event-sourced checkout",
+          inventoryTitle: "Available now: 100",
+          inventoryBody: "Reservation is confirmed after checkout processing.",
+          buy: "Buy",
+          finePrint:
+            "This preview does not decrement inventory after pressing Buy. Inventory changes only after projection refresh.",
+          cartSummaryTitle: "Cart · 3 products",
+          cartSummaryBody: "Reservation progress is available.",
+          cartSummaryBadge: "processing",
+          cartEyebrow: "Cart checkout products",
+          cartTitle: "Per-item reservation progress",
+          cartBody:
+            "Spinners mark async work still in progress. Completed rows stop spinning and show the projection result.",
+          cartItemOne: "Limited Runner",
+          cartItemOneBody: "1 item · reservation requested",
+          cartItemTwo: "Everyday Tee",
+          cartItemTwoBody: "2 items · inventory reserved",
+          cartItemThree: "Travel Cap",
+          cartItemThreeBody: "1 item · waiting for projection update",
+          statusEyebrow: "Checkout status",
+          statusTitle: "Accepted does not mean reserved.",
+          queuedTitle: "Request received",
+          queuedBody: "Your checkout request is waiting to be processed.",
+          reservingTitle: "Checking availability",
+          reservingBody: "Inventory is being reserved for this checkout.",
+          reservedTitle: "Reserved",
+          reservedBody: "Inventory is reserved. Payment will start next.",
+          notificationEyebrow: "Notification center",
+          notificationTitle: "Unified checkout updates",
+          notificationOne: "Checkout request accepted",
+          notificationOneBody: "Intent chk_8f2 is queued for reservation processing.",
+          notificationTwo: "Cart reservation update",
+          notificationTwoBody: "1 of 3 products is reserved. Remaining products are still processing.",
+          notificationThree: "Inventory projection refreshed",
+          notificationThreeBody: "Visible inventory counters were refreshed from projection data.",
+          operatorEyebrow: "Dev-only operator strip",
+          operatorTitle: "Projection counters",
+        },
+        zh: {
+          brand: "Minishop FE Preview",
+          back: "設計決策",
+          eyebrow: "直接購買 preview",
+          title: "限量跑鞋",
+          subtitle: "SKU hot-001 · 單一熱門商品 · event-sourced checkout",
+          inventoryTitle: "目前可售：100",
+          inventoryBody: "庫存保留會在結帳處理完成後確認。",
+          buy: "購買",
+          finePrint: "這個 preview 不會在按下購買後樂觀扣庫存。庫存只會在 projection 更新後改變。",
+          cartSummaryTitle: "購物車 · 3 個 products",
+          cartSummaryBody: "可展開查看保留進度。",
+          cartSummaryBadge: "處理中",
+          cartEyebrow: "購物車 checkout products",
+          cartTitle: "逐項保留進度",
+          cartBody: "Spinner 表示仍在進行中的非同步工作。完成的商品列會停止 spinning，並顯示 projection 結果。",
+          cartItemOne: "限量跑鞋",
+          cartItemOneBody: "1 件 · 已送出保留請求",
+          cartItemTwo: "日常短 Tee",
+          cartItemTwoBody: "2 件 · 庫存已保留",
+          cartItemThree: "旅行帽",
+          cartItemThreeBody: "1 件 · 等待 projection 更新",
+          statusEyebrow: "結帳狀態",
+          statusTitle: "Accepted 不等於 Reserved。",
+          queuedTitle: "已收到請求",
+          queuedBody: "你的結帳請求已建立，正在等待處理。",
+          reservingTitle: "檢查庫存中",
+          reservingBody: "正在為這次結帳保留庫存。",
+          reservedTitle: "已保留",
+          reservedBody: "庫存已保留，下一步會進入付款。",
+          notificationEyebrow: "通知中心",
+          notificationTitle: "統一接收 checkout updates",
+          notificationOne: "結帳請求已接受",
+          notificationOneBody: "Intent chk_8f2 已排入 reservation processing。",
+          notificationTwo: "購物車保留狀態更新",
+          notificationTwoBody: "3 個 products 中已有 1 個保留完成，其餘仍在處理中。",
+          notificationThree: "Inventory projection 已刷新",
+          notificationThreeBody: "畫面上的庫存 counters 已從 projection data 更新。",
+          operatorEyebrow: "僅開發環境的 operator strip",
+          operatorTitle: "Projection counters",
+        },
+      };
+
+      const buttons = document.querySelectorAll("[data-locale]");
+
+      function applyLocale(locale) {
+        const dict = messages[locale];
+        document.documentElement.lang = locale === "zh" ? "zh-Hant-TW" : "en";
+        document.querySelectorAll("[data-i18n]").forEach((node) => {
+          const key = node.getAttribute("data-i18n");
+          if (dict[key]) {
+            node.textContent = dict[key];
+          }
+        });
+        buttons.forEach((button) => {
+          button.setAttribute("aria-pressed", String(button.dataset.locale === locale));
+        });
+      }
+
+      buttons.forEach((button) => {
+        button.addEventListener("click", () => applyLocale(button.dataset.locale));
+      });
+    </script>
+  </body>
+</html>

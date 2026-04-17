@@ -1,0 +1,1252 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Minishop Design Decisions</title>
+    <style>
+      :root {
+        --ms-canvas: #f8f7f4;
+        --ms-surface: #ffffff;
+        --ms-surface-subtle: #f1f0ec;
+        --ms-ink: #1f1b17;
+        --ms-muted: #6b625a;
+        --ms-faint: #8a8178;
+        --ms-line: #ded9d0;
+        --ms-line-soft: #ebe7df;
+        --ms-accent: #b75f4b;
+        --ms-accent-soft: #f6e6df;
+        --ms-blue: #2f6fd6;
+        --ms-blue-soft: #e7eefb;
+        --ms-green: #2f8f5b;
+        --ms-green-soft: #e8f4ed;
+        --ms-warn: #c77a25;
+        --ms-warn-soft: #fff1df;
+        --ms-danger: #c73d3d;
+        --ms-danger-soft: #fae6e6;
+        --ms-shadow: 0 16px 44px rgba(31, 27, 23, 0.1);
+        --ms-radius: 8px;
+        --ms-font:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        min-width: 320px;
+        background: var(--ms-canvas);
+        color: var(--ms-ink);
+        font-family: var(--ms-font);
+        font-synthesis: none;
+        line-height: 1.55;
+        text-rendering: optimizeLegibility;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      button {
+        font: inherit;
+      }
+
+      .page {
+        min-height: 100vh;
+      }
+
+      .topbar {
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 14px clamp(18px, 4vw, 56px);
+        border-bottom: 1px solid var(--ms-line-soft);
+        background: rgba(248, 247, 244, 0.92);
+        backdrop-filter: blur(12px);
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-width: 0;
+      }
+
+      .brand-mark {
+        width: 30px;
+        height: 30px;
+        border: 1px solid var(--ms-line);
+        border-radius: var(--ms-radius);
+        background:
+          linear-gradient(135deg, rgba(183, 95, 75, 0.92), rgba(47, 111, 214, 0.9)),
+          var(--ms-surface);
+      }
+
+      .brand strong,
+      .nav a {
+        white-space: nowrap;
+      }
+
+      .nav {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+
+      .nav a,
+      .language-toggle button {
+        border: 1px solid var(--ms-line);
+        border-radius: var(--ms-radius);
+        background: var(--ms-surface);
+        color: var(--ms-ink);
+        padding: 8px 10px;
+        text-decoration: none;
+        font-size: 14px;
+        cursor: pointer;
+      }
+
+      .language-toggle {
+        display: flex;
+        gap: 6px;
+      }
+
+      .language-toggle button[aria-pressed="true"] {
+        border-color: var(--ms-ink);
+        background: var(--ms-ink);
+        color: white;
+      }
+
+      .shell {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 42px clamp(18px, 4vw, 32px) 64px;
+      }
+
+      .hero {
+        display: grid;
+        grid-template-columns: minmax(0, 1.05fr) minmax(320px, 0.95fr);
+        gap: 32px;
+        align-items: stretch;
+        margin-bottom: 34px;
+      }
+
+      .hero.design-only {
+        grid-template-columns: minmax(0, 880px);
+      }
+
+      .hero-copy {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        min-height: 520px;
+        padding: clamp(24px, 5vw, 52px) 0;
+      }
+
+      .eyebrow {
+        margin: 0 0 14px;
+        color: var(--ms-accent);
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 0;
+        text-transform: uppercase;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin-top: 0;
+      }
+
+      h1 {
+        max-width: 720px;
+        margin-bottom: 20px;
+        font-size: clamp(42px, 6vw, 72px);
+        line-height: 0.98;
+        letter-spacing: 0;
+      }
+
+      h2 {
+        margin-bottom: 14px;
+        font-size: clamp(28px, 3vw, 40px);
+        line-height: 1.08;
+        letter-spacing: 0;
+      }
+
+      h3 {
+        margin-bottom: 8px;
+        font-size: 18px;
+        line-height: 1.2;
+        letter-spacing: 0;
+      }
+
+      .lead {
+        max-width: 680px;
+        color: var(--ms-muted);
+        font-size: 18px;
+      }
+
+      .hero-actions,
+      .component-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+
+      .button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 42px;
+        border: 1px solid var(--ms-line);
+        border-radius: var(--ms-radius);
+        background: var(--ms-surface);
+        color: var(--ms-ink);
+        padding: 10px 14px;
+        font-weight: 700;
+        cursor: pointer;
+        text-decoration: none;
+      }
+
+      .button.primary {
+        border-color: var(--ms-ink);
+        background: var(--ms-ink);
+        color: #ffffff;
+      }
+
+      .button:focus-visible,
+      .nav a:focus-visible,
+      .language-toggle button:focus-visible {
+        outline: 3px solid rgba(47, 111, 214, 0.26);
+        outline-offset: 2px;
+      }
+
+      .product-frame {
+        overflow: hidden;
+        border: 1px solid var(--ms-line);
+        border-radius: var(--ms-radius);
+        background: var(--ms-surface);
+        box-shadow: var(--ms-shadow);
+      }
+
+      .product-frame img {
+        display: block;
+        width: 100%;
+        height: 290px;
+        object-fit: cover;
+        border-bottom: 1px solid var(--ms-line-soft);
+      }
+
+      .mock-panel {
+        padding: 20px;
+      }
+
+      .price-row,
+      .inventory-row,
+      .status-row,
+      .decision-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+      }
+
+      .price {
+        font-size: 30px;
+        font-weight: 800;
+      }
+
+      .muted {
+        color: var(--ms-muted);
+      }
+
+      .inventory-row {
+        margin: 16px 0;
+        padding: 12px;
+        border: 1px solid var(--ms-line-soft);
+        border-radius: var(--ms-radius);
+        background: var(--ms-surface-subtle);
+      }
+
+      .status-stack {
+        display: grid;
+        gap: 10px;
+        margin-top: 16px;
+      }
+
+      .status-row {
+        min-height: 58px;
+        padding: 12px;
+        border: 1px solid var(--ms-line-soft);
+        border-radius: var(--ms-radius);
+        background: var(--ms-surface);
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        min-height: 28px;
+        border: 1px solid var(--ms-line);
+        border-radius: var(--ms-radius);
+        padding: 4px 9px;
+        color: var(--ms-muted);
+        background: var(--ms-surface);
+        font-size: 13px;
+        font-weight: 700;
+        white-space: nowrap;
+      }
+
+      .badge.neutral {
+        background: var(--ms-surface-subtle);
+      }
+
+      .badge.success {
+        border-color: var(--ms-green-soft);
+        color: var(--ms-green);
+        background: var(--ms-green-soft);
+      }
+
+      .badge.warning {
+        border-color: var(--ms-warn-soft);
+        color: var(--ms-warn);
+        background: var(--ms-warn-soft);
+      }
+
+      .badge.danger {
+        border-color: var(--ms-danger-soft);
+        color: var(--ms-danger);
+        background: var(--ms-danger-soft);
+      }
+
+      .badge.info {
+        border-color: var(--ms-blue-soft);
+        color: var(--ms-blue);
+        background: var(--ms-blue-soft);
+      }
+
+      .section {
+        margin-top: 28px;
+        padding-top: 28px;
+        border-top: 1px solid var(--ms-line);
+      }
+
+      .section-grid {
+        display: grid;
+        grid-template-columns: minmax(220px, 0.38fr) minmax(0, 1fr);
+        gap: 26px;
+        align-items: start;
+      }
+
+      .section-intro {
+        position: sticky;
+        top: 86px;
+      }
+
+      .section-intro p {
+        color: var(--ms-muted);
+      }
+
+      .grid {
+        display: grid;
+        gap: 14px;
+      }
+
+      .grid.two {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .grid.three {
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      }
+
+      .card {
+        min-width: 0;
+        border: 1px solid var(--ms-line);
+        border-radius: var(--ms-radius);
+        background: var(--ms-surface);
+        padding: 18px;
+      }
+
+      .card.subtle {
+        background: var(--ms-surface-subtle);
+      }
+
+      .token {
+        display: grid;
+        grid-template-columns: 44px minmax(0, 1fr);
+        gap: 12px;
+        align-items: center;
+      }
+
+      .token-scale {
+        display: grid;
+        gap: 10px;
+      }
+
+      .scale-row {
+        display: grid;
+        grid-template-columns: 88px minmax(0, 1fr);
+        gap: 12px;
+        align-items: center;
+      }
+
+      .scale-steps {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        overflow: hidden;
+        border: 1px solid var(--ms-line-soft);
+        border-radius: var(--ms-radius);
+      }
+
+      .scale-step {
+        min-height: 46px;
+        padding: 7px;
+        color: var(--ms-ink);
+        font-size: 12px;
+        font-weight: 800;
+      }
+
+      @media (max-width: 1180px) {
+        .section-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .section-intro {
+          position: static;
+        }
+      }
+
+      .scale-step.dark {
+        color: #ffffff;
+      }
+
+      .swatch {
+        width: 44px;
+        height: 44px;
+        border: 1px solid var(--ms-line);
+        border-radius: var(--ms-radius);
+      }
+
+      code {
+        color: var(--ms-muted);
+        font-family: "SFMono-Regular", Consolas, monospace;
+        font-size: 13px;
+        overflow-wrap: anywhere;
+      }
+
+      .decision-list,
+      .rules-list,
+      .spinner-rules {
+        display: grid;
+        gap: 10px;
+      }
+
+      .spinner-spec {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        gap: 12px;
+        align-items: center;
+        min-height: 64px;
+        border: 1px solid var(--ms-line-soft);
+        border-radius: var(--ms-radius);
+        padding: 12px;
+      }
+
+      .spinner {
+        width: 18px;
+        height: 18px;
+        border: 2px solid var(--ms-line);
+        border-top-color: var(--ms-blue);
+        border-radius: 999px;
+        animation: spin 0.8s linear infinite;
+      }
+
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .spinner {
+          animation: none;
+        }
+      }
+
+      .decision-row {
+        min-height: 64px;
+        border: 1px solid var(--ms-line-soft);
+        border-radius: var(--ms-radius);
+        padding: 12px;
+      }
+
+      .decision-row strong {
+        min-width: 150px;
+      }
+
+      .decision-row span:last-child {
+        flex: 1;
+        color: var(--ms-muted);
+      }
+
+      .rules-list ul {
+        margin: 0;
+        padding-left: 18px;
+        color: var(--ms-muted);
+      }
+
+      .rules-list li + li {
+        margin-top: 8px;
+      }
+
+      .language-sample {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 14px;
+      }
+
+      .type-display {
+        font-size: 34px;
+        line-height: 1.05;
+        font-weight: 800;
+      }
+
+      .type-body {
+        color: var(--ms-muted);
+        font-size: 16px;
+      }
+
+      .operator-strip {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .breakpoint-list {
+        display: grid;
+        gap: 10px;
+      }
+
+      .breakpoint-row {
+        display: grid;
+        grid-template-columns: 120px 120px minmax(0, 1fr);
+        gap: 12px;
+        align-items: start;
+        min-height: 64px;
+        border: 1px solid var(--ms-line-soft);
+        border-radius: var(--ms-radius);
+        padding: 12px;
+        background: var(--ms-surface);
+      }
+
+      .metric {
+        border: 1px solid var(--ms-line-soft);
+        border-radius: var(--ms-radius);
+        padding: 12px;
+        background: var(--ms-surface-subtle);
+      }
+
+      .metric strong {
+        display: block;
+        font-size: 24px;
+      }
+
+      .footer-note {
+        margin-top: 36px;
+        color: var(--ms-muted);
+        font-size: 14px;
+      }
+
+      @media (max-width: 900px) {
+        .hero,
+        .grid.two,
+        .language-sample,
+        .operator-strip,
+        .scale-row,
+        .breakpoint-row {
+          grid-template-columns: 1fr;
+        }
+
+        .hero-copy {
+          min-height: auto;
+          padding: 22px 0 0;
+        }
+
+        .section-intro {
+          position: static;
+        }
+      }
+
+      @media (max-width: 620px) {
+        .topbar {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+
+        .nav {
+          justify-content: flex-start;
+        }
+
+        h1 {
+          font-size: 40px;
+        }
+
+        .price-row,
+        .inventory-row,
+        .status-row,
+        .decision-row {
+          align-items: flex-start;
+          flex-direction: column;
+          gap: 8px;
+        }
+
+        .decision-row strong {
+          min-width: 0;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <strong data-i18n="brand">Minishop UI Pattern</strong>
+        </div>
+        <nav class="nav" aria-label="Page sections">
+          <a href="#tokens" data-i18n="navTokens">Tokens</a>
+          <a href="#checkout" data-i18n="navCheckout">Checkout</a>
+          <a href="#spinning" data-i18n="navSpinning">Spinning UI</a>
+          <a href="#breakpoints" data-i18n="navBreakpoints">Breakpoints</a>
+          <a href="#decisions" data-i18n="navDecisions">Decisions</a>
+          <a href="checkout-preview.html" data-i18n="navPreview">FE preview</a>
+          <div class="language-toggle" aria-label="Language">
+            <button type="button" data-locale="en" aria-pressed="true">EN</button>
+            <button type="button" data-locale="zh" aria-pressed="false">中</button>
+          </div>
+        </nav>
+      </header>
+
+      <main class="shell">
+        <section class="hero design-only" aria-labelledby="page-title">
+          <div class="hero-copy">
+            <p class="eyebrow" data-i18n="eyebrow">Design pattern before implementation</p>
+            <h1 id="page-title" data-i18n="title">Warm light-mode commerce, built for asynchronous checkout.</h1>
+            <p class="lead" data-i18n="lead">
+              A compact UI direction for Minishop: Anthropic-like calm surfaces, TWFoundry-style tokens,
+              bilingual copy, and clear separation between request received, inventory reserved, and order confirmed.
+            </p>
+            <div class="hero-actions">
+              <a class="button primary" href="checkout-preview.html" data-i18n="primaryAction">Open FE preview</a>
+              <a class="button" href="#decisions" data-i18n="secondaryAction">Review decisions</a>
+              <span class="badge info" data-i18n="languageBadge">EN / 繁中 ready</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="section section-grid" id="tokens" aria-labelledby="tokens-title">
+          <div class="section-intro">
+            <p class="eyebrow" data-i18n="tokensEyebrow">Style tokens</p>
+            <h2 id="tokens-title" data-i18n="tokensTitle">Borrow the calm, keep the product intent.</h2>
+            <p data-i18n="tokensBody">
+              The direction references Anthropic's light mode through spacious typography, warm white surfaces, and quiet borders. TWFoundry contributes named tokens, CJK fallback, and semantic color discipline.
+            </p>
+          </div>
+          <div class="grid three">
+            <article class="card">
+              <div class="token">
+                <span class="swatch" style="background: var(--ms-canvas)"></span>
+                <div>
+                  <h3 data-i18n="canvasToken">Canvas</h3>
+                  <code>#f8f7f4</code>
+                </div>
+              </div>
+              <p class="muted" data-i18n="canvasBody">Warm off-white page background. Use with dark ink and real product imagery.</p>
+            </article>
+            <article class="card">
+              <div class="token">
+                <span class="swatch" style="background: var(--ms-surface)"></span>
+                <div>
+                  <h3 data-i18n="surfaceToken">Surface</h3>
+                  <code>#ffffff</code>
+                </div>
+              </div>
+              <p class="muted" data-i18n="surfaceBody">Purchase panels, tables, and status modules. Avoid nested cards.</p>
+            </article>
+            <article class="card">
+              <div class="token">
+                <span class="swatch" style="background: var(--ms-accent)"></span>
+                <div>
+                  <h3 data-i18n="accentToken">Warm accent</h3>
+                  <code>#b75f4b</code>
+                </div>
+              </div>
+              <p class="muted" data-i18n="accentBody">Small emphasis only. Do not make the page a single warm palette.</p>
+            </article>
+          </div>
+          <div class="card" style="margin-top: 14px">
+            <h3 data-i18n="scaleTitle">Token levels</h3>
+            <p class="muted" data-i18n="scaleBody">
+              Every semantic color should have a small scale from light support surfaces to heavy text/action states.
+            </p>
+            <div class="token-scale">
+              <div class="scale-row">
+                <strong>neutral</strong>
+                <div class="scale-steps" aria-label="Neutral token scale">
+                  <span class="scale-step" style="background: #f8f7f4">50</span>
+                  <span class="scale-step" style="background: #f1f0ec">100</span>
+                  <span class="scale-step" style="background: #ded9d0">300</span>
+                  <span class="scale-step" style="background: #6b625a">600</span>
+                  <span class="scale-step dark" style="background: #1f1b17">950</span>
+                </div>
+              </div>
+              <div class="scale-row">
+                <strong>accent</strong>
+                <div class="scale-steps" aria-label="Accent token scale">
+                  <span class="scale-step" style="background: #fbf2ee">50</span>
+                  <span class="scale-step" style="background: #f6e6df">100</span>
+                  <span class="scale-step" style="background: #d7907d">400</span>
+                  <span class="scale-step" style="background: #b75f4b">600</span>
+                  <span class="scale-step dark" style="background: #5f281f">900</span>
+                </div>
+              </div>
+              <div class="scale-row">
+                <strong>success</strong>
+                <div class="scale-steps" aria-label="Success token scale">
+                  <span class="scale-step" style="background: #f0faf3">50</span>
+                  <span class="scale-step" style="background: #e8f4ed">100</span>
+                  <span class="scale-step" style="background: #76bd91">400</span>
+                  <span class="scale-step" style="background: #2f8f5b">600</span>
+                  <span class="scale-step dark" style="background: #174b2f">900</span>
+                </div>
+              </div>
+              <div class="scale-row">
+                <strong>warning</strong>
+                <div class="scale-steps" aria-label="Warning token scale">
+                  <span class="scale-step" style="background: #fff8ed">50</span>
+                  <span class="scale-step" style="background: #fff1df">100</span>
+                  <span class="scale-step" style="background: #e3a555">400</span>
+                  <span class="scale-step" style="background: #c77a25">600</span>
+                  <span class="scale-step dark" style="background: #643a10">900</span>
+                </div>
+              </div>
+              <div class="scale-row">
+                <strong>danger</strong>
+                <div class="scale-steps" aria-label="Danger token scale">
+                  <span class="scale-step" style="background: #fff0f0">50</span>
+                  <span class="scale-step" style="background: #fae6e6">100</span>
+                  <span class="scale-step" style="background: #df7777">400</span>
+                  <span class="scale-step" style="background: #c73d3d">600</span>
+                  <span class="scale-step dark" style="background: #661f1f">900</span>
+                </div>
+              </div>
+            </div>
+            <p class="muted" style="margin: 14px 0 0" data-i18n="scaleUsage">
+              Use 50/100 for backgrounds, 300 for borders, 500/600 for badges and controls, and 900/950 for text.
+            </p>
+          </div>
+        </section>
+
+        <section class="section section-grid" aria-labelledby="language-title">
+          <div class="section-intro">
+            <p class="eyebrow" data-i18n="languageEyebrow">Bilingual copy</p>
+            <h2 id="language-title" data-i18n="languageTitle">English and Traditional Chinese are first-class UI states.</h2>
+            <p data-i18n="languageBody">
+              Copy should be short, state-based, and stored behind locale keys when the real app is scaffolded.
+            </p>
+          </div>
+          <div class="language-sample">
+            <article class="card">
+              <p class="eyebrow">English</p>
+              <div class="type-display">Request received</div>
+              <p class="type-body">Your checkout request is waiting to be processed.</p>
+            </article>
+            <article class="card">
+              <p class="eyebrow">繁體中文</p>
+              <div class="type-display">已收到請求</div>
+              <p class="type-body">你的結帳請求已建立，正在等待處理。</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="section section-grid" id="checkout" aria-labelledby="checkout-title">
+          <div class="section-intro">
+            <p class="eyebrow" data-i18n="checkoutEyebrow">Checkout states</p>
+            <h2 id="checkout-title" data-i18n="checkoutTitle">Accepted does not mean reserved.</h2>
+            <p data-i18n="checkoutBody">
+              The UI must protect the core architecture: Buy creates a durable checkout intent, then projections reveal reservation and payment progress.
+            </p>
+          </div>
+          <div class="grid two">
+            <article class="card">
+              <h3 data-i18n="buttonStatesTitle">Button states</h3>
+              <div class="status-stack">
+                <div class="status-row"><strong>idle</strong><span class="badge neutral" data-i18n="stateBuy">Buy</span></div>
+                <div class="status-row"><strong>submitting</strong><span class="badge info" data-i18n="stateSubmitting">Submitting</span></div>
+                <div class="status-row"><strong>queued / reserving</strong><span class="badge warning" data-i18n="stateProcessing">Processing</span></div>
+                <div class="status-row"><strong>terminal</strong><span class="badge success" data-i18n="stateNextAttempt">New attempt allowed</span></div>
+              </div>
+            </article>
+            <article class="card">
+              <h3 data-i18n="pollingTitle">Polling cadence</h3>
+              <div class="status-stack">
+                <div class="status-row"><strong>300ms</strong><span class="muted" data-i18n="pollInitial">initial status delay</span></div>
+                <div class="status-row"><strong>750ms</strong><span class="muted" data-i18n="pollActive">queued, reserving, reserved</span></div>
+                <div class="status-row"><strong>1500ms</strong><span class="muted" data-i18n="pollPayment">pending payment</span></div>
+                <div class="status-row"><strong>2000ms</strong><span class="muted" data-i18n="pollInventory">visible inventory refresh</span></div>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section class="section section-grid" id="spinning" aria-labelledby="spinning-title">
+          <div class="section-intro">
+            <p class="eyebrow" data-i18n="spinningEyebrow">Spinning UI</p>
+            <h2 id="spinning-title" data-i18n="spinningTitle">Use motion only for active async work.</h2>
+            <p data-i18n="spinningBody">
+              Cart checkout can show per-product spinners while reservation or projection updates are still running.
+            </p>
+          </div>
+          <div class="grid two">
+            <article class="card spinner-rules">
+              <h3 data-i18n="spinningExampleTitle">Cart product row</h3>
+              <div class="spinner-spec">
+                <span class="spinner" aria-label="Processing"></span>
+                <div>
+                  <strong data-i18n="spinningExampleProduct">Limited Runner</strong>
+                  <p class="muted" data-i18n="spinningExampleBody">Reservation requested. Waiting for projection update.</p>
+                </div>
+                <span class="badge warning">processing</span>
+              </div>
+              <p class="muted" data-i18n="spinningExampleNote">
+                The spinner stops once the item has a projection-backed outcome.
+              </p>
+            </article>
+            <article class="card spinner-rules subtle">
+              <h3 data-i18n="notificationRuleTitle">Notification system</h3>
+              <div class="spinner-spec">
+                <span class="badge info">1</span>
+                <div>
+                  <strong data-i18n="notificationRuleUpdate">Checkout update received</strong>
+                  <p class="muted" data-i18n="notificationRuleBody">Messages are centralized instead of scattered across panels.</p>
+                </div>
+                <span class="badge neutral">update</span>
+              </div>
+              <p class="muted" data-i18n="notificationRuleNote">
+                Notification delivery is helpful UI state, not durable checkout truth.
+              </p>
+            </article>
+          </div>
+        </section>
+
+        <section class="section section-grid" id="decisions" aria-labelledby="decisions-title">
+          <div class="section-intro">
+            <p class="eyebrow" data-i18n="decisionsEyebrow">Design decisions</p>
+            <h2 id="decisions-title" data-i18n="decisionsTitle">Rules that keep the UI honest under load.</h2>
+            <p data-i18n="decisionsBody">
+              These decisions are intentionally concrete so the first Next.js implementation has fewer open questions.
+            </p>
+          </div>
+          <div class="card">
+            <div class="decision-list">
+              <div class="decision-row">
+                <strong data-i18n="decisionInventory">Inventory display</strong>
+                <span class="badge danger" data-i18n="decisionNoOptimistic">No optimistic decrement</span>
+                <span data-i18n="decisionInventoryBody">Only update from the SKU inventory projection endpoint.</span>
+              </div>
+              <div class="decision-row">
+                <strong data-i18n="decisionCopy">Copy model</strong>
+                <span class="badge info">en / zh-TW</span>
+                <span data-i18n="decisionCopyBody">Use short state labels; keep event-sourcing terms out of primary buyer copy.</span>
+              </div>
+              <div class="decision-row">
+                <strong data-i18n="decisionLayout">Layout</strong>
+                <span class="badge neutral" data-i18n="decisionProductFirst">Product first</span>
+                <span data-i18n="decisionLayoutBody">Show the purchase experience immediately, not a marketing landing page.</span>
+              </div>
+              <div class="decision-row">
+                <strong data-i18n="decisionSpinning">Spinning UI</strong>
+                <span class="badge warning" data-i18n="decisionAsyncOnly">Active async only</span>
+                <span data-i18n="decisionSpinningBody">Use per-product spinners for reservation or projection work; stop when a projection-backed outcome arrives.</span>
+              </div>
+              <div class="spinner-spec" aria-label="Spinning UI decision preview">
+                <span class="spinner" aria-label="Processing"></span>
+                <div>
+                  <strong data-i18n="decisionSpinningPreviewTitle">Cart product processing</strong>
+                  <p class="muted" data-i18n="decisionSpinningPreviewBody">Reservation requested. Notification center receives updates while the row waits.</p>
+                </div>
+                <span class="badge warning">processing</span>
+              </div>
+              <div class="decision-row">
+                <strong data-i18n="decisionOperator">Operator strip</strong>
+                <span class="badge warning" data-i18n="decisionDevOnly">Development only</span>
+                <span data-i18n="decisionOperatorBody">Expose counters and projection lag for benchmark inspection outside production UI.</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="section section-grid" id="breakpoints" aria-labelledby="breakpoints-title">
+          <div class="section-intro">
+            <p class="eyebrow" data-i18n="breakpointsEyebrow">Responsive breakpoints</p>
+            <h2 id="breakpoints-title" data-i18n="breakpointsTitle">Device size changes product behavior.</h2>
+            <p data-i18n="breakpointsBody">
+              Breakpoints define how product media, purchase controls, cart progress, notifications, and operator data reflow.
+            </p>
+          </div>
+          <div class="card">
+            <div class="breakpoint-list">
+              <div class="breakpoint-row">
+                <strong data-i18n="bpPhone">Phone</strong>
+                <code>0-639px</code>
+                <span class="muted" data-i18n="bpPhoneBody">Single column. Product media first, purchase controls immediately below, checkout status and notifications stacked. Operator strip hidden by default.</span>
+              </div>
+              <div class="breakpoint-row">
+                <strong data-i18n="bpTablet">Tablet</strong>
+                <code>640-1023px</code>
+                <span class="muted" data-i18n="bpTabletBody">Single or compact two-column layout. Keep Buy controls visible before long status history. Cart product rows stay full width.</span>
+              </div>
+              <div class="breakpoint-row">
+                <strong data-i18n="bpDesktop">Desktop</strong>
+                <code>1024-1439px</code>
+                <span class="muted" data-i18n="bpDesktopBody">Two columns. Product media on the left, purchase and checkout panels on the right. Notification center stays near status.</span>
+              </div>
+              <div class="breakpoint-row">
+                <strong data-i18n="bpWide">Wide desktop</strong>
+                <code>1440px+</code>
+                <span class="muted" data-i18n="bpWideBody">Constrain content width. Do not stretch text lines or product panels endlessly. Operator strip may sit below status or in a secondary rail.</span>
+              </div>
+            </div>
+            <p class="muted" style="margin: 14px 0 0" data-i18n="bpRule">
+              Breakpoints may change layout and density, but font size must not scale directly with viewport width.
+            </p>
+          </div>
+        </section>
+
+        <section class="section section-grid" aria-labelledby="components-title">
+          <div class="section-intro">
+            <p class="eyebrow" data-i18n="componentsEyebrow">Components</p>
+            <h2 id="components-title" data-i18n="componentsTitle">Small primitives before a UI library.</h2>
+            <p data-i18n="componentsBody">
+              Start with local button, badge, panel, status row, language switcher, and operator metric components. Add headless primitives later only when behavior requires them.
+            </p>
+          </div>
+          <div class="grid two">
+            <article class="card rules-list">
+              <h3 data-i18n="doTitle">Do</h3>
+              <ul>
+                <li data-i18n="doOne">Use stable dimensions for buttons, counters, and status rows.</li>
+                <li data-i18n="doTwo">Separate request state, checkout projection state, and inventory projection state.</li>
+                <li data-i18n="doThree">Use semantic status color only where state meaning changes.</li>
+              </ul>
+            </article>
+            <article class="card rules-list subtle">
+              <h3 data-i18n="avoidTitle">Avoid</h3>
+              <ul>
+                <li data-i18n="avoidOne">Do not show "reserved" copy after a successful POST alone.</li>
+                <li data-i18n="avoidTwo">Do not hide projection lag during benchmark work.</li>
+                <li data-i18n="avoidThree">Do not use heavy gradients, nested cards, or decorative blobs.</li>
+              </ul>
+            </article>
+          </div>
+        </section>
+
+        <section class="section section-grid" aria-labelledby="operator-title">
+          <div class="section-intro">
+            <p class="eyebrow" data-i18n="operatorEyebrow">Benchmark view</p>
+            <h2 id="operator-title" data-i18n="operatorTitle">Non-production operator strip.</h2>
+            <p data-i18n="operatorBody">
+              The buyer UI stays calm. Benchmark details live in a compact development-only strip.
+            </p>
+          </div>
+          <div class="card">
+            <div class="operator-strip">
+              <div class="metric"><span class="muted">on_hand</span><strong>100</strong></div>
+              <div class="metric"><span class="muted">reserved</span><strong>24</strong></div>
+              <div class="metric"><span class="muted">sold</span><strong>76</strong></div>
+              <div class="metric"><span class="muted">lag</span><strong>42ms</strong></div>
+            </div>
+          </div>
+        </section>
+
+        <p class="footer-note" data-i18n="footer">
+          This static page is a disposable preview. The implementation source of truth should move into Next.js components and locale dictionaries after the scaffold exists.
+        </p>
+      </main>
+    </div>
+
+    <script>
+      const messages = {
+        en: {
+          brand: "Minishop UI Pattern",
+          navTokens: "Tokens",
+          navCheckout: "Checkout",
+          navSpinning: "Spinning UI",
+          navBreakpoints: "Breakpoints",
+          navDecisions: "Decisions",
+          navPreview: "FE preview",
+          eyebrow: "Design pattern before implementation",
+          title: "Warm light-mode commerce, built for asynchronous checkout.",
+          lead:
+            "A compact UI direction for Minishop: Anthropic-like calm surfaces, TWFoundry-style tokens, bilingual copy, and clear separation between request received, inventory reserved, and order confirmed.",
+          primaryAction: "Open FE preview",
+          secondaryAction: "Review decisions",
+          languageBadge: "EN / 繁中 ready",
+          mockEyebrow: "Product page module",
+          productName: "Limited Runner",
+          productMeta: "SKU hot-001 · Direct Buy",
+          inventoryTitle: "Available now: 100",
+          inventoryBody: "Reservation is confirmed after checkout processing.",
+          projectionBadge: "Projection",
+          buyButton: "Buy",
+          statusQueued: "Request received",
+          statusQueuedBody: "Your checkout request is waiting to be processed.",
+          statusReserved: "Reserved",
+          statusReservedBody: "Inventory is reserved. Payment will start next.",
+          tokensEyebrow: "Style tokens",
+          tokensTitle: "Borrow the calm, keep the product intent.",
+          tokensBody:
+            "The direction references Anthropic's light mode through spacious typography, warm white surfaces, and quiet borders. TWFoundry contributes named tokens, CJK fallback, and semantic color discipline.",
+          canvasToken: "Canvas",
+          canvasBody: "Warm off-white page background. Use with dark ink and real product imagery.",
+          surfaceToken: "Surface",
+          surfaceBody: "Purchase panels, tables, and status modules. Avoid nested cards.",
+          accentToken: "Warm accent",
+          accentBody: "Small emphasis only. Do not make the page a single warm palette.",
+          scaleTitle: "Token levels",
+          scaleBody: "Every semantic color should have a small scale from light support surfaces to heavy text/action states.",
+          scaleUsage: "Use 50/100 for backgrounds, 300 for borders, 500/600 for badges and controls, and 900/950 for text.",
+          languageEyebrow: "Bilingual copy",
+          languageTitle: "English and Traditional Chinese are first-class UI states.",
+          languageBody: "Copy should be short, state-based, and stored behind locale keys when the real app is scaffolded.",
+          checkoutEyebrow: "Checkout states",
+          checkoutTitle: "Accepted does not mean reserved.",
+          checkoutBody:
+            "The UI must protect the core architecture: Buy creates a durable checkout intent, then projections reveal reservation and payment progress.",
+          buttonStatesTitle: "Button states",
+          stateBuy: "Buy",
+          stateSubmitting: "Submitting",
+          stateProcessing: "Processing",
+          stateNextAttempt: "New attempt allowed",
+          pollingTitle: "Polling cadence",
+          pollInitial: "initial status delay",
+          pollActive: "queued, reserving, reserved",
+          pollPayment: "pending payment",
+          pollInventory: "visible inventory refresh",
+          spinningEyebrow: "Spinning UI",
+          spinningTitle: "Use motion only for active async work.",
+          spinningBody: "Cart checkout can show per-product spinners while reservation or projection updates are still running.",
+          spinningExampleTitle: "Cart product row",
+          spinningExampleProduct: "Limited Runner",
+          spinningExampleBody: "Reservation requested. Waiting for projection update.",
+          spinningExampleNote: "The spinner stops once the item has a projection-backed outcome.",
+          notificationRuleTitle: "Notification system",
+          notificationRuleUpdate: "Checkout update received",
+          notificationRuleBody: "Messages are centralized instead of scattered across panels.",
+          notificationRuleNote: "Notification delivery is helpful UI state, not durable checkout truth.",
+          breakpointsEyebrow: "Responsive breakpoints",
+          breakpointsTitle: "Device size changes product behavior.",
+          breakpointsBody:
+            "Breakpoints define how product media, purchase controls, cart progress, notifications, and operator data reflow.",
+          bpPhone: "Phone",
+          bpPhoneBody:
+            "Single column. Product media first, purchase controls immediately below, checkout status and notifications stacked. Operator strip hidden by default.",
+          bpTablet: "Tablet",
+          bpTabletBody:
+            "Single or compact two-column layout. Keep Buy controls visible before long status history. Cart product rows stay full width.",
+          bpDesktop: "Desktop",
+          bpDesktopBody:
+            "Two columns. Product media on the left, purchase and checkout panels on the right. Notification center stays near status.",
+          bpWide: "Wide desktop",
+          bpWideBody:
+            "Constrain content width. Do not stretch text lines or product panels endlessly. Operator strip may sit below status or in a secondary rail.",
+          bpRule: "Breakpoints may change layout and density, but font size must not scale directly with viewport width.",
+          decisionsEyebrow: "Design decisions",
+          decisionsTitle: "Rules that keep the UI honest under load.",
+          decisionsBody: "These decisions are intentionally concrete so the first Next.js implementation has fewer open questions.",
+          decisionInventory: "Inventory display",
+          decisionNoOptimistic: "No optimistic decrement",
+          decisionInventoryBody: "Only update from the SKU inventory projection endpoint.",
+          decisionCopy: "Copy model",
+          decisionCopyBody: "Use short state labels; keep event-sourcing terms out of primary buyer copy.",
+          decisionLayout: "Layout",
+          decisionProductFirst: "Product first",
+          decisionLayoutBody: "Show the purchase experience immediately, not a marketing landing page.",
+          decisionSpinning: "Spinning UI",
+          decisionAsyncOnly: "Active async only",
+          decisionSpinningBody:
+            "Use per-product spinners for reservation or projection work; stop when a projection-backed outcome arrives.",
+          decisionSpinningPreviewTitle: "Cart product processing",
+          decisionSpinningPreviewBody: "Reservation requested. Notification center receives updates while the row waits.",
+          decisionOperator: "Operator strip",
+          decisionDevOnly: "Development only",
+          decisionOperatorBody: "Expose counters and projection lag for benchmark inspection outside production UI.",
+          componentsEyebrow: "Components",
+          componentsTitle: "Small primitives before a UI library.",
+          componentsBody:
+            "Start with local button, badge, panel, status row, language switcher, and operator metric components. Add headless primitives later only when behavior requires them.",
+          doTitle: "Do",
+          doOne: "Use stable dimensions for buttons, counters, and status rows.",
+          doTwo: "Separate request state, checkout projection state, and inventory projection state.",
+          doThree: "Use semantic status color only where state meaning changes.",
+          avoidTitle: "Avoid",
+          avoidOne: "Do not show reserved copy after a successful POST alone.",
+          avoidTwo: "Do not hide projection lag during benchmark work.",
+          avoidThree: "Do not use heavy gradients, nested cards, or decorative blobs.",
+          operatorEyebrow: "Benchmark view",
+          operatorTitle: "Non-production operator strip.",
+          operatorBody: "The buyer UI stays calm. Benchmark details live in a compact development-only strip.",
+          footer:
+            "This static page is a disposable preview. The implementation source of truth should move into Next.js components and locale dictionaries after the scaffold exists.",
+        },
+        zh: {
+          brand: "Minishop UI Pattern",
+          navTokens: "Tokens",
+          navCheckout: "結帳狀態",
+          navSpinning: "Spinning UI",
+          navBreakpoints: "Breakpoints",
+          navDecisions: "設計決策",
+          navPreview: "FE preview",
+          eyebrow: "實作前的設計模式",
+          title: "溫和 light mode 商務介面，為非同步結帳而設計。",
+          lead:
+            "這是 Minishop 的前端方向：接近 Anthropic 的安靜留白、參考 TWFoundry 的 token 命名、支援英文與繁中，並清楚分開已收到請求、已保留庫存、已確認訂單。",
+          primaryAction: "開啟 FE preview",
+          secondaryAction: "檢查設計決策",
+          languageBadge: "EN / 繁中 ready",
+          mockEyebrow: "商品頁模組",
+          productName: "限量跑鞋",
+          productMeta: "SKU hot-001 · 直接購買",
+          inventoryTitle: "目前可售：100",
+          inventoryBody: "庫存保留會在結帳處理完成後確認。",
+          projectionBadge: "Projection",
+          buyButton: "購買",
+          statusQueued: "已收到請求",
+          statusQueuedBody: "你的結帳請求已建立，正在等待處理。",
+          statusReserved: "已保留",
+          statusReservedBody: "庫存已保留，下一步會進入付款。",
+          tokensEyebrow: "Style tokens",
+          tokensTitle: "借用安靜感，但保留產品語意。",
+          tokensBody:
+            "方向上參考 Anthropic light mode 的寬鬆字級、溫和白色表面與細邊線；並沿用 TWFoundry 的 token 命名、CJK fallback 與語意色紀律。",
+          canvasToken: "Canvas",
+          canvasBody: "溫和的 off-white 頁面背景，搭配深色文字與真實商品圖片。",
+          surfaceToken: "Surface",
+          surfaceBody: "購買面板、表格與狀態模組使用。避免卡片包卡片。",
+          accentToken: "Warm accent",
+          accentBody: "只用於小範圍重點，不要讓整頁變成單一暖色系。",
+          scaleTitle: "Token levels",
+          scaleBody: "每個語意色都應該有一組由淺到重的 scale，用於支援背景、邊線、操作狀態與文字。",
+          scaleUsage: "50/100 用於背景，300 用於邊線，500/600 用於 badges 與 controls，900/950 用於文字。",
+          languageEyebrow: "雙語文案",
+          languageTitle: "英文與繁中都是一等 UI 狀態。",
+          languageBody: "文案要短、以狀態為中心；正式 scaffold 後應放進 locale keys。",
+          checkoutEyebrow: "結帳狀態",
+          checkoutTitle: "Accepted 不等於 Reserved。",
+          checkoutBody:
+            "UI 必須保護核心架構：Buy 只建立 durable checkout intent，後續才由 projection 呈現保留與付款進度。",
+          buttonStatesTitle: "按鈕狀態",
+          stateBuy: "購買",
+          stateSubmitting: "送出中",
+          stateProcessing: "處理中",
+          stateNextAttempt: "可建立新嘗試",
+          pollingTitle: "Polling 節奏",
+          pollInitial: "初次狀態延遲",
+          pollActive: "queued、reserving、reserved",
+          pollPayment: "等待付款",
+          pollInventory: "可見頁面的庫存刷新",
+          spinningEyebrow: "Spinning UI",
+          spinningTitle: "只在真正進行中的非同步工作使用 motion。",
+          spinningBody: "購物車 checkout 可以在 reservation 或 projection update 尚未完成時，對單一商品列顯示 spinner。",
+          spinningExampleTitle: "購物車商品列",
+          spinningExampleProduct: "限量跑鞋",
+          spinningExampleBody: "已送出保留請求，等待 projection 更新。",
+          spinningExampleNote: "商品列拿到 projection-backed outcome 後，spinner 就必須停止。",
+          notificationRuleTitle: "通知系統",
+          notificationRuleUpdate: "收到 checkout update",
+          notificationRuleBody: "訊息集中到通知中心，不散落在不同 panels。",
+          notificationRuleNote: "通知是有幫助的 UI 狀態，不是 durable checkout truth。",
+          breakpointsEyebrow: "Responsive breakpoints",
+          breakpointsTitle: "裝置尺寸會改變產品行為。",
+          breakpointsBody: "Breakpoints 定義 product media、purchase controls、cart progress、notifications 與 operator data 如何重排。",
+          bpPhone: "Phone",
+          bpPhoneBody: "單欄。商品圖片優先，購買控制緊接在後，checkout status 與 notifications 直向排列。Operator strip 預設隱藏。",
+          bpTablet: "Tablet",
+          bpTabletBody: "單欄或緊湊雙欄。Buy controls 要出現在長狀態歷史之前。Cart product rows 維持滿版寬。",
+          bpDesktop: "Desktop",
+          bpDesktopBody: "雙欄。商品圖片在左，purchase 與 checkout panels 在右。Notification center 靠近 status。",
+          bpWide: "Wide desktop",
+          bpWideBody: "限制內容寬度。不要讓文字行或商品面板無限制延展。Operator strip 可放在 status 下方或次要 rail。",
+          bpRule: "Breakpoints 可以改變 layout 與 density，但 font size 不可直接跟 viewport width 縮放。",
+          decisionsEyebrow: "設計決策",
+          decisionsTitle: "讓高併發下的 UI 保持誠實。",
+          decisionsBody: "這些決策刻意寫得具體，讓第一版 Next.js 實作少一點模糊空間。",
+          decisionInventory: "庫存顯示",
+          decisionNoOptimistic: "不樂觀扣庫存",
+          decisionInventoryBody: "只從 SKU inventory projection endpoint 更新。",
+          decisionCopy: "文案模型",
+          decisionCopyBody: "使用短狀態文案；主要買家介面不出現 event-sourcing 術語。",
+          decisionLayout: "版面",
+          decisionProductFirst: "商品優先",
+          decisionLayoutBody: "第一眼就是購買體驗，不做 marketing landing page。",
+          decisionSpinning: "Spinning UI",
+          decisionAsyncOnly: "只用於 active async",
+          decisionSpinningBody: "針對 reservation 或 projection 工作使用逐商品 spinner；拿到 projection-backed outcome 後必須停止。",
+          decisionSpinningPreviewTitle: "購物車商品處理中",
+          decisionSpinningPreviewBody: "已送出保留請求；等待期間由通知中心接收 updates。",
+          decisionOperator: "Operator strip",
+          decisionDevOnly: "僅開發環境",
+          decisionOperatorBody: "在非 production UI 顯示 counters 與 projection lag 供 benchmark 檢查。",
+          componentsEyebrow: "Components",
+          componentsTitle: "先做小型 primitives，再考慮 UI library。",
+          componentsBody:
+            "先建立本地 button、badge、panel、status row、language switcher、operator metric。只有行為需要時才加入 headless primitives。",
+          doTitle: "應該",
+          doOne: "按鈕、計數器、狀態列要有穩定尺寸。",
+          doTwo: "分開 request state、checkout projection state、inventory projection state。",
+          doThree: "語意色只用在狀態意義改變的地方。",
+          avoidTitle: "避免",
+          avoidOne: "不要只因 POST 成功就顯示已保留庫存。",
+          avoidTwo: "benchmark 工作期間不要隱藏 projection lag。",
+          avoidThree: "不要使用厚重漸層、卡片包卡片或裝飾泡泡。",
+          operatorEyebrow: "Benchmark view",
+          operatorTitle: "非 production operator strip。",
+          operatorBody: "買家 UI 保持安靜；benchmark 細節放在緊湊的開發用區塊。",
+          footer:
+            "這個靜態頁是可丟棄的 preview。Next.js scaffold 完成後，實作 source of truth 應移到 components 與 locale dictionaries。",
+        },
+      };
+
+      const buttons = document.querySelectorAll("[data-locale]");
+
+      function applyLocale(locale) {
+        const dict = messages[locale];
+        document.documentElement.lang = locale === "zh" ? "zh-Hant-TW" : "en";
+        document.querySelectorAll("[data-i18n]").forEach((node) => {
+          const key = node.getAttribute("data-i18n");
+          if (dict[key]) {
+            node.textContent = dict[key];
+          }
+        });
+        buttons.forEach((button) => {
+          button.setAttribute("aria-pressed", String(button.dataset.locale === locale));
+        });
+      }
+
+      buttons.forEach((button) => {
+        button.addEventListener("click", () => applyLocale(button.dataset.locale));
+      });
+    </script>
+  </body>
+</html>
