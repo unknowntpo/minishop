@@ -44,10 +44,31 @@ InventoryReservationReleased
 OrderConfirmed
   aggregate: order
   meaning: checkout completed successfully and became a confirmed order
-  payload: order_id, checkout_intent_id, buyer_id, items[], total_amount
+  payload: order_id, checkout_intent_id, buyer_id, items[], total_amount_minor
 
 OrderCancelled
   aggregate: order
   meaning: pending order was cancelled after payment failure or timeout
   payload: order_id, checkout_intent_id, reason
 ```
+
+## Event Type Constraints
+
+Supported event type values:
+
+```text
+CheckoutIntentCreated
+InventoryReservationRequested
+InventoryReserved
+InventoryReservationRejected
+PaymentRequested
+PaymentSucceeded
+PaymentFailed
+InventoryReservationReleased
+OrderConfirmed
+OrderCancelled
+```
+
+The implementation must define these values as a TypeScript string union or equivalent constant object. The database must constrain `event_store.event_type` with a check constraint in the first implementation.
+
+PostgreSQL enum types are optional later. A check constraint is preferred during early design because event type changes are easier to migrate.

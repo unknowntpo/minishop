@@ -8,7 +8,10 @@ Supporting design notes:
 
 - [Architecture diagrams](design/architecture.md)
 - [Event dictionary](design/events.md)
+- [Command boundary](design/commands.md)
 - [Storage schema](design/storage.md)
+- [Schema conventions](design/schema-conventions.md)
+- [State transitions](design/transitions.md)
 - [Day 1 benchmark](design/benchmark.md)
 
 ## Goals / Non-Goals

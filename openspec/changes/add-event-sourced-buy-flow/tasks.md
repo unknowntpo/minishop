@@ -3,6 +3,8 @@
 - [ ] 1.1 Implement Use Node.js 24 LTS as the production runtime baseline in project config and documentation
 - [ ] 1.2 Implement Use Drizzle for schema and migrations with PostgreSQL connection setup
 - [ ] 1.3 Add base Drizzle migrations for event_store schema, projection schema, and checkpoint tables
+- [ ] 1.4 Add Catalog Tables migrations for singular product and sku seed tables
+- [ ] 1.5 Add Schema Conventions validation for IDs, money minor units, checkout item JSON, event metadata, reservation identity, and FK policy
 
 ## 2. Event Store and Checkout Intent
 
@@ -11,6 +13,8 @@
 - [ ] 2.3 Implement Model Checkout Intent separately from SKU inventory as checkout aggregate metadata and aggregate fields
 - [ ] 2.4 Implement Use PostgreSQL event store first by keeping Kafka out of the initial write path
 - [ ] 2.5 Implement Event Dictionary types and validation for checkout, inventory, payment, and order events
+- [ ] 2.6 Implement constrained event_type values in TypeScript and PostgreSQL check constraints
+- [ ] 2.7 Implement Command Boundary types for checkout, inventory, payment, and order command handlers
 
 ## 3. Inventory and Payment Events
 
@@ -29,6 +33,8 @@
 - [ ] 4.3 Implement Start projection processing inside Next.js with DB coordination using transaction-level advisory locks
 - [ ] 4.4 Implement Projection Processing Coordination with checkpoint updates and skipped concurrent runs
 - [ ] 4.5 Implement projection aggregate_version and last_event_id tracking separately from projection_checkpoint worker progress
+- [ ] 4.6 Implement constrained checkout intent, order, and payment status values in projection schema and application validation
+- [ ] 4.7 Implement checkout intent, order, payment, and inventory counter state transition validation
 
 ## 5. Client Read APIs
 

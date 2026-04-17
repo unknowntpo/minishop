@@ -71,6 +71,108 @@ The system SHALL define the supported event types before implementation. Each ev
 - **WHEN** order processing appends order events
 - **THEN** `OrderConfirmed` and `OrderCancelled` SHALL use the order aggregate and include `order_id` and `checkout_intent_id`
 
+#### Scenario: Event type is constrained
+
+- **WHEN** an event is appended
+- **THEN** `event_type` SHALL be one of `CheckoutIntentCreated`, `InventoryReservationRequested`, `InventoryReserved`, `InventoryReservationRejected`, `PaymentRequested`, `PaymentSucceeded`, `PaymentFailed`, `InventoryReservationReleased`, `OrderConfirmed`, or `OrderCancelled`
+
+#### Scenario: Event handlers are exhaustive
+
+- **WHEN** event handling code is compiled
+- **THEN** TypeScript SHALL expose supported event types as a string union or equivalent constant object for exhaustive handling
+
+### Requirement: Command Boundary
+
+The system SHALL separate commands from events. Commands SHALL represent requests that can fail validation. Events SHALL represent facts that already happened and SHALL be stored in `event_store`.
+
+#### Scenario: Checkout creation command succeeds
+
+- **WHEN** `CreateCheckoutIntent` passes validation
+- **THEN** the system SHALL append `CheckoutIntentCreated`
+
+#### Scenario: Inventory reservation command is handled
+
+- **WHEN** `ReserveInventory` is handled for a SKU
+- **THEN** the system SHALL append either `InventoryReserved` or `InventoryReservationRejected`
+
+#### Scenario: Payment command is handled
+
+- **WHEN** payment processing starts or receives provider results
+- **THEN** the system SHALL append `PaymentRequested`, `PaymentSucceeded`, or `PaymentFailed`
+
+#### Scenario: Order command is handled
+
+- **WHEN** order processing confirms or cancels an order
+- **THEN** the system SHALL append `OrderConfirmed` or `OrderCancelled`
+
+### Requirement: Catalog Tables
+
+The system SHALL store MVP catalog metadata in singular PostgreSQL tables named `product` and `sku`. Catalog metadata SHALL NOT be event sourced in the first implementation. SKU SHALL remain the inventory aggregate for reservation events.
+
+#### Scenario: Catalog schema is created
+
+- **WHEN** database migrations run
+- **THEN** the system SHALL create `product` and `sku` tables using singular table names
+
+#### Scenario: Product row stores display data
+
+- **WHEN** a product row is stored
+- **THEN** the row SHALL include `product_id`, `name`, optional `description`, `status`, `created_at`, and `updated_at`
+
+#### Scenario: SKU row stores purchasable unit data
+
+- **WHEN** a SKU row is stored
+- **THEN** the row SHALL include `sku_id`, `product_id`, unique `sku_code`, `name`, `price_amount_minor`, `currency`, `status`, `attributes`, `created_at`, and `updated_at`
+
+#### Scenario: Catalog is read for SSR
+
+- **WHEN** the product page is server-rendered
+- **THEN** the system SHALL read product and SKU metadata from `product` and `sku` tables and inventory state from `sku_inventory_projection`
+
+### Requirement: Schema Conventions
+
+The system SHALL use explicit schema conventions for identifiers, money, JSON payloads, reservation identity, buyer identity, event metadata, and foreign keys.
+
+#### Scenario: Identifiers are stored consistently
+
+- **WHEN** rows or events store `checkout_intent_id`, `event_id`, `reservation_id`, `payment_id`, or `order_id`
+- **THEN** those identifiers SHALL be UUID values
+
+#### Scenario: Catalog identifiers are stable
+
+- **WHEN** rows store `product_id` or `sku_id`
+- **THEN** those identifiers SHALL be stable text identifiers suitable for seed data and benchmarks
+
+#### Scenario: Buyer identity is stored
+
+- **WHEN** checkout or order state stores buyer identity
+- **THEN** `buyer_id` SHALL be text and SHALL NOT require a user table in the MVP
+
+#### Scenario: Money is stored
+
+- **WHEN** price or total amount is stored
+- **THEN** the amount SHALL be a `BIGINT` integer minor-unit value using an `_amount_minor` field name and currency SHALL be an uppercase currency code
+
+#### Scenario: Checkout item JSON is stored
+
+- **WHEN** checkout `items` JSONB is stored
+- **THEN** each item SHALL include `sku_id`, positive integer `quantity`, integer `unit_price_amount_minor`, and `currency`
+
+#### Scenario: Event metadata JSON is stored
+
+- **WHEN** an event is appended
+- **THEN** `metadata` SHALL support `request_id`, `trace_id`, `source`, and `actor_id`
+
+#### Scenario: Reservation identity is stored in events
+
+- **WHEN** reservation-related events are appended
+- **THEN** they SHALL include `reservation_id`, `checkout_intent_id`, `sku_id`, and `quantity`
+
+#### Scenario: Event store foreign keys are avoided
+
+- **WHEN** `event_store` is created
+- **THEN** it SHALL NOT define foreign keys from polymorphic `aggregate_id` to aggregate-specific tables such as `sku`
+
 ### Requirement: Projection Read Models
 
 The system SHALL expose client and SSR reads through projection tables rather than replaying raw events per request. The system SHALL maintain projections for SKU inventory, checkout intent status, and order state.
@@ -85,6 +187,11 @@ The system SHALL expose client and SSR reads through projection tables rather th
 - **WHEN** a checkout intent projection row is written
 - **THEN** the row SHALL include `checkout_intent_id`, `aggregate_version`, `last_event_id`, `buyer_id`, `status`, `items`, optional `payment_id`, optional `order_id`, optional rejection or cancellation reason, `created_at`, and `updated_at`
 
+#### Scenario: Checkout intent status is constrained
+
+- **WHEN** a checkout intent projection row is written
+- **THEN** `status` SHALL be one of `queued`, `reserving`, `reserved`, `pending_payment`, `confirmed`, `rejected`, `cancelled`, or `expired`
+
 #### Scenario: SKU inventory projection stores inventory counters
 
 - **WHEN** a SKU inventory projection row is written
@@ -93,7 +200,37 @@ The system SHALL expose client and SSR reads through projection tables rather th
 #### Scenario: Order projection stores order state
 
 - **WHEN** an order projection row is written
-- **THEN** the row SHALL include `order_id`, `aggregate_version`, `last_event_id`, `checkout_intent_id`, `buyer_id`, `status`, `payment_status`, `items`, `total_amount`, `created_at`, and `updated_at`
+- **THEN** the row SHALL include `order_id`, `aggregate_version`, `last_event_id`, `checkout_intent_id`, `buyer_id`, `status`, `payment_status`, `items`, `total_amount_minor`, `created_at`, and `updated_at`
+
+#### Scenario: Order status is constrained
+
+- **WHEN** an order projection row is written
+- **THEN** `status` SHALL be one of `pending_payment`, `confirmed`, or `cancelled`
+
+#### Scenario: Payment status is constrained
+
+- **WHEN** an order projection row is written
+- **THEN** `payment_status` SHALL be one of `not_requested`, `requested`, `succeeded`, `failed`, or `timeout`
+
+#### Scenario: Checkout intent status transition is valid
+
+- **WHEN** checkout intent projection status changes
+- **THEN** the transition SHALL follow `queued` to `reserving`, `reserving` to `reserved` or `rejected`, `reserved` to `pending_payment`, and `pending_payment` to `confirmed`, `cancelled`, or `expired`
+
+#### Scenario: Order status transition is valid
+
+- **WHEN** order projection status changes
+- **THEN** the transition SHALL follow `pending_payment` to `confirmed` or `cancelled`
+
+#### Scenario: Payment status transition is valid
+
+- **WHEN** payment status changes
+- **THEN** the transition SHALL follow `not_requested` to `requested`, and `requested` to `succeeded`, `failed`, or `timeout`
+
+#### Scenario: Inventory counters stay consistent
+
+- **WHEN** inventory projection counters are updated
+- **THEN** `reserved`, `sold`, and `available` SHALL NOT become negative, and `available` SHALL equal `on_hand - reserved - sold`
 
 #### Scenario: Projection checkpoint stores progress
 
