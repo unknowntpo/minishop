@@ -311,4 +311,6 @@ warning: pending_payment/expired
 danger: rejected/cancelled/payment failed
 ```
 
+Status rows must center their content visually. Reset child paragraph margins, use a small internal text gap, and align trailing badges/spinners to the row center so browser default margins do not make copy look off-center.
+
 Copy must be short and state-based. Avoid explaining event sourcing to the buyer in primary UI.

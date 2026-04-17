@@ -293,6 +293,17 @@
         background: var(--ms-surface);
       }
 
+      .status-row > div,
+      .spinner-spec > div {
+        display: grid;
+        gap: 4px;
+      }
+
+      .status-row p,
+      .spinner-spec p {
+        margin-bottom: 0;
+      }
+
       .badge {
         display: inline-flex;
         align-items: center;
@@ -949,6 +960,7 @@
                 <li data-i18n="doOne">Use stable dimensions for buttons, counters, and status rows.</li>
                 <li data-i18n="doTwo">Separate request state, checkout projection state, and inventory projection state.</li>
                 <li data-i18n="doThree">Use semantic status color only where state meaning changes.</li>
+                <li data-i18n="doFour">Center status row content by resetting child paragraph margins and aligning badges to the row center.</li>
               </ul>
             </article>
             <article class="card rules-list subtle">
@@ -1100,6 +1112,7 @@
           doOne: "Use stable dimensions for buttons, counters, and status rows.",
           doTwo: "Separate request state, checkout projection state, and inventory projection state.",
           doThree: "Use semantic status color only where state meaning changes.",
+          doFour: "Center status row content by resetting child paragraph margins and aligning badges to the row center.",
           avoidTitle: "Avoid",
           avoidOne: "Do not show reserved copy after a successful POST alone.",
           avoidTwo: "Do not hide projection lag during benchmark work.",
@@ -1216,6 +1229,7 @@
           doOne: "按鈕、計數器、狀態列要有穩定尺寸。",
           doTwo: "分開 request state、checkout projection state、inventory projection state。",
           doThree: "語意色只用在狀態意義改變的地方。",
+          doFour: "Status row 內的 paragraph margin 要重設，badge 要和整列垂直置中。",
           avoidTitle: "避免",
           avoidOne: "不要只因 POST 成功就顯示已保留庫存。",
           avoidTwo: "benchmark 工作期間不要隱藏 projection lag。",

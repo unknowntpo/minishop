@@ -286,6 +286,21 @@
         background: var(--ms-surface);
       }
 
+      .status-line > div,
+      .cart-item > div,
+      .notification-item > div,
+      .inventory > div {
+        display: grid;
+        gap: 4px;
+      }
+
+      .status-line p,
+      .cart-item p,
+      .notification-item p,
+      .inventory p {
+        margin-bottom: 0;
+      }
+
       .status-line.active {
         border-color: rgba(31, 27, 23, 0.22);
         box-shadow: inset 0 0 0 1px rgba(31, 27, 23, 0.04);
