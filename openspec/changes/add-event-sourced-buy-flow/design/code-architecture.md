@@ -155,6 +155,29 @@ seed-dev-catalog
 
 Production data loading must be a separate operational process when needed.
 
+## Local PostgreSQL
+
+Use Docker Compose as the default local PostgreSQL setup:
+
+```text
+docker-compose.yml
+  postgres service
+  minishop database
+  persistent local volume
+  healthcheck with pg_isready
+```
+
+Local commands:
+
+```text
+pnpm db:up
+pnpm db:migrate
+pnpm db:seed:dev
+pnpm dev
+```
+
+Compose is a local development dependency, not a production runtime decision. The application still connects through `DATABASE_URL`, so a native local PostgreSQL instance can be used when needed.
+
 ## Dependency Direction
 
 Allowed direction:

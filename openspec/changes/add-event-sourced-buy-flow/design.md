@@ -54,6 +54,18 @@ Alternative considered: Prisma. Prisma has stronger tooling for CRUD-heavy apps,
 
 Alternative considered: Kysely. Kysely has strong SQL control, but its migration tooling is more minimal than Drizzle.
 
+### Use Docker Compose for local PostgreSQL
+
+Local development should have a reproducible PostgreSQL setup through `docker-compose.yml`. The compose file runs PostgreSQL only; Next.js, pnpm, Drizzle, and tests still run directly on Node.js 24.
+
+The default local connection string remains:
+
+```text
+postgres://postgres:postgres@localhost:5432/minishop
+```
+
+This keeps local setup predictable without turning Docker into the production deployment model. Developers may still use a native local PostgreSQL instance if it exposes the same `DATABASE_URL`.
+
 ### Use PostgreSQL event store first
 
 The first implementation writes events to PostgreSQL `event_store` before any downstream processing. PostgreSQL is the durable truth. Kafka is deferred until the PostgreSQL-only baseline is measured.
