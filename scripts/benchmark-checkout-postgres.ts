@@ -51,6 +51,11 @@ type EventCountRow = {
   count: string | number;
 };
 
+type EventTypeDistributionRow = {
+  event_type: string;
+  count: string | number;
+};
+
 const config = readConfig();
 
 async function main() {
@@ -73,12 +78,14 @@ async function main() {
 
     await processProjectionBatch();
 
-    const [afterEventCount, statusDistribution, inventory, checkpoint] = await Promise.all([
-      readEventCount(pool),
-      readStatusDistribution(pool),
-      readInventory(pool, config.skuId),
-      readCheckpoint(pool),
-    ]);
+    const [afterEventCount, eventTypeDistribution, statusDistribution, inventory, checkpoint] =
+      await Promise.all([
+        readEventCount(pool),
+        readEventTypeDistribution(pool),
+        readStatusDistribution(pool),
+        readInventory(pool, config.skuId),
+        readCheckpoint(pool),
+      ]);
 
     const accepted = results.filter((result) => result.ok).length;
     const errors = results.filter((result) => !result.ok).length;
@@ -108,7 +115,9 @@ async function main() {
       pass,
       scenario: {
         skuId: config.skuId,
+        workloadType: "single_sku_direct_buy",
         requestedBuyClicks: config.requests,
+        cartSkuCount: 1,
         quantityPerIntent: 1,
       },
       requestPath: {
@@ -136,11 +145,16 @@ async function main() {
         afterEventCount,
         appendedEvents,
         appendThroughputPerSecond: Number((appendedEvents / (totalMs / 1000)).toFixed(2)),
+        eventTypeDistribution,
       },
       projections: {
         checkpointLastEventId: checkpoint,
         eventStoreLastEventId: afterEventCount,
         checkpointLagEvents: Math.max(0, afterEventCount - checkpoint),
+        checkoutProjectionCount: Object.values(statusDistribution).reduce(
+          (total, count) => total + count,
+          0,
+        ),
         checkoutStatusDistribution: statusDistribution,
         skuInventory: inventory,
       },
@@ -239,6 +253,17 @@ async function processProjectionBatch() {
 async function readEventCount(pool: Pool) {
   const result = await pool.query<EventCountRow>("select count(*) as count from event_store");
   return Number(result.rows[0]?.count ?? 0);
+}
+
+async function readEventTypeDistribution(pool: Pool) {
+  const result = await pool.query<EventTypeDistributionRow>(`
+    select event_type, count(*) as count
+    from event_store
+    group by event_type
+    order by event_type
+  `);
+
+  return Object.fromEntries(result.rows.map((row) => [row.event_type, Number(row.count)]));
 }
 
 async function readStatusDistribution(pool: Pool) {

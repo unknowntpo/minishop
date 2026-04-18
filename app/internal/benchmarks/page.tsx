@@ -2,6 +2,7 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 
 import Link from "next/link";
+import type { ReactNode } from "react";
 
 export const dynamic = "force-dynamic";
 
@@ -28,6 +29,8 @@ type BenchmarkReport = {
   scenario?: {
     requestedBuyClicks?: number;
     skuId?: string;
+    workloadType?: string;
+    cartSkuCount?: number;
   };
   requestPath?: {
     accepted?: number;
@@ -39,17 +42,29 @@ type BenchmarkReport = {
     requestsPerSecond?: number;
     statusDistribution?: Record<string, number>;
     errorDistribution?: Record<string, number>;
+    duplicateReplay?: {
+      status?: number;
+      idempotentReplay?: boolean;
+      checkoutIntentId?: string | null;
+    };
   };
   eventStore?: {
+    beforeEventCount?: number;
+    afterEventCount?: number;
     appendedEvents?: number;
     appendThroughputPerSecond?: number;
+    eventTypeDistribution?: Record<string, number>;
   };
   projections?: {
+    checkpointLastEventId?: number;
+    eventStoreLastEventId?: number;
     checkpointLagEvents?: number;
     projectionLagEvents?: number;
+    checkoutProjectionCount?: number;
     checkoutStatusDistribution?: Record<string, number>;
     skuInventory?: {
       noOversell?: boolean;
+      onHand?: number;
       available?: number;
       reserved?: number;
       sold?: number;
@@ -102,6 +117,15 @@ export default async function InternalBenchmarksPage() {
           </section>
 
           <section className="benchmark-metric-grid" aria-label="Latest benchmark metrics">
+            <MetricCard
+              label="accepted rate"
+              tone={readAcceptedRate(latest) === 1 ? "success" : "warning"}
+              value={formatPercent(readAcceptedRate(latest))}
+            />
+            <MetricCard
+              label="request/sec"
+              value={formatNumber(latest.requestPath?.requestsPerSecond)}
+            />
             <MetricCard label="accepted" value={formatNumber(latest.requestPath?.accepted)} />
             <MetricCard label="errors" value={formatNumber(latest.requestPath?.errors)} />
             <MetricCard
@@ -118,14 +142,119 @@ export default async function InternalBenchmarksPage() {
             />
             <MetricCard
               label="no oversell"
+              tone={latest.projections?.skuInventory?.noOversell ? "success" : "danger"}
               value={latest.projections?.skuInventory?.noOversell ? "true" : "false"}
             />
           </section>
 
+          <section className="panel admin-panel" aria-labelledby="evidence-title">
+            <p className="eyebrow">Latest evidence</p>
+            <h2 id="evidence-title">What this run proves</h2>
+            <p className="muted admin-panel-copy">
+              The baseline separates load symptoms from domain correctness. A failed HTTP burst can
+              still prove durable events, projection catch-up, and no oversell for accepted
+              requests.
+            </p>
+            <div className="benchmark-evidence-grid">
+              <EvidenceCard
+                badge={latest.requestPath?.errors ? `${latest.requestPath.errors} errors` : "clean"}
+                detail={`p95 ${formatNumber(latest.requestPath?.p95LatencyMs)}ms · ${formatNumber(
+                  latest.requestPath?.requestsPerSecond,
+                )} req/s`}
+                summary={`${formatNumber(latest.requestPath?.accepted)} accepted of ${formatNumber(
+                  latest.scenario?.requestedBuyClicks,
+                )}`}
+                title="Request ingress"
+                tone={latest.requestPath?.errors ? "danger" : "success"}
+              >
+                <DistributionList
+                  label="HTTP status"
+                  values={latest.requestPath?.statusDistribution}
+                />
+                <DistributionList label="Errors" values={latest.requestPath?.errorDistribution} />
+              </EvidenceCard>
+
+              <EvidenceCard
+                badge={
+                  latest.eventStore?.appendedEvents === latest.requestPath?.accepted
+                    ? "accepted = events"
+                    : "mismatch"
+                }
+                detail={`event ids ${formatNumber(latest.eventStore?.beforeEventCount)} -> ${formatNumber(
+                  latest.eventStore?.afterEventCount,
+                )}`}
+                summary={`${formatNumber(latest.eventStore?.appendedEvents)} events appended`}
+                title="Durable event store"
+                tone={
+                  latest.eventStore?.appendedEvents === latest.requestPath?.accepted
+                    ? "success"
+                    : "danger"
+                }
+              >
+                <DistributionList
+                  label="Event types"
+                  values={latest.eventStore?.eventTypeDistribution}
+                />
+              </EvidenceCard>
+
+              <EvidenceCard
+                badge={readProjectionLagEvents(latest) === 0 ? "caught up" : "behind"}
+                detail={`checkpoint ${formatNumber(
+                  latest.projections?.checkpointLastEventId,
+                )} of ${formatNumber(latest.projections?.eventStoreLastEventId)}`}
+                summary={`${formatNumber(readProjectionLagEvents(latest))} lag events`}
+                title="Projection catch-up"
+                tone={readProjectionLagEvents(latest) === 0 ? "success" : "warning"}
+              >
+                <DistributionList
+                  label="Checkout status"
+                  values={latest.projections?.checkoutStatusDistribution}
+                />
+              </EvidenceCard>
+
+              <EvidenceCard
+                badge={
+                  latest.projections?.skuInventory?.noOversell ? "no oversell" : "inventory risk"
+                }
+                detail={`on_hand ${formatNumber(
+                  latest.projections?.skuInventory?.onHand,
+                )} · reserved ${formatNumber(
+                  latest.projections?.skuInventory?.reserved,
+                )} · sold ${formatNumber(latest.projections?.skuInventory?.sold)}`}
+                summary={`available ${formatNumber(latest.projections?.skuInventory?.available)}`}
+                title="Inventory and idempotency"
+                tone={latest.projections?.skuInventory?.noOversell ? "success" : "danger"}
+              >
+                <KeyValueList
+                  values={{
+                    "duplicate status": formatNumber(latest.requestPath?.duplicateReplay?.status),
+                    "idempotent replay": latest.requestPath?.duplicateReplay?.idempotentReplay
+                      ? "true"
+                      : "false",
+                    workload: latest.scenario?.workloadType ?? "single_sku_direct_buy",
+                    "cart sku count": formatNumber(latest.scenario?.cartSkuCount ?? 1),
+                    sku: latest.scenario?.skuId ?? "n/a",
+                  }}
+                />
+              </EvidenceCard>
+            </div>
+          </section>
+
           <section className="panel admin-panel" aria-labelledby="trend-title">
             <p className="eyebrow">Trend</p>
-            <h2 id="trend-title">Last {trendRuns.length} runs</h2>
+            <h2 id="trend-title">Bottleneck signals across {trendRuns.length} runs</h2>
+            <p className="muted admin-panel-copy">
+              Trend is for regression hunting. The latest evidence section explains a single run;
+              this section shows whether latency, errors, durable append rate, or projection lag are
+              moving in the wrong direction.
+            </p>
             <div className="benchmark-trend-grid">
+              <TrendChart
+                label="accepted rate"
+                runs={trendRuns}
+                unit="%"
+                valueFor={(run) => Math.round(readAcceptedRate(run) * 100)}
+              />
               <TrendChart
                 label="p95 latency"
                 unit="ms"
@@ -173,6 +302,7 @@ export default async function InternalBenchmarksPage() {
                     <th>p95</th>
                     <th>Append/sec</th>
                     <th>Lag</th>
+                    <th>Status</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -194,6 +324,9 @@ export default async function InternalBenchmarksPage() {
                       <td>{formatNumber(run.requestPath?.p95LatencyMs)}ms</td>
                       <td>{formatNumber(run.eventStore?.appendThroughputPerSecond)}</td>
                       <td>{formatNumber(readProjectionLagEvents(run))}</td>
+                      <td>
+                        <StatusSummary values={run.projections?.checkoutStatusDistribution} />
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -251,11 +384,111 @@ async function readBenchmarkRun(file: string): Promise<BenchmarkRun | null> {
   }
 }
 
-function MetricCard({ label, value }: { label: string; value: string }) {
+type Tone = "success" | "warning" | "danger";
+
+function MetricCard({ label, value, tone }: { label: string; value: string; tone?: Tone }) {
   return (
-    <span className="admin-counter benchmark-metric">
+    <span className={`admin-counter benchmark-metric${tone ? ` ${tone}` : ""}`}>
       <strong>{label}</strong>
       <code>{value}</code>
+    </span>
+  );
+}
+
+function EvidenceCard({
+  badge,
+  children,
+  detail,
+  summary,
+  title,
+  tone,
+}: {
+  badge: string;
+  children: ReactNode;
+  detail: string;
+  summary: string;
+  title: string;
+  tone: Tone;
+}) {
+  return (
+    <article className="benchmark-evidence-card">
+      <div className="benchmark-evidence-header">
+        <strong>{title}</strong>
+        <span className={`badge ${tone}`}>{badge}</span>
+      </div>
+      <code>{summary}</code>
+      <p className="muted">{detail}</p>
+      {children}
+    </article>
+  );
+}
+
+function DistributionList({
+  label,
+  values,
+}: {
+  label: string;
+  values: Record<string, number> | undefined;
+}) {
+  const entries = Object.entries(values ?? {});
+  const total = entries.reduce((sum, [, value]) => sum + value, 0);
+
+  if (entries.length === 0) {
+    return (
+      <div className="benchmark-distribution">
+        <strong>{label}</strong>
+        <span className="muted">n/a</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="benchmark-distribution">
+      <strong>{label}</strong>
+      {entries.map(([key, value]) => {
+        const percentage = total > 0 ? value / total : 0;
+
+        return (
+          <div className="benchmark-distribution-row" key={key}>
+            <span>{key}</span>
+            <div className="benchmark-distribution-track" aria-hidden="true">
+              <span style={{ width: `${Math.max(2, Math.round(percentage * 100))}%` }} />
+            </div>
+            <code>{formatNumber(value)}</code>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function KeyValueList({ values }: { values: Record<string, string> }) {
+  return (
+    <dl className="benchmark-kv-list">
+      {Object.entries(values).map(([label, value]) => (
+        <div key={label}>
+          <dt>{label}</dt>
+          <dd>{value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+function StatusSummary({ values }: { values: Record<string, number> | undefined }) {
+  const entries = Object.entries(values ?? {});
+
+  if (entries.length === 0) {
+    return <span className="muted">n/a</span>;
+  }
+
+  return (
+    <span className="benchmark-status-summary">
+      {entries.map(([status, count]) => (
+        <span className="badge neutral" key={status}>
+          {status}: {formatNumber(count)}
+        </span>
+      ))}
     </span>
   );
 }
@@ -307,6 +540,19 @@ function timestampFor(run: BenchmarkRun) {
 function readProjectionLagEvents(run: BenchmarkRun) {
   // Current artifacts use checkpointLagEvents; keep the fallback for early local reports.
   return run.projections?.checkpointLagEvents ?? run.projections?.projectionLagEvents;
+}
+
+function readAcceptedRate(run: BenchmarkRun) {
+  const requested = run.scenario?.requestedBuyClicks ?? 0;
+  const accepted = run.requestPath?.accepted ?? 0;
+
+  return requested > 0 ? accepted / requested : 0;
+}
+
+function formatPercent(value: number | undefined) {
+  return typeof value === "number" && Number.isFinite(value)
+    ? `${Math.round(value * 100)}%`
+    : "n/a";
 }
 
 function formatNumber(value: number | undefined) {

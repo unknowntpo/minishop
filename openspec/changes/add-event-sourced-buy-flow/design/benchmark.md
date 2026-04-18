@@ -101,6 +101,26 @@ seeded catalog/inventory projections
 running Next.js app
 ```
 
+For a clean local run, use:
+
+```text
+pnpm benchmark:checkout:postgres:reset
+```
+
+That command intentionally resets only a local `minishop` PostgreSQL database,
+then reapplies migrations and seeds the development catalog before running the
+benchmark. It is the preferred path for benchmark evidence because it removes
+old demo checkouts and prior benchmark rows from the measured database state.
+
+The reset script must refuse non-local database URLs. Benchmark repeatability is
+useful only when cleanup is explicit; hidden dependence on old rows makes
+projection counts and admin dashboard interpretation misleading.
+
+The reset must clear Drizzle migration metadata together with application
+tables. Otherwise a dropped application schema can be mistaken for an
+already-migrated database, causing seed or benchmark setup to fail with missing
+tables.
+
 Each completed run writes a local JSON artifact:
 
 ```text
@@ -122,8 +142,12 @@ each accepted request into a durable event.
 Report:
 
 ```text
+workload_type
+sku_id
+cart_sku_count
 requested_buy_clicks
 accepted_count
+accepted_rate
 error_count
 http_status_distribution
 error_distribution
@@ -259,6 +283,7 @@ concerns.
 ```text
 checkout-postgres-baseline:
   POST /api/checkout-intents only
+  single hot SKU direct Buy pressure
   durable event ingress and projection catch-up
 
 checkout-reservation-saga:
@@ -281,6 +306,22 @@ checkout-read-model-polling:
   read API and polling load
   product page and admin dashboard visibility under projection churn
 ```
+
+Multi-SKU cart pressure should become its own benchmark phase. It answers a
+different question from single hot SKU ingress:
+
+```text
+single hot SKU:
+  how many direct Buy requests per second can one SKU ingress path accept?
+
+multi-SKU cart:
+  how does one checkout intent coordinate several SKU reservation attempts?
+  where does all-or-nothing saga processing bottleneck?
+```
+
+Keep these separate in reports and dashboards. Mixing them would hide whether a
+regression came from HTTP ingress, event append, projection catch-up, or
+multi-aggregate saga coordination.
 
 ## k6 Decision
 
@@ -350,6 +391,9 @@ Initial cards:
 
 ```text
 latest pass/fail
+workload shape
+request throughput
+accepted rate
 accepted requests
 error count
 p95 latency
@@ -361,10 +405,37 @@ no oversell
 Initial trends:
 
 ```text
+accepted rate over recent runs
 p95 latency over recent runs
 append throughput over recent runs
 error count over recent runs
 projection lag over recent runs
+```
+
+Latest run evidence:
+
+```text
+request ingress:
+  accepted of requested
+  request throughput
+  HTTP status distribution
+  error distribution
+
+event store:
+  appended events
+  event id before/after
+  event type distribution
+
+projection:
+  checkpoint id versus event_store id
+  projection lag events
+  checkout status distribution
+
+inventory and idempotency:
+  on_hand/reserved/sold/available
+  no oversell
+  duplicate replay status
+  idempotent replay flag
 ```
 
 The page must tolerate no artifacts yet:

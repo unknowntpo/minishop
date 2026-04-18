@@ -26,7 +26,7 @@ or realtime transports are introduced.
 #### Scenario: Benchmark records request path metrics
 
 - **WHEN** the benchmark completes the request burst
-- **THEN** it SHALL report requested request count, accepted count, error count, HTTP status distribution, error distribution, latency percentiles, total duration, and request throughput
+- **THEN** it SHALL report workload type, requested request count, accepted count, accepted rate, error count, HTTP status distribution, error distribution, latency percentiles, total duration, and request throughput
 
 #### Scenario: Benchmark records event store metrics
 
@@ -58,6 +58,11 @@ or realtime transports are introduced.
 - **WHEN** k6 is added to the benchmark workflow
 - **THEN** k6 SHALL generate HTTP load while a Node.js verifier SHALL continue reading PostgreSQL to validate event store, projection, idempotency, and inventory correctness
 
+#### Scenario: Multi-SKU cart pressure is benchmarked separately
+
+- **WHEN** the system measures cart checkout pressure across multiple SKUs
+- **THEN** it SHALL use a separate benchmark phase so single hot SKU ingress metrics are not mixed with multi-SKU saga and all-or-nothing reservation metrics
+
 ### Requirement: Benchmark Result Dashboard
 
 The system SHALL provide an internal benchmark result dashboard that reads local
@@ -69,6 +74,12 @@ results without storing benchmark observations in the domain event store.
 - **WHEN** `pnpm benchmark:checkout:postgres` completes
 - **THEN** it SHALL write a JSON result artifact under `benchmark-results/checkout-postgres-baseline`
 
+#### Scenario: Benchmark can run from isolated local state
+
+- **WHEN** an operator needs a clean local benchmark run
+- **THEN** the system SHALL provide a dev-only reset path that recreates local PostgreSQL schema state, reapplies migrations, reseeds catalog projections, and then runs `checkout-postgres-baseline`
+- **AND** the reset path SHALL refuse non-local databases
+
 #### Scenario: Dashboard reads benchmark artifacts
 
 - **WHEN** an operator opens `/internal/benchmarks`
@@ -78,6 +89,11 @@ results without storing benchmark observations in the domain event store.
 
 - **WHEN** benchmark artifacts exist
 - **THEN** the dashboard SHALL show request latency, request errors, event append throughput, projection lag, and inventory correctness indicators
+
+#### Scenario: Dashboard explains latest run evidence
+
+- **WHEN** benchmark artifacts exist
+- **THEN** the dashboard SHALL show latest run evidence for workload shape, HTTP status distribution, error distribution, event type distribution, checkout status distribution, projection checkpoint position, inventory counters, and idempotency replay outcome
 
 #### Scenario: Dashboard tolerates empty history
 
