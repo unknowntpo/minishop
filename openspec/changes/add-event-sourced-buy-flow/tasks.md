@@ -43,9 +43,9 @@
 ## 5. Client Read APIs
 
 - [x] 5.1 Implement Client Polling UX endpoints for checkout intent status and SKU inventory
-- [ ] 5.2 Implement product page SSR using projection-backed initial product and inventory data
+- [x] 5.2 Implement product page SSR using projection-backed initial product and inventory data
 - [x] 5.3 Implement Use polling before SSE or WebSocket in client state flow
-- [ ] 5.4 Implement product page UI using the frontend UI/UX pattern for direct Buy, status polling, and projection-backed inventory display
+- [x] 5.4 Implement product page UI using the frontend UI/UX pattern for direct Buy, status polling, and projection-backed inventory display
 - [ ] 5.5 Implement non-production benchmark operator strip for SKU counters, projection event ids, and projection lag hints
 - [x] 5.6 Implement Use Server Components only for read-only SSR and keep checkout writes in API route handlers
 - [x] 5.7 Implement product catalog browsing preview for Limited Runner, Everyday Tee, and Travel Cap SKU pages

@@ -1,8 +1,8 @@
 import { notFound } from "next/navigation";
 
 import { ProductDetailPage } from "@/components/checkout/product-detail-page";
-import { getProductBySlug, listProducts } from "@/src/application/catalog/get-products";
-import { staticCatalogRepository } from "@/src/infrastructure/catalog/static-catalog-repository";
+import { getProductBySlug } from "@/src/application/catalog/get-products";
+import { postgresCatalogRepository } from "@/src/infrastructure/catalog";
 
 type ProductPageProps = {
   params: Promise<{
@@ -10,20 +10,12 @@ type ProductPageProps = {
   }>;
 };
 
-export async function generateStaticParams() {
-  const products = await listProducts({
-    catalogRepository: staticCatalogRepository,
-  });
-
-  return products.map((product) => ({
-    slug: product.slug,
-  }));
-}
+export const dynamic = "force-dynamic";
 
 export default async function ProductPage({ params }: ProductPageProps) {
   const { slug } = await params;
   const product = await getProductBySlug(slug, {
-    catalogRepository: staticCatalogRepository,
+    catalogRepository: postgresCatalogRepository,
   });
 
   if (!product) {

@@ -6,7 +6,7 @@ export type Product = {
   summary: string;
   checkoutNote: string;
   priceAmountMinor: number;
-  currency: "TWD";
+  currency: string;
   available: number;
   image: {
     src: string;

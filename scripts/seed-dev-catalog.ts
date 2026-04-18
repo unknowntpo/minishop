@@ -25,6 +25,8 @@ const catalogSeed = [
       slug: "limited-runner",
       image:
         "https://images.unsplash.com/photo-1542291026-7eec264c27ff?auto=format&fit=crop&w=1400&q=80",
+      image_alt: "Red running shoe",
+      checkout_note: "one hot product · event-sourced checkout",
     },
   },
   {
@@ -40,6 +42,8 @@ const catalogSeed = [
       slug: "everyday-tee",
       image:
         "https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?auto=format&fit=crop&w=1400&q=80",
+      image_alt: "Folded neutral t-shirt",
+      checkout_note: "catalog product · multi-SKU cart ready",
     },
   },
   {
@@ -55,6 +59,8 @@ const catalogSeed = [
       slug: "travel-cap",
       image:
         "https://images.unsplash.com/photo-1521369909029-2afed882baee?auto=format&fit=crop&w=1400&q=80",
+      image_alt: "Casual travel cap",
+      checkout_note: "add-on product · projection-backed inventory",
     },
   },
 ] as const;
