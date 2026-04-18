@@ -226,7 +226,7 @@ The notification center is a UI coordination layer. Durable truth still comes fr
 
 ## Benchmark Operator Pattern
 
-For development and Day 1 benchmark runs, the UI may include a non-production operator strip:
+For development and checkout baseline benchmark runs, the UI may include a non-production operator strip:
 
 ```text
 current SKU id
@@ -243,6 +243,8 @@ An internal admin page may show products, SKUs, SKU inventory projections, lates
 The internal admin dashboard may poll a JSON endpoint such as `/api/internal/admin/dashboard` every second to show projection movement while checkout demos run in another tab. This is still polling-first; do not introduce SSE or WebSocket for the MVP dashboard.
 
 The live dashboard header should remain layout-stable during polling. Do not toggle the whole header copy or mount/unmount a spinner every refresh; update the timestamp and projection numbers instead.
+
+The checkout intent table is a bounded diagnostic list, not a full history export. Show a total checkout count and status distribution, but render only the latest fixed-size slice, such as 25 rows, so checkout benchmark runs with hundreds or thousands of intents do not make the dashboard unusable.
 
 The operator strip is a server-rendered diagnostic snapshot. After a checkout mutates projections, the client must either refresh the route or navigate to a result page so the operator strip does not appear to be live when it is stale.
 

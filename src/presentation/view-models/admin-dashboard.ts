@@ -29,6 +29,17 @@ export type AdminCheckoutView = {
   updatedAt: string;
 };
 
+export type AdminCheckoutStatusCountView = {
+  status: string;
+  count: number;
+};
+
+export type AdminCheckoutSummaryView = {
+  displayedLimit: number;
+  totalCount: number;
+  statusCounts: AdminCheckoutStatusCountView[];
+};
+
 export type AdminCheckpointView = {
   projectionName: string;
   lastEventId: number;
@@ -37,6 +48,7 @@ export type AdminCheckpointView = {
 
 export type AdminDashboardViewModel = {
   products: AdminProductView[];
+  checkoutSummary: AdminCheckoutSummaryView;
   checkouts: AdminCheckoutView[];
   checkpoints: AdminCheckpointView[];
 };

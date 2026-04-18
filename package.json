@@ -24,7 +24,7 @@
     "db:migrate": "drizzle-kit migrate",
     "db:seed:dev": "tsx scripts/seed-dev-catalog.ts",
     "db:studio": "drizzle-kit studio",
-    "benchmark:day1": "tsx scripts/day1-benchmark.ts"
+    "benchmark:checkout:postgres": "tsx scripts/benchmark-checkout-postgres.ts"
   },
   "dependencies": {
     "drizzle-orm": "^0.45.2",

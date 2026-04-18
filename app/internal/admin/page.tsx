@@ -13,9 +13,14 @@ export default async function InternalAdminPage() {
 
   return (
     <main className="page-shell admin-shell">
-      <Link className="text-link" href="/products">
-        Products
-      </Link>
+      <nav className="admin-nav">
+        <Link className="text-link" href="/products">
+          Products
+        </Link>
+        <Link className="text-link" href="/internal/benchmarks">
+          Benchmark results
+        </Link>
+      </nav>
 
       <section className="catalog-hero" aria-labelledby="admin-title">
         <p className="eyebrow">Internal admin</p>
@@ -26,7 +31,12 @@ export default async function InternalAdminPage() {
         </p>
       </section>
 
-      <AdminDashboardView initialDashboard={dashboard} />
+      <AdminDashboardView
+        initialDashboard={{
+          ...dashboard,
+          refreshedAt: new Date().toISOString(),
+        }}
+      />
     </main>
   );
 }

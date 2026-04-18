@@ -1,6 +1,12 @@
 import "dotenv/config";
 
+import { mkdir, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
 import { Pool } from "pg";
+
+const scenarioName = "checkout-postgres-baseline";
 
 type BenchmarkConfig = {
   appUrl: string;
@@ -10,6 +16,7 @@ type BenchmarkConfig = {
   skuId: string;
   buyerPrefix: string;
   runId: string;
+  resultsDir: string;
 };
 
 type RequestResult = {
@@ -51,10 +58,13 @@ async function main() {
     connectionString: config.databaseUrl,
     max: 5,
   });
+  const startedAtIso = new Date().toISOString();
 
   try {
     const beforeEventCount = await readEventCount(pool);
     const startedAt = performance.now();
+    // This baseline measures durable checkout ingress only. Reservation and
+    // order completion benchmarks are separate phases with different pass gates.
     const results = await Promise.all(
       Array.from({ length: config.requests }, (_, index) => createCheckoutIntent(index)),
     );
@@ -74,9 +84,28 @@ async function main() {
     const errors = results.filter((result) => !result.ok).length;
     const latencies = results.map((result) => result.latencyMs);
     const appendedEvents = afterEventCount - beforeEventCount;
+    const finishedAtIso = new Date().toISOString();
+    const pass =
+      errors === 0 &&
+      appendedEvents === accepted &&
+      Math.max(0, afterEventCount - checkpoint) === 0;
 
     const report = {
+      schemaVersion: 1,
       runId: config.runId,
+      scenarioName,
+      startedAt: startedAtIso,
+      finishedAt: finishedAtIso,
+      environment: {
+        runtime: process.version,
+        platform: `${os.platform()} ${os.arch()}`,
+        appUrl: config.appUrl,
+        database: "postgresql",
+        kafka: "disabled",
+        redis: "disabled",
+        paymentProvider: "disabled",
+      },
+      pass,
       scenario: {
         skuId: config.skuId,
         requestedBuyClicks: config.requests,
@@ -85,15 +114,26 @@ async function main() {
       requestPath: {
         accepted,
         errors,
+        statusDistribution: countBy(results, (result) => String(result.status)),
+        errorDistribution: countBy(
+          results.filter((result) => !result.ok),
+          (result) => result.error ?? `HTTP ${result.status}`,
+        ),
         duplicateReplay: {
           status: duplicateReplay.status,
           idempotentReplay: duplicateReplay.idempotentReplay ?? false,
           checkoutIntentId: duplicateReplay.checkoutIntentId ?? null,
         },
+        p50LatencyMs: percentile(latencies, 50),
         p95LatencyMs: percentile(latencies, 95),
+        p99LatencyMs: percentile(latencies, 99),
+        maxLatencyMs: Math.max(0, ...latencies),
         totalDurationMs: Math.round(totalMs),
+        requestsPerSecond: Number((results.length / (totalMs / 1000)).toFixed(2)),
       },
       eventStore: {
+        beforeEventCount,
+        afterEventCount,
         appendedEvents,
         appendThroughputPerSecond: Number((appendedEvents / (totalMs / 1000)).toFixed(2)),
       },
@@ -110,9 +150,12 @@ async function main() {
       ],
     };
 
-    console.log(JSON.stringify(report, null, 2));
+    const artifactPath = await writeBenchmarkArtifact(report);
 
-    if (errors > 0) {
+    console.log(JSON.stringify(report, null, 2));
+    console.log(`Benchmark artifact written to ${artifactPath}`);
+
+    if (!pass) {
       process.exitCode = 1;
     }
   } finally {
@@ -254,11 +297,35 @@ function percentile(values: number[], percentileValue: number) {
   return sorted[Math.max(0, Math.min(sorted.length - 1, index))] ?? 0;
 }
 
+function countBy<T>(values: T[], keyFor: (value: T) => string) {
+  const counts = new Map<string, number>();
+
+  for (const value of values) {
+    const key = keyFor(value);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+
+  return Object.fromEntries(
+    [...counts.entries()].sort(([left], [right]) => left.localeCompare(right)),
+  );
+}
+
+async function writeBenchmarkArtifact(report: object) {
+  const directory = path.join(config.resultsDir, scenarioName);
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const filePath = path.join(directory, `${timestamp}_${config.runId}.json`);
+
+  await mkdir(directory, { recursive: true });
+  await writeFile(filePath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+
+  return filePath;
+}
+
 function readConfig(): BenchmarkConfig {
   const databaseUrl = process.env.DATABASE_URL;
 
   if (!databaseUrl) {
-    throw new Error("DATABASE_URL is required for Day 1 benchmark.");
+    throw new Error("DATABASE_URL is required for checkout-postgres-baseline benchmark.");
   }
 
   return {
@@ -269,6 +336,7 @@ function readConfig(): BenchmarkConfig {
     skuId: process.env.BENCHMARK_SKU_ID ?? "sku_hot_001",
     buyerPrefix: process.env.BENCHMARK_BUYER_PREFIX ?? "benchmark_buyer",
     runId: process.env.BENCHMARK_RUN_ID ?? `bench_${Date.now()}`,
+    resultsDir: process.env.BENCHMARK_RESULTS_DIR ?? "benchmark-results",
   };
 }
 

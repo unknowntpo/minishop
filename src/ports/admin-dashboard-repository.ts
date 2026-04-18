@@ -29,6 +29,17 @@ export type AdminCheckoutRow = {
   updatedAt: string;
 };
 
+export type AdminCheckoutStatusCount = {
+  status: string;
+  count: number;
+};
+
+export type AdminCheckoutSummary = {
+  displayedLimit: number;
+  totalCount: number;
+  statusCounts: AdminCheckoutStatusCount[];
+};
+
 export type AdminCheckpointRow = {
   projectionName: string;
   lastEventId: number;
@@ -37,6 +48,7 @@ export type AdminCheckpointRow = {
 
 export type AdminDashboard = {
   products: AdminProductRow[];
+  checkoutSummary: AdminCheckoutSummary;
   checkouts: AdminCheckoutRow[];
   checkpoints: AdminCheckpointRow[];
 };

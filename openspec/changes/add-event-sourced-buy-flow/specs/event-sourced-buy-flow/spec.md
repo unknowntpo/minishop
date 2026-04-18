@@ -365,16 +365,16 @@ The system SHALL start without Kafka in the initial implementation. When Kafka b
 - **WHEN** Kafka is added to the formal processing path
 - **THEN** the system SHALL publish through an outbox relay rather than relying on direct API dual writes
 
-### Requirement: Day 1 Benchmark Baseline
+### Requirement: Checkout Benchmark Baseline
 
 The system SHALL define a repeatable PostgreSQL-only benchmark for the first implementation. The benchmark SHALL measure correctness, API latency, event store append throughput, and projection lag.
 
 #### Scenario: Hot SKU benchmark runs
 
 - **WHEN** the benchmark submits 1,000 concurrent buy attempts for one hot SKU
-- **THEN** the system SHALL record accepted intents per second, API p95 latency, event store append throughput, projection lag, and final reservation outcomes
+- **THEN** the system SHALL record accepted intents per second, API latency percentiles, event store append throughput, projection lag, and checkout projection status distribution
 
 #### Scenario: Benchmark verifies correctness
 
 - **WHEN** the benchmark completes
-- **THEN** the system SHALL verify that inventory is not oversold, duplicate idempotency keys do not create duplicate intents, and every accepted intent reaches a terminal or payment state
+- **THEN** the system SHALL verify that inventory is not oversold, duplicate idempotency keys do not create duplicate intents, and every accepted intent is visible in projection state appropriate for the benchmark phase

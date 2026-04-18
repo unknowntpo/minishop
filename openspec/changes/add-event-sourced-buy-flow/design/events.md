@@ -72,3 +72,101 @@ OrderCancelled
 The implementation must define these values as a TypeScript string union or equivalent constant object. The database must constrain `event_store.event_type` with a check constraint in the first implementation.
 
 PostgreSQL enum types are optional later. A check constraint is preferred during early design because event type changes are easier to migrate.
+
+## Event Schema Evolution
+
+Stored events are durable business facts. Once an event is appended to
+`event_store`, the row must remain replayable by future application versions.
+Application code may evolve, but old event rows must not require in-place
+rewrites to remain readable.
+
+Event schema compatibility is handled by `event_type` plus `event_version`.
+
+```text
+event_type:
+  stable business fact name
+
+event_version:
+  payload shape version for that fact
+```
+
+Use a new `event_version` when the business fact remains the same but the
+payload shape evolves.
+
+Examples:
+
+```text
+CheckoutIntentCreated v1:
+  checkout_intent_id, buyer_id, items[], idempotency_key
+
+CheckoutIntentCreated v2:
+  checkout_intent_id, buyer_id, items[], idempotency_key, sales_channel
+```
+
+Use a new `event_type` when the business meaning changes. Do not reuse an old
+event type for a different fact.
+
+Examples:
+
+```text
+safe version change:
+  add optional sales_channel to CheckoutIntentCreated
+
+new event type required:
+  CheckoutIntentPriced
+  CheckoutIntentValidated
+```
+
+## Compatibility Policy
+
+Stored event readers must support backward compatibility:
+
+```text
+new code can read old event versions
+old events can be replayed from event_store
+missing optional fields are filled with explicit defaults
+```
+
+Stored event readers should be forward tolerant for additive changes:
+
+```text
+unknown extra payload fields do not fail replay
+unknown extra metadata fields do not fail replay
+```
+
+Breaking changes are not allowed in-place:
+
+```text
+rename a payload field
+remove a field that existing readers require
+change a field type
+change a field unit, e.g. minor-unit money to decimal money
+change a field meaning, e.g. occurred_at from event time to ingestion time
+reuse an event type for a different business fact
+remove or redefine an existing enum/status value without a fallback
+```
+
+Command validation and event replay validation have different strictness.
+
+```text
+commands:
+  strict request validation
+  invalid input can be rejected
+
+stored events:
+  tolerant replay validation
+  old durable facts must remain readable
+```
+
+When a current domain reader needs a newer payload shape, use an upcaster in
+the event decoding path rather than rewriting historical rows.
+
+```text
+CheckoutIntentCreated v1
+  -> upcast with sales_channel = "web"
+  -> current CheckoutIntentCreated domain shape
+```
+
+Schema compatibility is not enough by itself. Field semantics, units, enum
+meaning, aggregate ordering, and replay expectations are part of the event
+contract and must be documented with event changes.

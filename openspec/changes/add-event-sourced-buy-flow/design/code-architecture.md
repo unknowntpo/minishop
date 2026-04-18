@@ -17,6 +17,8 @@ app/
   internal/
     admin/
       page.tsx
+    benchmarks/
+      page.tsx
   api/
     checkout-intents/
       route.ts
@@ -170,6 +172,7 @@ Use Docker Compose as the default local PostgreSQL setup:
 docker-compose.yml
   postgres service
   minishop database
+  host port 5433 to avoid collisions with native PostgreSQL on 5432
   persistent local volume
   healthcheck with pg_isready
 ```

@@ -10,3 +10,4 @@ coverage/
 *.tsbuildinfo
 .env
 .env*.local
+benchmark-results/

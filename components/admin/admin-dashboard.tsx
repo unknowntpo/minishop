@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import type { AdminDashboardViewModel } from "@/src/presentation/view-models/admin-dashboard";
 
@@ -8,15 +8,8 @@ type LiveAdminDashboard = AdminDashboardViewModel & {
   refreshedAt: string;
 };
 
-export function AdminDashboardView({
-  initialDashboard,
-}: {
-  initialDashboard: AdminDashboardViewModel;
-}) {
-  const [dashboard, setDashboard] = useState<LiveAdminDashboard>({
-    ...initialDashboard,
-    refreshedAt: new Date().toISOString(),
-  });
+export function AdminDashboardView({ initialDashboard }: { initialDashboard: LiveAdminDashboard }) {
+  const [dashboard, setDashboard] = useState<LiveAdminDashboard>(initialDashboard);
   const [lastError, setLastError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -53,16 +46,6 @@ export function AdminDashboardView({
       window.clearInterval(interval);
     };
   }, []);
-
-  const checkoutStatusCounts = useMemo(() => {
-    const counts = new Map<string, number>();
-
-    for (const row of dashboard.checkouts) {
-      counts.set(row.status, (counts.get(row.status) ?? 0) + 1);
-    }
-
-    return Array.from(counts.entries()).sort(([left], [right]) => left.localeCompare(right));
-  }, [dashboard.checkouts]);
 
   return (
     <>
@@ -117,9 +100,13 @@ export function AdminDashboardView({
       <section className="panel admin-panel" aria-labelledby="checkout-summary-title">
         <p className="eyebrow">Checkout intents</p>
         <h2 id="checkout-summary-title">Latest projection states</h2>
+        <p className="muted admin-panel-copy">
+          Showing the latest {dashboard.checkoutSummary.displayedLimit} records only. Total
+          projected checkouts: {dashboard.checkoutSummary.totalCount}.
+        </p>
         <div className="admin-status-pills">
-          {checkoutStatusCounts.length > 0 ? (
-            checkoutStatusCounts.map(([status, count]) => (
+          {dashboard.checkoutSummary.statusCounts.length > 0 ? (
+            dashboard.checkoutSummary.statusCounts.map(({ status, count }) => (
               <span className="badge neutral" key={status}>
                 {status}: {count}
               </span>

@@ -4,10 +4,14 @@ import type { Pool } from "pg";
 
 import type {
   AdminCheckoutRow,
+  AdminCheckoutStatusCount,
+  AdminCheckoutSummary,
   AdminCheckpointRow,
   AdminDashboardRepository,
   AdminProductRow,
 } from "@/src/ports/admin-dashboard-repository";
+
+const checkoutDisplayLimit = 25;
 
 type ProductResultRow = {
   product_id: string;
@@ -40,6 +44,15 @@ type CheckoutResultRow = {
   updated_at: Date;
 };
 
+type CheckoutSummaryResultRow = {
+  status: string;
+  count: string | number;
+};
+
+type CheckoutTotalResultRow = {
+  count: string | number;
+};
+
 type CheckpointResultRow = {
   projection_name: string;
   last_event_id: string | number;
@@ -49,14 +62,16 @@ type CheckpointResultRow = {
 export function createPostgresAdminDashboardRepository(pool: Pool): AdminDashboardRepository {
   return {
     async getDashboard() {
-      const [products, checkouts, checkpoints] = await Promise.all([
+      const [products, checkoutSummary, checkouts, checkpoints] = await Promise.all([
         readProducts(pool),
+        readCheckoutSummary(pool),
         readCheckouts(pool),
         readCheckpoints(pool),
       ]);
 
       return {
         products,
+        checkoutSummary,
         checkouts,
         checkpoints,
       };
@@ -109,6 +124,29 @@ async function readProducts(pool: Pool): Promise<AdminProductRow[]> {
   }));
 }
 
+async function readCheckoutSummary(pool: Pool): Promise<AdminCheckoutSummary> {
+  const [totalResult, statusResult] = await Promise.all([
+    pool.query<CheckoutTotalResultRow>("select count(*) as count from checkout_intent_projection"),
+    pool.query<CheckoutSummaryResultRow>(`
+      select status, count(*) as count
+      from checkout_intent_projection
+      group by status
+      order by status
+    `),
+  ]);
+
+  const statusCounts: AdminCheckoutStatusCount[] = statusResult.rows.map((row) => ({
+    status: row.status,
+    count: Number(row.count),
+  }));
+
+  return {
+    displayedLimit: checkoutDisplayLimit,
+    totalCount: Number(totalResult.rows[0]?.count ?? 0),
+    statusCounts,
+  };
+}
+
 async function readCheckouts(pool: Pool): Promise<AdminCheckoutRow[]> {
   const result = await pool.query<CheckoutResultRow>(`
     select
@@ -124,7 +162,7 @@ async function readCheckouts(pool: Pool): Promise<AdminCheckoutRow[]> {
       updated_at
     from checkout_intent_projection
     order by updated_at desc
-    limit 20
+    limit ${checkoutDisplayLimit}
   `);
 
   return result.rows.map((row) => ({

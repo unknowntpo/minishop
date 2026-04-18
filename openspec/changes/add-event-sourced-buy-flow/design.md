@@ -15,7 +15,7 @@ Supporting design notes:
 - [Frontend UI/UX pattern](design/frontend-uiux.md)
 - [Code architecture](design/code-architecture.md)
 - [Deferred Kafka and outbox relay](design/kafka-outbox.md)
-- [Day 1 benchmark](design/benchmark.md)
+- [Checkout PostgreSQL baseline benchmark](design/benchmark.md)
 
 ## Goals / Non-Goals
 
@@ -27,7 +27,7 @@ Supporting design notes:
 - Start without Kafka, then add Kafka later to measure processing throughput improvements.
 - Keep client reads on projections, not raw event replay.
 - Keep the initial realtime UX on polling, not SSE or WebSocket.
-- Define a repeatable Day 1 benchmark baseline for correctness and throughput measurement.
+- Define a repeatable checkout PostgreSQL baseline benchmark for correctness and throughput measurement.
 
 **Non-Goals:**
 
@@ -59,13 +59,13 @@ Alternative considered: Kysely. Kysely has strong SQL control, but its migration
 
 Local development should have a reproducible PostgreSQL setup through `docker-compose.yml`. The compose file runs PostgreSQL only; Next.js, pnpm, Drizzle, and tests still run directly on Node.js 24.
 
-The default local connection string remains:
+The default Docker Compose local connection string is:
 
 ```text
-postgres://postgres:postgres@localhost:5432/minishop
+postgres://postgres:postgres@localhost:5433/minishop
 ```
 
-This keeps local setup predictable without turning Docker into the production deployment model. Developers may still use a native local PostgreSQL instance if it exposes the same `DATABASE_URL`.
+Port `5433` avoids collisions with native PostgreSQL installations on `5432`. This keeps local setup predictable without turning Docker into the production deployment model. Developers may still use a native local PostgreSQL instance if it exposes the same `DATABASE_URL`.
 
 ### Use PostgreSQL event store first
 

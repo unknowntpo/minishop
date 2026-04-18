@@ -1,49 +1,431 @@
-# Day 1 Benchmark Standard
+# Checkout PostgreSQL Baseline Benchmark
 
-The first benchmark measures PostgreSQL-only behavior. Kafka, Redis cache, SSE, WebSocket, and real payment providers are excluded.
+## Intent
+
+The first benchmark phase is named `checkout-postgres-baseline`.
+
+The name describes the system boundary under test:
 
 ```text
-Target scenario:
+checkout:
+  checkout intent ingress path
+
+postgres:
+  PostgreSQL event_store and projection tables are the only durable backend
+
+baseline:
+  repeatable reference point before Kafka, Redis, worker split, or realtime UX
+```
+
+Do not call this benchmark `day1` in code, scripts, or docs. "Day 1" describes
+when the benchmark was desired, not what the benchmark proves.
+
+This benchmark is not a full ecommerce checkout benchmark. It measures whether
+a burst of Buy requests becomes durable checkout intent events without
+synchronously decrementing inventory in the request path.
+
+## Scope
+
+Included:
+
+```text
+POST /api/checkout-intents
+CheckoutIntentCreated append to event_store
+idempotency-key replay behavior
+projection processor catch-up after writes
+checkout_intent_projection row creation
+SKU inventory projection invariants after ingress
+```
+
+Excluded:
+
+```text
+Kafka
+Redis cache
+SSE/WebSocket
+real payment provider
+browser rendering
+cart drawer UX
+reservation worker throughput
+order completion throughput
+payment failure compensation throughput
+```
+
+The benchmark may create many checkout intents that remain `queued`. That is an
+honest result for this phase because durable intent creation is intentionally
+separate from inventory reservation.
+
+## Scenario
+
+Default scenario:
+
+```text
+scenario_name:
+  checkout-postgres-baseline
+
+product:
   1 hot product
-  1 hot SKU
-  1,000 concurrent Buy clicks
-  quantity = 1 per intent
-  fixed initial stock, such as 100 units
 
-Success criteria:
-  no oversell
-  every accepted intent reaches terminal or payment state
-  duplicate idempotency keys do not create duplicate intents
-  API p95 latency for CheckoutIntentCreated is recorded
-  event_store append throughput is recorded
-  projection lag is recorded
+sku:
+  sku_hot_001
+
+requests:
+  1,000 checkout intent requests
+
+quantity:
+  1 per intent
+
+buyer identity:
+  benchmark_buyer_<index>
+
+idempotency:
+  one unique idempotency key per simulated buyer
+  one duplicate replay sample for a known key
+
+initial inventory:
+  fixed seed inventory, e.g. on_hand = 100
 ```
 
-The benchmark is allowed to pass without hitting a specific throughput number on Day 1. The required outcome is a repeatable baseline with correctness checks and measured latency/throughput numbers.
-
-## Script
-
-Use an explicit slow script:
+The script command is:
 
 ```text
-pnpm benchmark:day1
+pnpm benchmark:checkout:postgres
 ```
 
-The script should:
+The script is not part of `pnpm check`. It requires:
 
 ```text
-send 1,000 checkout intent requests for sku_hot_001
-use one unique idempotency key per simulated buyer
-replay a duplicate idempotency key sample
-call the internal projection processor after writes
-record API p95 latency
-record accepted/replayed/error counts
-record event_store append throughput
-record projection checkpoint lag
-record checkout projection status distribution
-record SKU inventory projection counters
+running PostgreSQL database
+applied migrations
+seeded catalog/inventory projections
+running Next.js app
 ```
 
-The script is not part of `pnpm check`. It requires a running Next.js app and PostgreSQL database.
+Each completed run writes a local JSON artifact:
 
-Until the async reservation worker is wired end-to-end, the status distribution may remain `queued`. The report must show that honestly instead of treating queued intents as terminal orders.
+```text
+benchmark-results/
+  checkout-postgres-baseline/
+    <timestamp>_<run_id>.json
+```
+
+`benchmark-results/` is ignored by git. These files are local diagnostic
+artifacts, not product data, migration fixtures, or domain events.
+
+## Metrics
+
+### Request Path
+
+Purpose: measure whether the API can accept a high-concurrency burst and turn
+each accepted request into a durable event.
+
+Report:
+
+```text
+requested_buy_clicks
+accepted_count
+error_count
+http_status_distribution
+error_distribution
+p50_latency_ms
+p95_latency_ms
+p99_latency_ms
+max_latency_ms
+total_duration_ms
+requests_per_second
+```
+
+Baseline pass gate:
+
+```text
+accepted_count == requested_buy_clicks
+error_count == 0
+```
+
+Latency is report-only in the first baseline. Do not set a hard p95 target
+until the benchmark runs against a stable environment. Local Next.js dev server,
+Docker resource limits, and machine load can dominate early latency numbers.
+
+### Event Store
+
+Purpose: measure durable append behavior and idempotency safety.
+
+Report:
+
+```text
+event_store_appended_events
+event_store_last_id
+append_throughput_per_second
+event_type_distribution
+idempotency_replay_count
+duplicate_extra_event_count
+aggregate_version_conflict_count
+```
+
+Baseline pass gate:
+
+```text
+event_store_appended_events == accepted_count
+event_type_distribution.CheckoutIntentCreated == accepted_count
+duplicate_extra_event_count == 0
+```
+
+This phase should not append inventory, payment, or order events unless the
+benchmark explicitly moves into a later phase.
+
+### Projection
+
+Purpose: verify that projection processing catches up after the write burst.
+
+Report:
+
+```text
+projection_processed_events
+projection_duration_ms
+projection_throughput_events_per_second
+projection_checkpoint_last_event_id
+event_store_last_event_id
+projection_lag_events
+projection_lag_ms
+checkout_projection_count
+checkout_status_distribution
+```
+
+Baseline pass gate:
+
+```text
+projection_lag_events == 0 after processor run
+checkout_projection_count == accepted_count
+```
+
+For `checkout-postgres-baseline`, `queued` is an acceptable final projection
+status because reservation processing is out of scope.
+
+### Inventory Correctness
+
+Purpose: protect the core product rule that pressing Buy does not synchronously
+reserve or decrement inventory.
+
+Report:
+
+```text
+sku_id
+on_hand
+reserved
+sold
+available
+no_oversell
+```
+
+Baseline pass gate:
+
+```text
+on_hand == initial_on_hand
+reserved == 0
+sold == 0
+available == initial_on_hand
+no_oversell == true
+available == on_hand - reserved - sold
+```
+
+Later reservation benchmarks will use different inventory pass gates, such as
+`reserved + sold <= on_hand`.
+
+### Idempotency
+
+Purpose: prove that client retries do not create duplicate checkout intents.
+
+Report:
+
+```text
+duplicate_replay_status
+duplicate_replay_checkout_intent_id
+duplicate_extra_event_count
+```
+
+Baseline pass gate:
+
+```text
+duplicate_replay_status in 200..299
+duplicate_replay_checkout_intent_id == original checkout_intent_id for that key
+duplicate_extra_event_count == 0
+```
+
+## Benchmark Phases
+
+Use separate benchmark phases instead of one script that mixes all system
+concerns.
+
+```text
+checkout-postgres-baseline:
+  POST /api/checkout-intents only
+  durable event ingress and projection catch-up
+
+checkout-reservation-saga:
+  intent creation plus SKU reservation processing
+  no oversell under hot SKU pressure
+
+checkout-completion-demo:
+  intent creation, reservation, payment success, order confirmation
+  terminal checkout and order projections
+
+checkout-payment-failure-compensation:
+  reservation, payment failure, inventory release, order cancellation
+  idempotent compensation behavior
+
+checkout-kafka-outbox:
+  event_store to outbox relay to Kafka
+  publish lag, duplicate publish safety, consumer replay
+
+checkout-read-model-polling:
+  read API and polling load
+  product page and admin dashboard visibility under projection churn
+```
+
+## k6 Decision
+
+k6 is a good fit for HTTP load generation:
+
+```text
+constant arrival rate
+ramping virtual users
+HTTP latency percentiles
+failure thresholds
+CI-friendly load profile
+```
+
+k6 is not enough by itself for this project because the most important
+questions are domain correctness questions:
+
+```text
+did every accepted request append exactly one event?
+did idempotency prevent duplicate durable facts?
+did projection checkpoint catch up?
+did inventory counters stay unchanged for ingress-only benchmark?
+was there any oversell?
+```
+
+Recommended path:
+
+```text
+first:
+  Node benchmark script generates load and verifies PostgreSQL/domain state
+
+later:
+  k6 generates HTTP load
+  Node verifier reads PostgreSQL and emits domain correctness report
+```
+
+Possible later file shape:
+
+```text
+scripts/k6/checkout-postgres-baseline.js
+scripts/verify-checkout-postgres-baseline.ts
+```
+
+Do not replace domain verification with HTTP-only metrics.
+
+## Benchmark Result Dashboard
+
+The internal benchmark dashboard lives at:
+
+```text
+/internal/benchmarks
+```
+
+Purpose:
+
+```text
+read local benchmark JSON artifacts
+show latest run health
+show bounded historical run table
+show lightweight trends for bottleneck hunting
+keep benchmark observations separate from domain projections
+```
+
+The dashboard should use the same quiet internal admin visual language as the
+projection admin page. It is an operator surface, not buyer UI.
+
+Initial cards:
+
+```text
+latest pass/fail
+accepted requests
+error count
+p95 latency
+append throughput
+projection lag
+no oversell
+```
+
+Initial trends:
+
+```text
+p95 latency over recent runs
+append throughput over recent runs
+error count over recent runs
+projection lag over recent runs
+```
+
+The page must tolerate no artifacts yet:
+
+```text
+show empty state
+show pnpm benchmark:checkout:postgres command
+do not fail app render when benchmark-results directory is missing
+```
+
+The dashboard must not write benchmark result data into `event_store`.
+Benchmark data describes measurement runs; it is not part of the commerce
+domain event stream.
+
+The dashboard is intentionally simple before k6:
+
+```text
+server-render local JSON files
+no database table for benchmark history
+no chart dependency unless simple CSS/SVG trends become insufficient
+```
+
+When k6 is introduced, normalize k6 output into the same artifact schema or add
+a verifier output that preserves the current dashboard contract.
+
+## Interpretation Notes
+
+A benchmark report should be readable enough to become engineering evidence in
+a technical article.
+
+The report should clearly separate:
+
+```text
+what was requested
+what was accepted by the API
+what became durable in event_store
+what projections caught up to
+what inventory counters prove
+what failed and why
+what was intentionally excluded
+```
+
+Important interpretation rules:
+
+```text
+accepted != reserved
+queued != failed for the ingress baseline
+zero oversell is more important than throughput in the first phase
+latency numbers are not meaningful without environment context
+admin dashboard visibility is diagnostic, not the benchmark source of truth
+```
+
+Environment notes to include with benchmark output:
+
+```text
+runtime: Node.js 24
+package manager: pnpm
+database: PostgreSQL through Docker Compose on localhost:5433
+app mode: next dev or production build
+machine: local development machine unless otherwise stated
+Kafka: disabled
+Redis: disabled
+payment provider: disabled
+```
