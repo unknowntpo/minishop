@@ -5,9 +5,9 @@ import { Pool } from "pg";
 
 import * as schema from "./schema";
 
-const globalForDb = globalThis as unknown as {
-  minishopPool?: Pool;
-};
+declare global {
+  var minishopPool: Pool | undefined;
+}
 
 export function getPool() {
   const databaseUrl = process.env.DATABASE_URL;
@@ -17,15 +17,15 @@ export function getPool() {
   }
 
   const pool =
-    globalForDb.minishopPool ??
+    globalThis.minishopPool ??
     new Pool({
       connectionString: databaseUrl,
       max: 10,
     });
 
-  if (process.env.NODE_ENV !== "production") {
-    globalForDb.minishopPool = pool;
-  }
+  // Reuse one process-wide pool in both dev and production. In dev this avoids
+  // hot-reload churn; in production it prevents creating a fresh pg pool per call.
+  globalThis.minishopPool = pool;
 
   return pool;
 }
