@@ -241,12 +241,12 @@ export default async function InternalBenchmarksPage({
                     className={`benchmark-scenario-card${isSelected ? " selected" : ""}`}
                     href={href}
                     key={scenario.name}
+                    scroll={false}
                     aria-expanded={isSelected}
                     aria-label={`${isSelected ? "Collapse" : "Expand"} ${scenario.name} run comparison`}
                   >
                     <strong title={scenarioDescription(scenario.name)}>{scenario.name}</strong>
                     <span className="benchmark-scenario-badges">
-                      {isSelected ? <span className="badge neutral">selected</span> : null}
                       <span className={`badge ${scenario.latestPass ? "success" : "danger"}`}>
                         {scenario.latestPass ? "latest pass" : "latest failed"}
                       </span>
@@ -265,20 +265,10 @@ export default async function InternalBenchmarksPage({
                 );
               })}
             </div>
+            {selectedScenarioName ? (
+              <RunComparison scenarioName={selectedScenarioName} runs={comparisonRuns} />
+            ) : null}
           </section>
-
-          {selectedScenarioName ? (
-            <RunComparison scenarioName={selectedScenarioName} runs={comparisonRuns} />
-          ) : (
-            <section className="panel admin-panel" aria-labelledby="comparison-title">
-              <p className="eyebrow">Run comparison</p>
-              <h2 id="comparison-title">Select a benchmark family</h2>
-              <p className="muted admin-panel-copy">
-                Run comparison stays collapsed until a scenario is selected. This keeps the page
-                readable when more benchmark families are added.
-              </p>
-            </section>
-          )}
 
           <section className="panel admin-panel" aria-labelledby="history-title">
             <p className="eyebrow">History</p>
@@ -435,9 +425,9 @@ function summarizeScenarios(runs: BenchmarkRun[]): ScenarioSummary[] {
 
 function RunComparison({ scenarioName, runs }: { scenarioName: string; runs: BenchmarkRun[] }) {
   return (
-    <section className="panel admin-panel" aria-labelledby="comparison-title">
+    <section className="benchmark-run-comparison" aria-labelledby="comparison-title">
       <p className="eyebrow">Run comparison</p>
-      <h2 id="comparison-title">Selected scenario: {scenarioName}</h2>
+      <h3 id="comparison-title">Selected scenario: {scenarioName}</h3>
       <p className="muted admin-panel-copy">
         This compares runs from the scenario selected in Benchmark families. Conditions are tags
         beside each run; use the plots for signal, then use the evidence table to explain why a run
@@ -459,6 +449,7 @@ function RunComparison({ scenarioName, runs }: { scenarioName: string; runs: Ben
       <div className="benchmark-comparison-grid">
         <ComparisonChart
           description="Accepted requests divided by requested Buy clicks. Lower than 100% means the load path dropped or rejected work before durable verification completed."
+          interpretation="Aim for this to stay close to 100%. If it falls, inspect HTTP failures, duplicate handling, or saturation at the ingress path."
           label="accepted rate"
           runs={runs}
           unit="%"
@@ -466,6 +457,7 @@ function RunComparison({ scenarioName, runs }: { scenarioName: string; runs: Ben
         />
         <ComparisonChart
           description="HTTP requests completed per second by the benchmark client. Use with accepted rate; high throughput with errors is not a healthy result."
+          interpretation="Compare this with accepted rate and error count together. Higher is only better when success stays stable."
           label="request/sec"
           runs={runs}
           unit="/s"
@@ -473,6 +465,7 @@ function RunComparison({ scenarioName, runs }: { scenarioName: string; runs: Ben
         />
         <ComparisonChart
           description="95th percentile request latency. This is tail latency for the API ingress path, not reservation or payment completion latency."
+          interpretation="This is the slow end of the request distribution. Spikes here usually show queueing, database pressure, or server saturation."
           label="p95 latency"
           runs={runs}
           unit="ms"
@@ -480,6 +473,7 @@ function RunComparison({ scenarioName, runs }: { scenarioName: string; runs: Ben
         />
         <ComparisonChart
           description="Durable event append throughput. This tracks how quickly accepted work became event_store facts."
+          interpretation="Use this to see whether accepted requests are converting into durable events fast enough. If it lags far behind ingress, persistence is the bottleneck."
           label="append/sec"
           runs={runs}
           unit="/s"
@@ -487,6 +481,7 @@ function RunComparison({ scenarioName, runs }: { scenarioName: string; runs: Ben
         />
         <ComparisonChart
           description="Request failures observed by the benchmark client. HTTP status 0 usually means no response was received."
+          interpretation="Read this together with HTTP status and error distributions below to distinguish transport failure from application rejection."
           label="errors"
           runs={runs}
           unit=""
@@ -494,6 +489,7 @@ function RunComparison({ scenarioName, runs }: { scenarioName: string; runs: Ben
         />
         <ComparisonChart
           description="Distance between event_store position and projection checkpoint after processing. Non-zero lag means read models are behind durable events."
+          interpretation="Zero means projections caught up by the end of verification. Sustained non-zero lag means read models are falling behind writes."
           label="projection lag"
           runs={runs}
           unit="events"
@@ -508,12 +504,14 @@ function RunComparison({ scenarioName, runs }: { scenarioName: string; runs: Ben
 
 function ComparisonChart({
   description,
+  interpretation,
   label,
   runs,
   unit,
   valueFor,
 }: {
   description: string;
+  interpretation: string;
   label: string;
   runs: BenchmarkRun[];
   unit: string;
@@ -526,9 +524,19 @@ function ComparisonChart({
     <article className="benchmark-comparison-card">
       <strong>
         {label}
-        <span className="benchmark-info" title={description}>
+        <button
+          type="button"
+          aria-label={`${label}. ${description} ${interpretation}`}
+          className="benchmark-info"
+          title={`${description} ${interpretation}`}
+        >
           ?
-        </span>
+          <span className="benchmark-info-card">
+            <strong>{label}</strong>
+            <span>{description}</span>
+            <span>{interpretation}</span>
+          </span>
+        </button>
       </strong>
       <div className="benchmark-plot" role="img" aria-label={`${label} comparison`}>
         {runs.map((run, index) => {

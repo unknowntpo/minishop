@@ -413,6 +413,30 @@ scenario card selected -> compare runs for that scenario
 scenario card collapsed -> show only benchmark family overview
 ```
 
+The comparison panel belongs inside the scenario section, not as a sibling
+section. This makes the hierarchy visible:
+
+```text
+Benchmark families
+  scenario cards
+  selected scenario run comparison
+History
+  all recent artifacts
+```
+
+The expansion should avoid a harsh layout jump where possible. A small CSS
+opacity/translate transition is enough for the server-rendered page; client
+state is not required for this internal dashboard.
+
+Scenario selection should also preserve the operator's local viewport position.
+Changing the query string is fine, but the interaction should not force the
+page back to the top because the user's attention is already inside the
+scenario area.
+
+When no scenario is selected, the page should not render a dedicated empty-state
+hint inside the scenario section. The scenario cards themselves should carry the
+interaction affordance through hover, selected state, and clickability.
+
 Data flow map:
 
 ```text

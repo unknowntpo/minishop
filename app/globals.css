@@ -236,7 +236,7 @@ button {
 
 .benchmark-scenario-card {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: 1fr;
   gap: 12px;
   min-width: 0;
   border: 1px solid var(--ms-line-soft);
@@ -245,12 +245,26 @@ button {
   background: var(--ms-surface);
   color: var(--ms-ink);
   text-decoration: none;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    transform 160ms ease;
+}
+
+.benchmark-scenario-card > strong {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .benchmark-scenario-card:hover,
 .benchmark-scenario-card.selected {
   border-color: var(--ms-accent);
   background: #fffaf8;
+}
+
+.benchmark-scenario-card:hover {
+  transform: translateY(-1px);
 }
 
 .benchmark-scenario-details {
@@ -261,7 +275,33 @@ button {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
-  justify-content: end;
+  justify-content: start;
+}
+
+.benchmark-run-comparison {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--ms-line-soft);
+  animation: benchmark-expand 180ms ease-out;
+}
+
+.benchmark-run-comparison h3 {
+  margin: 0;
+  font-size: 28px;
+  line-height: 1.15;
+  letter-spacing: 0;
+}
+
+@keyframes benchmark-expand {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .benchmark-run-tags {
@@ -314,6 +354,7 @@ button {
 }
 
 .benchmark-info {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -326,6 +367,44 @@ button {
   font-size: 12px;
   font-weight: 850;
   cursor: help;
+  padding: 0;
+  appearance: none;
+}
+
+.benchmark-info-card {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%;
+  z-index: 20;
+  display: grid;
+  gap: 6px;
+  width: 260px;
+  padding: 10px 12px;
+  border: 1px solid var(--ms-line);
+  border-radius: var(--ms-radius);
+  background: var(--ms-surface);
+  box-shadow: 0 10px 30px rgba(24, 18, 10, 0.12);
+  color: var(--ms-ink);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.45;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 4px);
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease;
+}
+
+.benchmark-info-card strong {
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.benchmark-info:hover .benchmark-info-card,
+.benchmark-info:focus-visible .benchmark-info-card {
+  opacity: 1;
+  transform: translate(-50%, 0);
 }
 
 .benchmark-kv-list {
@@ -394,10 +473,8 @@ button {
 }
 
 .benchmark-evidence-purpose {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: baseline;
+  display: grid;
+  gap: 4px;
   margin-bottom: 10px;
   color: var(--ms-muted);
   font-size: 14px;
@@ -407,6 +484,7 @@ button {
 .benchmark-evidence-purpose strong {
   color: var(--ms-ink);
   font-size: 15px;
+  line-height: 1.25;
 }
 
 .benchmark-evidence-table {
@@ -1002,6 +1080,18 @@ h2 {
   .benchmark-flow,
   .benchmark-scenario-grid {
     grid-template-columns: 1fr;
+  }
+
+  .benchmark-scenario-card {
+    grid-template-columns: 1fr;
+  }
+
+  .benchmark-scenario-badges {
+    justify-content: start;
+  }
+
+  .benchmark-run-comparison h3 {
+    font-size: 24px;
   }
 
   .floating-cart {

@@ -112,6 +112,8 @@ results without storing benchmark observations in the domain event store.
 - **WHEN** an operator chooses a scenario family
 - **THEN** the dashboard SHALL update the run comparison to that scenario and keep other scenario families available as separate comparison lanes
 - **AND** choosing the already selected scenario SHALL collapse the run comparison so operators can return to the scenario overview
+- **AND** the run comparison SHALL render inside the scenario family section to preserve the parent-child hierarchy
+- **AND** scenario selection SHALL preserve the operator's local reading position instead of jumping back to the top of the page
 
 #### Scenario: Dashboard explains evidence matrix purpose
 
