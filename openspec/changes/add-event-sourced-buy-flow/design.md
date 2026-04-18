@@ -176,6 +176,14 @@ Alternatives considered:
 - `madge`: useful for dependency visualization, but not the preferred primary boundary guard.
 - ESLint `import/no-cycle`: useful in ESLint stacks, but adding ESLint only for this rule would duplicate Biome responsibilities.
 
+### Defer Playwright end-to-end tests to an explicit slow path
+
+The MVP should not add Playwright to the default `pnpm check` path yet. Browser end-to-end tests require a running app, PostgreSQL, migrations, seed data, and projection processing, so they are slower and need better state isolation than unit/application tests.
+
+Playwright should be added later under an explicit script such as `pnpm test:e2e`. The first e2e scenario should cover product page -> Buy -> checkout intent accepted -> projection processing -> status polling -> internal admin projection verification.
+
+The e2e test database must be isolated from the developer preview database through a dedicated database, unique per-run ids, or cleanup.
+
 ### Use reservation plus saga for payment
 
 Inventory is reserved before payment is completed. Third-party payment calls are outside the database transaction. Payment failure or timeout is handled with compensation events that release the reservation and cancel the order.

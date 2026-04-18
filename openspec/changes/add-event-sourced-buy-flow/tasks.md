@@ -64,3 +64,4 @@
 - [x] 7.3 Add tests for Projection Processing Coordination under concurrent processor attempts
 - [x] 7.4 Add tests for Payment Failure Compensation duplicate callback handling
 - [ ] 7.5 Add Day 1 Benchmark Baseline script and report output for one hot SKU with 1,000 concurrent buy attempts
+- [ ] 7.6 Add Defer Playwright end-to-end tests to an explicit slow path with product page Buy, checkout polling, projection processing, and internal admin verification

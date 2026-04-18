@@ -260,6 +260,36 @@ Response headers may include `x-request-id` and `x-trace-id`. Error response bod
 
 Event metadata may also include request and trace identifiers when a command produces a durable event. Metadata is observability context, not business state.
 
+## End-to-End Verification
+
+The first implementation does not run browser end-to-end tests in the default `pnpm check` path. The fast check path should stay focused on TypeScript, Biome, dependency boundaries, and Vitest unit/application tests.
+
+Add Playwright later as an explicit slow verification path after the local database and projection processor flow stabilize:
+
+```text
+pnpm test:e2e
+```
+
+Target e2e flow:
+
+```text
+start local PostgreSQL through Docker Compose
+run Drizzle migrations
+seed local catalog data
+start Next.js app
+open /products/limited-runner
+press Buy
+expect checkout intent request to be accepted
+trigger or wait for projection processing
+poll until checkout status becomes projection-backed
+open /internal/admin
+verify SKU inventory projection and checkout projection are visible
+```
+
+E2E tests must isolate state by using a dedicated test database, unique buyer/idempotency values, or per-run cleanup. They should not share the developer preview database by default.
+
+Because Playwright is slower and requires a running app plus database, it should be opt-in locally and optional in early CI. It can become a required CI gate after the checkout flow and test data isolation are stable.
+
 ## Internal Admin Surfaces
 
 Internal admin pages are allowed for local development, projection verification, and benchmark observation. They are not buyer UI.
