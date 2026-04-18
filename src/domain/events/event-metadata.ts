@@ -1,4 +1,4 @@
-import { isEventMetadataJson } from "@/src/domain/schema-conventions";
+import { isEventMetadataJson } from "@/src/domain/schema-rules";
 
 export type EventMetadata = {
   request_id: string;

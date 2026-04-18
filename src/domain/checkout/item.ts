@@ -1,4 +1,4 @@
-import { isCheckoutItemJson, isCheckoutItemJsonList } from "@/src/domain/schema-conventions";
+import { isCheckoutItemJson, isCheckoutItemJsonList } from "@/src/domain/schema-rules";
 
 export type CheckoutItem = {
   sku_id: string;

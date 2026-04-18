@@ -7,9 +7,9 @@ import {
   isReservationIdentityPayload,
   isStableTextIdentifier,
   isUuid,
-} from "@/src/domain/schema-conventions";
+} from "@/src/domain/schema-rules";
 
-describe("schema conventions", () => {
+describe("schema rules", () => {
   it("validates durable UUID identifiers separately from stable catalog text identifiers", () => {
     expect(isUuid("00000000-0000-4000-8000-000000000001")).toBe(true);
     expect(isUuid("checkout_1")).toBe(false);

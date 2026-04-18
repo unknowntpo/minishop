@@ -6,7 +6,7 @@ import {
   isPositiveInteger,
   isRecord,
   isStableTextIdentifier,
-} from "@/src/domain/schema-conventions";
+} from "@/src/domain/schema-rules";
 
 export type CreateCheckoutIntentRequest = {
   buyerId: string;

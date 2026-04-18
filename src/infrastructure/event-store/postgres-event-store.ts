@@ -4,7 +4,7 @@ import type { Pool } from "pg";
 
 import { type DomainEvent, isDomainEvent } from "@/src/domain/events/domain-event";
 import { isEventMetadata } from "@/src/domain/events/event-metadata";
-import { isStableTextIdentifier, isUuid } from "@/src/domain/schema-conventions";
+import { isStableTextIdentifier, isUuid } from "@/src/domain/schema-rules";
 import type { EventStore, EventStoreAppendInput, StoredEvent } from "@/src/ports/event-store";
 
 type EventStoreRow = {
@@ -33,10 +33,10 @@ export function createPostgresEventStore(pool: Pool): EventStore {
         throw new Error("event_id must be a UUID.");
       }
       if (!isValidAggregateId(input.aggregateType, input.aggregateId)) {
-        throw new Error("aggregate_id does not match aggregate_type schema convention.");
+        throw new Error("aggregate_id does not match aggregate_type schema rule.");
       }
       if (!isEventMetadata(input.metadata)) {
-        throw new Error("metadata must match event metadata schema convention.");
+        throw new Error("metadata must match event metadata schema rule.");
       }
 
       const inserted = await pool.query<EventStoreRow>(

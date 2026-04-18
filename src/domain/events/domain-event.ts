@@ -9,7 +9,7 @@ import {
   isStableTextIdentifier,
   isUuid,
   optionalNonEmptyString,
-} from "@/src/domain/schema-conventions";
+} from "@/src/domain/schema-rules";
 
 type BaseDomainEvent<TType extends EventType, TPayload> = {
   type: TType;
