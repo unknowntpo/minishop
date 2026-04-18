@@ -262,6 +262,28 @@ button {
   background: var(--ms-surface);
 }
 
+.benchmark-scenario-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.benchmark-scenario-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  min-width: 0;
+  border: 1px solid var(--ms-line-soft);
+  border-radius: var(--ms-radius);
+  padding: 14px;
+  background: var(--ms-surface);
+}
+
+.benchmark-scenario-details {
+  grid-column: 1 / -1;
+}
+
 .benchmark-evidence-card {
   display: grid;
   gap: 12px;
@@ -402,8 +424,59 @@ button {
   gap: 6px;
 }
 
+.benchmark-flow {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin: 16px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.benchmark-flow li {
+  position: relative;
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid var(--ms-line-soft);
+  border-radius: var(--ms-radius);
+  padding: 14px;
+  background: var(--ms-surface);
+}
+
+.benchmark-flow li:not(:last-child)::after {
+  position: absolute;
+  top: 50%;
+  right: -11px;
+  z-index: 1;
+  color: var(--ms-muted);
+  content: "→";
+  font-weight: 850;
+  transform: translateY(-50%);
+}
+
+.benchmark-flow span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  background: var(--ms-subtle);
+  color: var(--ms-muted);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.benchmark-flow code {
+  overflow: hidden;
+  color: var(--ms-ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  text-overflow: ellipsis;
+}
+
 .benchmark-table {
-  min-width: 1180px;
+  min-width: 1420px;
 }
 
 .admin-product-footer {
@@ -888,8 +961,14 @@ h2 {
   .benchmark-metric-grid,
   .benchmark-condition-grid,
   .benchmark-evidence-grid,
+  .benchmark-flow,
+  .benchmark-scenario-grid,
   .benchmark-trend-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .benchmark-flow li::after {
+    display: none;
   }
 
   .product-media img {
@@ -930,6 +1009,8 @@ h2 {
   .benchmark-metric-grid,
   .benchmark-condition-grid,
   .benchmark-evidence-grid,
+  .benchmark-flow,
+  .benchmark-scenario-grid,
   .benchmark-trend-grid {
     grid-template-columns: 1fr;
   }

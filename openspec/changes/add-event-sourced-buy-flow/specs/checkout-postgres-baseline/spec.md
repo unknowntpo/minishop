@@ -88,7 +88,8 @@ results without storing benchmark observations in the domain event store.
 #### Scenario: Dashboard reads benchmark artifacts
 
 - **WHEN** an operator opens `/internal/benchmarks`
-- **THEN** the page SHALL read local benchmark JSON artifacts and show the latest run plus recent historical runs
+- **THEN** the page SHALL read local benchmark JSON artifacts from scenario-named result directories and show the latest run plus recent historical runs
+- **AND** the page SHALL avoid hard-coding a single benchmark scenario as the only comparable result set
 
 #### Scenario: Dashboard shows bottleneck indicators
 
@@ -99,6 +100,16 @@ results without storing benchmark observations in the domain event store.
 
 - **WHEN** benchmark artifacts exist
 - **THEN** the dashboard SHALL show latest run conditions and evidence for workload shape, hardware/software/service topology, HTTP status distribution, error distribution, event type distribution, checkout status distribution, projection checkpoint position, inventory counters, and idempotency replay outcome
+
+#### Scenario: Dashboard compares runs by scenario and conditions
+
+- **WHEN** benchmark artifacts from multiple scenarios or run conditions exist
+- **THEN** the dashboard SHALL group comparison signals by scenario and SHALL show run condition summaries in history so operators can compare only compatible runs
+
+#### Scenario: Dashboard maps metrics to data flow
+
+- **WHEN** benchmark artifacts exist
+- **THEN** the dashboard SHALL show a simple data-flow explanation connecting ingress, durable append, projection processing, and verification metrics
 
 #### Scenario: Dashboard tolerates empty history
 

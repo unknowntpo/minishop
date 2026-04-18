@@ -6,11 +6,7 @@ import type { ReactNode } from "react";
 
 export const dynamic = "force-dynamic";
 
-const resultsDirectory = path.join(
-  process.cwd(),
-  "benchmark-results",
-  "checkout-postgres-baseline",
-);
+const benchmarkResultsRoot = path.join(process.cwd(), "benchmark-results");
 
 type BenchmarkReport = {
   schemaVersion?: number;
@@ -128,10 +124,22 @@ type BenchmarkRun = BenchmarkReport & {
   artifactFile: string;
 };
 
+type ScenarioSummary = {
+  latestErrors?: number;
+  latestFinishedAt?: string;
+  latestP95LatencyMs?: number;
+  latestPass?: boolean;
+  name: string;
+  runCount: number;
+};
+
 export default async function InternalBenchmarksPage() {
   const runs = await readBenchmarkRuns();
   const latest = runs[0];
-  const trendRuns = runs.slice(0, 10).reverse();
+  const latestScenarioName = latest?.scenarioName ?? "unknown";
+  const latestScenarioRuns = runs.filter((run) => scenarioNameFor(run) === latestScenarioName);
+  const trendRuns = latestScenarioRuns.slice(0, 10).reverse();
+  const scenarioSummaries = summarizeScenarios(runs);
 
   return (
     <main className="page-shell admin-shell">
@@ -148,8 +156,8 @@ export default async function InternalBenchmarksPage() {
         <p className="eyebrow">Internal benchmark</p>
         <h1 id="benchmark-title">Benchmark results</h1>
         <p className="muted hero-copy">
-          Historical checkout-postgres-baseline artifacts for request latency, event append
-          throughput, projection lag, and correctness checks.
+          Local benchmark artifacts across scenarios, with run conditions, evidence, and bottleneck
+          signals kept separate from domain events.
         </p>
       </section>
 
@@ -160,12 +168,77 @@ export default async function InternalBenchmarksPage() {
               <p className="eyebrow">Latest run</p>
               <strong>{latest.runId}</strong>
               <p className="muted admin-livebar-copy">
-                {formatDateTime(latest.finishedAt)} · {latest.scenarioName ?? "unknown scenario"}
+                {formatDateTime(latest.finishedAt)} · {scenarioNameFor(latest)}
               </p>
             </div>
             <span className={`badge ${latest.pass ? "success" : "danger"}`}>
               {latest.pass ? "pass" : "failed"}
             </span>
+          </section>
+
+          <section className="panel admin-panel" aria-labelledby="flow-title">
+            <p className="eyebrow">Data flow</p>
+            <h2 id="flow-title">Where each metric comes from</h2>
+            <p className="muted admin-panel-copy">
+              Benchmarks should map measurements to a system path: load enters an API, accepted work
+              appends durable facts, processors build read models, and verifiers inspect durable
+              state.
+            </p>
+            <ol className="benchmark-flow" aria-label="Checkout benchmark data flow">
+              <li>
+                <span>1</span>
+                <strong>Ingress</strong>
+                <p className="muted">HTTP/API entry point</p>
+                <code>request/sec · p95 · errors</code>
+              </li>
+              <li>
+                <span>2</span>
+                <strong>Append</strong>
+                <p className="muted">durable event log</p>
+                <code>append/sec · event types</code>
+              </li>
+              <li>
+                <span>3</span>
+                <strong>Project</strong>
+                <p className="muted">read model processor</p>
+                <code>checkpoint · lag · status</code>
+              </li>
+              <li>
+                <span>4</span>
+                <strong>Verify</strong>
+                <p className="muted">domain checks</p>
+                <code>no oversell · idempotency</code>
+              </li>
+            </ol>
+          </section>
+
+          <section className="panel admin-panel" aria-labelledby="scenario-title">
+            <p className="eyebrow">Scenarios</p>
+            <h2 id="scenario-title">Benchmark families</h2>
+            <p className="muted admin-panel-copy">
+              Each scenario keeps its own comparison lane. Do not compare a single-SKU ingress run
+              directly with a cart, reservation, Kafka, or read-model polling benchmark.
+            </p>
+            <div className="benchmark-scenario-grid">
+              {scenarioSummaries.map((scenario) => (
+                <article className="benchmark-scenario-card" key={scenario.name}>
+                  <strong>{scenario.name}</strong>
+                  <span className={`badge ${scenario.latestPass ? "success" : "danger"}`}>
+                    {scenario.latestPass ? "latest pass" : "latest failed"}
+                  </span>
+                  <div className="benchmark-scenario-details">
+                    <KeyValueList
+                      values={{
+                        latest: formatDateTime(scenario.latestFinishedAt),
+                        runs: formatNumber(scenario.runCount),
+                        "latest p95": `${formatNumber(scenario.latestP95LatencyMs)}ms`,
+                        "latest errors": formatNumber(scenario.latestErrors),
+                      }}
+                    />
+                  </div>
+                </article>
+              ))}
+            </div>
           </section>
 
           <section className="benchmark-metric-grid" aria-label="Latest benchmark metrics">
@@ -359,11 +432,12 @@ export default async function InternalBenchmarksPage() {
 
           <section className="panel admin-panel" aria-labelledby="trend-title">
             <p className="eyebrow">Trend</p>
-            <h2 id="trend-title">Bottleneck signals across {trendRuns.length} runs</h2>
+            <h2 id="trend-title">
+              {latestScenarioName} signals across {trendRuns.length} runs
+            </h2>
             <p className="muted admin-panel-copy">
-              Trend is for regression hunting. The latest evidence section explains a single run;
-              this section shows whether latency, errors, durable append rate, or projection lag are
-              moving in the wrong direction.
+              Trend is scenario-scoped for regression hunting. Compare runs with similar conditions
+              first, then inspect history when hardware, service count, or workload changes.
             </p>
             <div className="benchmark-trend-grid">
               <TrendChart
@@ -411,8 +485,10 @@ export default async function InternalBenchmarksPage() {
                 <thead>
                   <tr>
                     <th>Run</th>
+                    <th>Scenario</th>
                     <th>Finished</th>
                     <th>Result</th>
+                    <th>Conditions</th>
                     <th>Requests</th>
                     <th>Accepted</th>
                     <th>Errors</th>
@@ -429,12 +505,14 @@ export default async function InternalBenchmarksPage() {
                         <strong>{run.runId}</strong>
                         <span className="muted mono">{run.artifactFile}</span>
                       </td>
+                      <td>{scenarioNameFor(run)}</td>
                       <td>{formatDateTime(run.finishedAt)}</td>
                       <td>
                         <span className={`badge ${run.pass ? "success" : "danger"}`}>
                           {run.pass ? "pass" : "failed"}
                         </span>
                       </td>
+                      <td>{formatConditionSummary(run)}</td>
                       <td>{formatNumber(run.scenario?.requestedBuyClicks)}</td>
                       <td>{formatNumber(run.requestPath?.accepted)}</td>
                       <td>{formatNumber(run.requestPath?.errors)}</td>
@@ -457,7 +535,7 @@ export default async function InternalBenchmarksPage() {
           <h2 id="empty-benchmark-title">Run the baseline benchmark first.</h2>
           <p className="muted">
             Use <code>pnpm benchmark:checkout:postgres</code>. Results will be written under{" "}
-            <code>benchmark-results/checkout-postgres-baseline</code>.
+            <code>benchmark-results/&lt;scenario&gt;</code>.
           </p>
         </section>
       )}
@@ -467,9 +545,32 @@ export default async function InternalBenchmarksPage() {
 
 async function readBenchmarkRuns(): Promise<BenchmarkRun[]> {
   try {
-    const files = await readdir(resultsDirectory);
-    const jsonFiles = files.filter((file) => file.endsWith(".json"));
-    const runs = await Promise.all(jsonFiles.map(readBenchmarkRun));
+    const entries = await readdir(benchmarkResultsRoot, { withFileTypes: true });
+    const artifactFiles = entries.flatMap((entry) => {
+      if (entry.isFile() && entry.name.endsWith(".json")) {
+        return [entry.name];
+      }
+
+      if (!entry.isDirectory()) {
+        return [];
+      }
+
+      return [];
+    });
+    const scenarioFiles = await Promise.all(
+      entries
+        .filter((entry) => entry.isDirectory())
+        .map(async (entry) => {
+          const files = await readdir(path.join(benchmarkResultsRoot, entry.name));
+
+          return files
+            .filter((file) => file.endsWith(".json"))
+            .map((file) => path.join(entry.name, file));
+        }),
+    );
+    const runs = await Promise.all(
+      [...artifactFiles, ...scenarioFiles.flat()].map(readBenchmarkRun),
+    );
 
     return runs
       .filter((run): run is BenchmarkRun => run !== null)
@@ -485,7 +586,7 @@ async function readBenchmarkRuns(): Promise<BenchmarkRun[]> {
 
 async function readBenchmarkRun(file: string): Promise<BenchmarkRun | null> {
   try {
-    const raw = await readFile(path.join(resultsDirectory, file), "utf8");
+    const raw = await readFile(path.join(benchmarkResultsRoot, file), "utf8");
     const parsed = JSON.parse(raw) as BenchmarkReport;
 
     if (!parsed.runId) {
@@ -499,6 +600,30 @@ async function readBenchmarkRun(file: string): Promise<BenchmarkRun | null> {
   } catch {
     return null;
   }
+}
+
+function summarizeScenarios(runs: BenchmarkRun[]): ScenarioSummary[] {
+  const grouped = new Map<string, BenchmarkRun[]>();
+
+  for (const run of runs) {
+    const name = scenarioNameFor(run);
+    grouped.set(name, [...(grouped.get(name) ?? []), run]);
+  }
+
+  return [...grouped.entries()]
+    .map(([name, scenarioRuns]) => {
+      const latest = scenarioRuns[0];
+
+      return {
+        latestErrors: latest?.requestPath?.errors,
+        latestFinishedAt: latest?.finishedAt,
+        latestP95LatencyMs: latest?.requestPath?.p95LatencyMs,
+        latestPass: latest?.pass,
+        name,
+        runCount: scenarioRuns.length,
+      };
+    })
+    .sort((left, right) => left.name.localeCompare(right.name));
 }
 
 type Tone = "success" | "warning" | "danger";
@@ -676,6 +801,20 @@ function timestampFor(run: BenchmarkRun) {
 function readProjectionLagEvents(run: BenchmarkRun) {
   // Current artifacts use checkpointLagEvents; keep the fallback for early local reports.
   return run.projections?.checkpointLagEvents ?? run.projections?.projectionLagEvents;
+}
+
+function scenarioNameFor(run: BenchmarkRun) {
+  return run.scenarioName ?? run.conditions?.workload?.scenarioName ?? "unknown";
+}
+
+function formatConditionSummary(run: BenchmarkRun) {
+  const mode = run.conditions?.software?.nextMode ?? "unknown mode";
+  const appInstances = formatNumber(run.conditions?.services?.nextjs?.instanceCount ?? 1);
+  const pgInstances = formatNumber(run.conditions?.services?.postgres?.instanceCount ?? 1);
+  const pgPool = formatNumber(run.conditions?.services?.postgres?.poolMax);
+  const concurrency = formatNumber(run.conditions?.workload?.httpConcurrency);
+
+  return `${mode} · app ${appInstances} · pg ${pgInstances} · pool ${pgPool} · c ${concurrency}`;
 }
 
 function formatCpu(run: BenchmarkRun) {

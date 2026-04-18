@@ -377,10 +377,14 @@ The internal benchmark dashboard lives at:
 Purpose:
 
 ```text
-read local benchmark JSON artifacts
+read local benchmark JSON artifacts from benchmark-results/<scenario>/
+show scenario families without hard-coding one benchmark as the only result set
 show latest run health
+show latest run data-flow map
+show latest run conditions
+show latest run evidence
 show bounded historical run table
-show lightweight trends for bottleneck hunting
+show scenario-scoped lightweight trends for bottleneck hunting
 keep benchmark observations separate from domain projections
 ```
 
@@ -400,6 +404,39 @@ p95 latency
 append throughput
 projection lag
 no oversell
+```
+
+Scenario overview:
+
+```text
+scenario name
+latest pass/fail
+run count
+latest p95 latency
+latest error count
+latest completion time
+```
+
+Data flow map:
+
+```text
+ingress:
+  request/sec
+  p95 latency
+  HTTP errors
+
+append:
+  durable event log append throughput
+  event type distribution
+
+project:
+  checkpoint position
+  projection lag
+  projection status distribution
+
+verify:
+  domain invariants
+  idempotency replay
 ```
 
 Initial trends:
@@ -449,6 +486,15 @@ do not fail app render when benchmark-results directory is missing
 The dashboard must not write benchmark result data into `event_store`.
 Benchmark data describes measurement runs; it is not part of the commerce
 domain event stream.
+
+Run comparison must be condition-aware:
+
+```text
+compare trends within the same scenario first
+show run condition summary in history
+do not treat different app modes, service counts, hardware, PostgreSQL pool
+sizes, or workload shapes as equivalent
+```
 
 The dashboard is intentionally simple before k6:
 
