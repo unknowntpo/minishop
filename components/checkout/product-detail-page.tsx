@@ -62,6 +62,7 @@ export function ProductDetailPage({ product }: { product: Product }) {
               This page does not decrement inventory after pressing Buy. Inventory changes only
               after projection refresh.
             </p>
+            <OperatorStrip product={product} />
           </section>
         </div>
       </section>
@@ -115,5 +116,56 @@ export function ProductDetailPage({ product }: { product: Product }) {
         </div>
       </details>
     </main>
+  );
+}
+
+function OperatorStrip({ product }: { product: Product }) {
+  if (process.env.NODE_ENV === "production" || !product.inventory) {
+    return null;
+  }
+
+  const lagLabel =
+    product.inventory.projectionLagMs === null
+      ? "n/a"
+      : `${Math.max(0, product.inventory.projectionLagMs)}ms`;
+
+  return (
+    <section className="operator-strip" aria-label="Projection operator strip">
+      <p className="eyebrow">Dev-only operator strip</p>
+      <div className="operator-grid">
+        <span className="operator-metric">
+          <strong>sku</strong>
+          <code>{product.skuId}</code>
+        </span>
+        <span className="operator-metric">
+          <strong>on_hand</strong>
+          <code>{product.inventory.onHand}</code>
+        </span>
+        <span className="operator-metric">
+          <strong>reserved</strong>
+          <code>{product.inventory.reserved}</code>
+        </span>
+        <span className="operator-metric">
+          <strong>sold</strong>
+          <code>{product.inventory.sold}</code>
+        </span>
+        <span className="operator-metric">
+          <strong>available</strong>
+          <code>{product.inventory.available}</code>
+        </span>
+        <span className="operator-metric">
+          <strong>event_id</strong>
+          <code>{product.inventory.lastEventId}</code>
+        </span>
+        <span className="operator-metric">
+          <strong>version</strong>
+          <code>{product.inventory.aggregateVersion}</code>
+        </span>
+        <span className="operator-metric">
+          <strong>lag</strong>
+          <code>{lagLabel}</code>
+        </span>
+      </div>
+    </section>
   );
 }

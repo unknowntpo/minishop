@@ -42,7 +42,13 @@ function catalogQuery() {
       sku.price_amount_minor,
       sku.currency,
       sku.attributes,
-      sku_inventory_projection.available
+      sku_inventory_projection.on_hand,
+      sku_inventory_projection.reserved,
+      sku_inventory_projection.sold,
+      sku_inventory_projection.available,
+      sku_inventory_projection.aggregate_version as inventory_aggregate_version,
+      sku_inventory_projection.last_event_id as inventory_last_event_id,
+      sku_inventory_projection.updated_at as inventory_updated_at
     from product
     join sku on sku.product_id = product.product_id
     left join sku_inventory_projection on sku_inventory_projection.sku_id = sku.sku_id

@@ -316,6 +316,44 @@ h2 {
   color: var(--ms-accent);
 }
 
+.operator-strip {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+  border: 1px solid var(--ms-line-soft);
+  border-radius: var(--ms-radius);
+  padding: 12px;
+  background: var(--ms-surface);
+}
+
+.operator-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.operator-metric {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  border-radius: var(--ms-radius);
+  background: var(--ms-subtle);
+  padding: 8px;
+}
+
+.operator-grid strong {
+  color: var(--ms-muted);
+  font-size: 12px;
+}
+
+.operator-grid code {
+  overflow: hidden;
+  color: var(--ms-ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 13px;
+  text-overflow: ellipsis;
+}
+
 .text-link {
   display: inline-flex;
   align-items: center;
@@ -527,6 +565,10 @@ h2 {
   .product-card-meta {
     align-items: start;
     flex-direction: column;
+  }
+
+  .operator-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .floating-cart {

@@ -14,6 +14,7 @@ Supporting design notes:
 - [State transitions](design/transitions.md)
 - [Frontend UI/UX pattern](design/frontend-uiux.md)
 - [Code architecture](design/code-architecture.md)
+- [Deferred Kafka and outbox relay](design/kafka-outbox.md)
 - [Day 1 benchmark](design/benchmark.md)
 
 ## Goals / Non-Goals

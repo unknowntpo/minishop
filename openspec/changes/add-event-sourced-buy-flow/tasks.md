@@ -46,7 +46,7 @@
 - [x] 5.2 Implement product page SSR using projection-backed initial product and inventory data
 - [x] 5.3 Implement Use polling before SSE or WebSocket in client state flow
 - [x] 5.4 Implement product page UI using the frontend UI/UX pattern for direct Buy, status polling, and projection-backed inventory display
-- [ ] 5.5 Implement non-production benchmark operator strip for SKU counters, projection event ids, and projection lag hints
+- [x] 5.5 Implement non-production benchmark operator strip for SKU counters, projection event ids, and projection lag hints
 - [x] 5.6 Implement Use Server Components only for read-only SSR and keep checkout writes in API route handlers
 - [x] 5.7 Implement product catalog browsing preview for Limited Runner, Everyday Tee, and Travel Cap SKU pages
 - [x] 5.8 Implement Use request and trace IDs without exposing internals in API error responses and frontend error display
@@ -54,8 +54,8 @@
 
 ## 6. Deferred Kafka Path
 
-- [ ] 6.1 Document Deferred Kafka Integration as a later phase
-- [ ] 6.2 Add placeholder design notes for PostgreSQL outbox relay without enabling Kafka
+- [x] 6.1 Document Deferred Kafka Integration as a later phase
+- [x] 6.2 Add placeholder design notes for PostgreSQL outbox relay without enabling Kafka
 
 ## 7. Verification
 
@@ -63,5 +63,5 @@
 - [x] 7.2 Add tests for SKU Inventory Aggregate reservation and rejection ordering
 - [x] 7.3 Add tests for Projection Processing Coordination under concurrent processor attempts
 - [x] 7.4 Add tests for Payment Failure Compensation duplicate callback handling
-- [ ] 7.5 Add Day 1 Benchmark Baseline script and report output for one hot SKU with 1,000 concurrent buy attempts
-- [ ] 7.6 Add Defer Playwright end-to-end tests to an explicit slow path with product page Buy, checkout polling, projection processing, and internal admin verification
+- [x] 7.5 Add Day 1 Benchmark Baseline script and report output for one hot SKU with 1,000 concurrent buy attempts
+- [x] 7.6 Add Defer Playwright end-to-end tests to an explicit slow path with product page Buy, checkout polling, projection processing, and internal admin verification

@@ -8,7 +8,13 @@ export type CatalogProductRow = {
   sku_code: string;
   price_amount_minor: string | number;
   currency: string;
+  on_hand: number | null;
+  reserved: number | null;
+  sold: number | null;
   available: number | null;
+  inventory_aggregate_version: string | number | null;
+  inventory_last_event_id: string | number | null;
+  inventory_updated_at: Date | null;
   attributes: unknown;
 };
 
@@ -28,6 +34,19 @@ export function mapProductRow(row: CatalogProductRow): Product {
     priceAmountMinor: Number(row.price_amount_minor),
     currency: row.currency,
     available: row.available ?? 0,
+    inventory: {
+      onHand: row.on_hand ?? 0,
+      reserved: row.reserved ?? 0,
+      sold: row.sold ?? 0,
+      available: row.available ?? 0,
+      aggregateVersion:
+        row.inventory_aggregate_version === null ? 0 : Number(row.inventory_aggregate_version),
+      lastEventId: row.inventory_last_event_id === null ? 0 : Number(row.inventory_last_event_id),
+      updatedAt: row.inventory_updated_at?.toISOString() ?? null,
+      projectionLagMs: row.inventory_updated_at
+        ? Date.now() - row.inventory_updated_at.getTime()
+        : null,
+    },
     image: {
       src: imageSrc,
       alt: imageAlt,

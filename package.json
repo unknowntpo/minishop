@@ -23,7 +23,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:seed:dev": "tsx scripts/seed-dev-catalog.ts",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "benchmark:day1": "tsx scripts/day1-benchmark.ts"
   },
   "dependencies": {
     "drizzle-orm": "^0.45.2",
