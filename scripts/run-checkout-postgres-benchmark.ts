@@ -11,6 +11,7 @@ const scenarioName = "checkout-postgres-baseline";
 async function main() {
   const appUrl = process.env.BENCHMARK_APP_URL ?? "http://localhost:3000";
   const shouldReset = process.env.BENCHMARK_RESET === "1";
+  let benchmarkFailed = false;
 
   await assertAppReachable(appUrl);
 
@@ -20,7 +21,15 @@ async function main() {
   }
 
   console.log("[benchmark] running checkout-postgres-baseline");
-  await runPnpm(["benchmark:checkout:postgres:raw"]);
+  try {
+    await runPnpm(["benchmark:checkout:postgres:raw"]);
+  } catch (error) {
+    benchmarkFailed = true;
+    console.error("[benchmark] raw benchmark reported a non-zero exit status");
+    if (error instanceof Error && error.message) {
+      console.error(error.message);
+    }
+  }
 
   const artifact = await readLatestArtifact(
     process.env.BENCHMARK_RESULTS_DIR ?? "benchmark-results",
@@ -52,6 +61,10 @@ async function main() {
       2,
     ),
   );
+
+  if (benchmarkFailed || !report.pass) {
+    process.exitCode = 1;
+  }
 }
 
 async function assertAppReachable(appUrl: string) {
