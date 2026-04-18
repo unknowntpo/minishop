@@ -22,9 +22,61 @@ type BenchmarkReport = {
   environment?: {
     runtime?: string;
     appUrl?: string;
+    platform?: string;
+    cpuCount?: number;
+    cpuModel?: string;
+    totalMemoryBytes?: number;
     kafka?: string;
     redis?: string;
     paymentProvider?: string;
+  };
+  conditions?: {
+    hardware?: {
+      platform?: string;
+      cpuCount?: number;
+      cpuModel?: string;
+      totalMemoryBytes?: number;
+    };
+    software?: {
+      node?: string;
+      nextMode?: string;
+      packageManager?: string;
+      loadGenerator?: string;
+    };
+    services?: {
+      nextjs?: {
+        appUrl?: string;
+        instanceCount?: number;
+      };
+      postgres?: {
+        host?: string;
+        port?: number;
+        database?: string;
+        instanceCount?: number;
+        poolMax?: number;
+      };
+      redis?: {
+        enabled?: boolean;
+        instanceCount?: number;
+      };
+      kafka?: {
+        enabled?: boolean;
+        brokerCount?: number;
+      };
+      paymentProvider?: {
+        enabled?: boolean;
+      };
+    };
+    workload?: {
+      scenarioName?: string;
+      workloadType?: string;
+      requestedBuyClicks?: number;
+      httpConcurrency?: number;
+      skuId?: string;
+      cartSkuCount?: number;
+      quantityPerIntent?: number;
+      projectionBatchSize?: number;
+    };
   };
   scenario?: {
     requestedBuyClicks?: number;
@@ -145,6 +197,71 @@ export default async function InternalBenchmarksPage() {
               tone={latest.projections?.skuInventory?.noOversell ? "success" : "danger"}
               value={latest.projections?.skuInventory?.noOversell ? "true" : "false"}
             />
+          </section>
+
+          <section className="panel admin-panel" aria-labelledby="conditions-title">
+            <p className="eyebrow">Run conditions</p>
+            <h2 id="conditions-title">Hardware, software, services</h2>
+            <p className="muted admin-panel-copy">
+              Benchmark numbers only compare cleanly when the machine, runtime, service topology,
+              and workload shape are recorded with the result.
+            </p>
+            <div className="benchmark-condition-grid">
+              <ConditionCard
+                title="Hardware"
+                values={{
+                  cpu: formatCpu(latest),
+                  memory: formatBytes(
+                    latest.conditions?.hardware?.totalMemoryBytes ??
+                      latest.environment?.totalMemoryBytes,
+                  ),
+                  platform: latest.conditions?.hardware?.platform ?? latest.environment?.platform,
+                }}
+              />
+              <ConditionCard
+                title="Software"
+                values={{
+                  "load generator": latest.conditions?.software?.loadGenerator ?? "node",
+                  "next mode": latest.conditions?.software?.nextMode ?? "unknown",
+                  node: latest.conditions?.software?.node ?? latest.environment?.runtime,
+                  "package manager": latest.conditions?.software?.packageManager ?? "pnpm",
+                }}
+              />
+              <ConditionCard
+                title="Services"
+                values={{
+                  kafka: formatEnabledCount(
+                    latest.conditions?.services?.kafka?.enabled,
+                    latest.conditions?.services?.kafka?.brokerCount,
+                  ),
+                  nextjs: `${formatNumber(
+                    latest.conditions?.services?.nextjs?.instanceCount ?? 1,
+                  )} instance`,
+                  postgres: formatPostgresCondition(latest),
+                  redis: formatEnabledCount(
+                    latest.conditions?.services?.redis?.enabled,
+                    latest.conditions?.services?.redis?.instanceCount,
+                  ),
+                }}
+              />
+              <ConditionCard
+                title="Workload"
+                values={{
+                  concurrency: formatNumber(latest.conditions?.workload?.httpConcurrency),
+                  "projection batch": formatNumber(
+                    latest.conditions?.workload?.projectionBatchSize,
+                  ),
+                  requests: formatNumber(
+                    latest.conditions?.workload?.requestedBuyClicks ??
+                      latest.scenario?.requestedBuyClicks,
+                  ),
+                  type:
+                    latest.conditions?.workload?.workloadType ??
+                    latest.scenario?.workloadType ??
+                    "single_sku_direct_buy",
+                }}
+              />
+            </div>
           </section>
 
           <section className="panel admin-panel" aria-labelledby="evidence-title">
@@ -423,6 +540,25 @@ function EvidenceCard({
   );
 }
 
+function ConditionCard({
+  title,
+  values,
+}: {
+  title: string;
+  values: Record<string, string | undefined>;
+}) {
+  return (
+    <article className="benchmark-condition-card">
+      <strong>{title}</strong>
+      <KeyValueList
+        values={Object.fromEntries(
+          Object.entries(values).map(([label, value]) => [label, value ?? "n/a"]),
+        )}
+      />
+    </article>
+  );
+}
+
 function DistributionList({
   label,
   values,
@@ -542,6 +678,37 @@ function readProjectionLagEvents(run: BenchmarkRun) {
   return run.projections?.checkpointLagEvents ?? run.projections?.projectionLagEvents;
 }
 
+function formatCpu(run: BenchmarkRun) {
+  const count = run.conditions?.hardware?.cpuCount ?? run.environment?.cpuCount;
+  const model = run.conditions?.hardware?.cpuModel ?? run.environment?.cpuModel;
+
+  if (!count && !model) {
+    return "n/a";
+  }
+
+  return `${formatNumber(count)} core · ${model ?? "unknown"}`;
+}
+
+function formatPostgresCondition(run: BenchmarkRun) {
+  const postgres = run.conditions?.services?.postgres;
+
+  if (!postgres) {
+    return "postgresql";
+  }
+
+  return `${postgres.database ?? "n/a"} @ ${postgres.host ?? "n/a"}:${postgres.port ?? "n/a"} · ${formatNumber(
+    postgres.instanceCount,
+  )} instance · pool ${formatNumber(postgres.poolMax)}`;
+}
+
+function formatEnabledCount(enabled: boolean | undefined, count: number | undefined) {
+  if (!enabled) {
+    return "disabled";
+  }
+
+  return `${formatNumber(count)} instance`;
+}
+
 function readAcceptedRate(run: BenchmarkRun) {
   const requested = run.scenario?.requestedBuyClicks ?? 0;
   const accepted = run.requestPath?.accepted ?? 0;
@@ -557,6 +724,16 @@ function formatPercent(value: number | undefined) {
 
 function formatNumber(value: number | undefined) {
   return typeof value === "number" && Number.isFinite(value) ? value.toLocaleString("en") : "n/a";
+}
+
+function formatBytes(value: number | undefined) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return "n/a";
+  }
+
+  const gib = value / 1024 ** 3;
+
+  return `${gib.toFixed(1)} GiB`;
 }
 
 function formatDateTime(value: string | undefined) {

@@ -488,15 +488,40 @@ latency numbers are not meaningful without environment context
 admin dashboard visibility is diagnostic, not the benchmark source of truth
 ```
 
-Environment notes to include with benchmark output:
+Run conditions to include with benchmark output:
 
 ```text
-runtime: Node.js 24
-package manager: pnpm
-database: PostgreSQL through Docker Compose on localhost:5433
-app mode: next dev or production build
-machine: local development machine unless otherwise stated
-Kafka: disabled
-Redis: disabled
-payment provider: disabled
+hardware:
+  platform
+  CPU count
+  CPU model
+  total memory
+
+software:
+  Node.js version
+  package manager
+  Next.js mode, e.g. next dev or next start
+  load generator implementation
+
+services:
+  Next.js app URL and instance count
+  PostgreSQL host, port, database, instance count, and pool size
+  Redis enabled state and instance count
+  Kafka enabled state and broker count
+  payment provider enabled state
+
+workload:
+  scenario name
+  workload type, e.g. single_sku_direct_buy
+  requested Buy clicks
+  HTTP concurrency
+  SKU id
+  cart SKU count
+  quantity per intent
+  projection batch size
 ```
+
+Benchmark result dashboards should display these conditions near the latest run.
+Two benchmark results should not be compared as equivalent if their conditions
+differ in app mode, service count, PostgreSQL pool size, load generator, or
+hardware capacity.

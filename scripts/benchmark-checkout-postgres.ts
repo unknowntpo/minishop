@@ -12,6 +12,11 @@ type BenchmarkConfig = {
   appUrl: string;
   databaseUrl: string;
   requests: number;
+  httpConcurrency: number;
+  appInstanceCount: number;
+  nextMode: string;
+  postgresInstanceCount: number;
+  postgresPoolMax: number;
   projectionBatchSize: number;
   skuId: string;
   buyerPrefix: string;
@@ -61,7 +66,7 @@ const config = readConfig();
 async function main() {
   const pool = new Pool({
     connectionString: config.databaseUrl,
-    max: 5,
+    max: config.postgresPoolMax,
   });
   const startedAtIso = new Date().toISOString();
 
@@ -106,17 +111,22 @@ async function main() {
       environment: {
         runtime: process.version,
         platform: `${os.platform()} ${os.arch()}`,
+        cpuCount: os.cpus().length,
+        cpuModel: os.cpus()[0]?.model ?? "unknown",
+        totalMemoryBytes: os.totalmem(),
         appUrl: config.appUrl,
         database: "postgresql",
         kafka: "disabled",
         redis: "disabled",
         paymentProvider: "disabled",
       },
+      conditions: buildRunConditions(),
       pass,
       scenario: {
         skuId: config.skuId,
         workloadType: "single_sku_direct_buy",
         requestedBuyClicks: config.requests,
+        httpConcurrency: config.httpConcurrency,
         cartSkuCount: 1,
         quantityPerIntent: 1,
       },
@@ -304,6 +314,59 @@ async function readInventory(pool: Pool, skuId: string) {
   };
 }
 
+function buildRunConditions() {
+  const parsedDatabaseUrl = new URL(config.databaseUrl);
+
+  return {
+    hardware: {
+      platform: `${os.platform()} ${os.arch()}`,
+      cpuCount: os.cpus().length,
+      cpuModel: os.cpus()[0]?.model ?? "unknown",
+      totalMemoryBytes: os.totalmem(),
+    },
+    software: {
+      node: process.version,
+      nextMode: config.nextMode,
+      packageManager: "pnpm",
+      loadGenerator: "node-fetch-promise-all",
+    },
+    services: {
+      nextjs: {
+        appUrl: config.appUrl,
+        instanceCount: config.appInstanceCount,
+      },
+      postgres: {
+        host: parsedDatabaseUrl.hostname,
+        port: Number(parsedDatabaseUrl.port || 5432),
+        database: parsedDatabaseUrl.pathname.replace(/^\//, ""),
+        instanceCount: config.postgresInstanceCount,
+        poolMax: config.postgresPoolMax,
+      },
+      redis: {
+        enabled: false,
+        instanceCount: 0,
+      },
+      kafka: {
+        enabled: false,
+        brokerCount: 0,
+      },
+      paymentProvider: {
+        enabled: false,
+      },
+    },
+    workload: {
+      scenarioName,
+      workloadType: "single_sku_direct_buy",
+      requestedBuyClicks: config.requests,
+      httpConcurrency: config.httpConcurrency,
+      skuId: config.skuId,
+      cartSkuCount: 1,
+      quantityPerIntent: 1,
+      projectionBatchSize: config.projectionBatchSize,
+    },
+  };
+}
+
 async function readCheckpoint(pool: Pool) {
   const result = await pool.query<CheckpointRow>(
     "select last_event_id from projection_checkpoint where projection_name = 'main'",
@@ -357,6 +420,11 @@ function readConfig(): BenchmarkConfig {
     appUrl: process.env.BENCHMARK_APP_URL ?? "http://localhost:3000",
     databaseUrl,
     requests: readPositiveIntegerEnv("BENCHMARK_REQUESTS", 1000),
+    httpConcurrency: readPositiveIntegerEnv("BENCHMARK_HTTP_CONCURRENCY", 1000),
+    appInstanceCount: readPositiveIntegerEnv("BENCHMARK_NEXTJS_INSTANCES", 1),
+    nextMode: process.env.BENCHMARK_NEXT_MODE ?? "next dev",
+    postgresInstanceCount: readPositiveIntegerEnv("BENCHMARK_POSTGRES_INSTANCES", 1),
+    postgresPoolMax: readPositiveIntegerEnv("BENCHMARK_POSTGRES_POOL_MAX", 5),
     projectionBatchSize: readPositiveIntegerEnv("BENCHMARK_PROJECTION_BATCH_SIZE", 1000),
     skuId: process.env.BENCHMARK_SKU_ID ?? "sku_hot_001",
     buyerPrefix: process.env.BENCHMARK_BUYER_PREFIX ?? "benchmark_buyer",

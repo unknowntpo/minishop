@@ -28,6 +28,11 @@ or realtime transports are introduced.
 - **WHEN** the benchmark completes the request burst
 - **THEN** it SHALL report workload type, requested request count, accepted count, accepted rate, error count, HTTP status distribution, error distribution, latency percentiles, total duration, and request throughput
 
+#### Scenario: Benchmark records run conditions
+
+- **WHEN** the benchmark writes a result artifact
+- **THEN** it SHALL include hardware, software, service topology, and workload conditions including Node/runtime, Next.js mode and instance count, PostgreSQL host/port/database/instance count/pool size, Redis and Kafka enabled state, CPU count/model, memory, request count, concurrency, SKU count, and projection batch size
+
 #### Scenario: Benchmark records event store metrics
 
 - **WHEN** the benchmark reads durable event state
@@ -93,7 +98,7 @@ results without storing benchmark observations in the domain event store.
 #### Scenario: Dashboard explains latest run evidence
 
 - **WHEN** benchmark artifacts exist
-- **THEN** the dashboard SHALL show latest run evidence for workload shape, HTTP status distribution, error distribution, event type distribution, checkout status distribution, projection checkpoint position, inventory counters, and idempotency replay outcome
+- **THEN** the dashboard SHALL show latest run conditions and evidence for workload shape, hardware/software/service topology, HTTP status distribution, error distribution, event type distribution, checkout status distribution, projection checkpoint position, inventory counters, and idempotency replay outcome
 
 #### Scenario: Dashboard tolerates empty history
 

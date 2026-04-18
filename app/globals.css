@@ -245,6 +245,23 @@ button {
   margin-top: 16px;
 }
 
+.benchmark-condition-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.benchmark-condition-card {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  border: 1px solid var(--ms-line-soft);
+  border-radius: var(--ms-radius);
+  padding: 14px;
+  background: var(--ms-surface);
+}
+
 .benchmark-evidence-card {
   display: grid;
   gap: 12px;
@@ -869,6 +886,7 @@ h2 {
   }
 
   .benchmark-metric-grid,
+  .benchmark-condition-grid,
   .benchmark-evidence-grid,
   .benchmark-trend-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -910,6 +928,7 @@ h2 {
   }
 
   .benchmark-metric-grid,
+  .benchmark-condition-grid,
   .benchmark-evidence-grid,
   .benchmark-trend-grid {
     grid-template-columns: 1fr;
