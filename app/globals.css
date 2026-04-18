@@ -130,6 +130,106 @@ button {
   margin-top: 18px;
 }
 
+.admin-livebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px solid var(--ms-line);
+  border-radius: var(--ms-radius);
+  padding: 14px;
+  background: var(--ms-surface);
+}
+
+.admin-livebar-copy,
+.admin-product-copy {
+  margin-bottom: 0;
+}
+
+.admin-product-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.admin-product-card {
+  display: grid;
+  gap: 16px;
+  border: 1px solid var(--ms-line);
+  border-radius: var(--ms-radius);
+  padding: 16px;
+  background: var(--ms-surface);
+}
+
+.admin-product-card-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+}
+
+.admin-counter-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.admin-counter,
+.admin-product-footer span {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  border-radius: var(--ms-radius);
+  background: var(--ms-subtle);
+  padding: 10px;
+}
+
+.admin-counter strong,
+.admin-product-footer strong {
+  color: var(--ms-muted);
+  font-size: 12px;
+}
+
+.admin-counter code,
+.admin-product-footer code {
+  overflow: hidden;
+  color: var(--ms-ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 24px;
+  font-weight: 850;
+  text-overflow: ellipsis;
+}
+
+.admin-counter.strong code {
+  color: var(--ms-accent);
+}
+
+.admin-counter.success code {
+  color: var(--ms-green);
+}
+
+.admin-counter.warning code {
+  color: var(--ms-warn);
+}
+
+.admin-product-footer {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.admin-product-footer code {
+  font-size: 14px;
+}
+
+.admin-status-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0 14px;
+}
+
 .admin-table-wrap {
   overflow-x: auto;
   margin-top: 14px;
@@ -578,6 +678,10 @@ h2 {
 
   .product-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .admin-product-grid {
+    grid-template-columns: 1fr;
   }
 
   .product-media img {

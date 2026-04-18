@@ -28,6 +28,9 @@ app/
         inventory/
           route.ts
     internal/
+      admin/
+        dashboard/
+          route.ts
       checkout-intents/
         [checkoutIntentId]/
           complete-demo/
@@ -316,6 +319,8 @@ projection_checkpoint cursor state
 ```
 
 Internal admin pages may use Server Components and server-only repository adapters because they are read-only diagnostic surfaces. They should live under `/internal/*`, stay visually separate from product pages, and avoid becoming required for checkout correctness.
+
+For live projection observation, the admin page may hydrate a Client Component from the initial server snapshot and poll an internal dashboard API. This keeps the realtime strategy consistent with the polling-first MVP.
 
 ## Circular Dependency Guard
 

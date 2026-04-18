@@ -240,6 +240,10 @@ The operator strip helps validate projection behavior manually, but benchmark me
 
 An internal admin page may show products, SKUs, SKU inventory projections, latest checkout projections, and projection checkpoints. Keep it under an internal route such as `/internal/admin`, separate from the buyer purchase flow, and treat it as a local verification surface rather than production customer UI.
 
+The internal admin dashboard may poll a JSON endpoint such as `/api/internal/admin/dashboard` every second to show projection movement while checkout demos run in another tab. This is still polling-first; do not introduce SSE or WebSocket for the MVP dashboard.
+
+The live dashboard header should remain layout-stable during polling. Do not toggle the whole header copy or mount/unmount a spinner every refresh; update the timestamp and projection numbers instead.
+
 The operator strip is a server-rendered diagnostic snapshot. After a checkout mutates projections, the client must either refresh the route or navigate to a result page so the operator strip does not appear to be live when it is stale.
 
 ## Visual Design Constraints
