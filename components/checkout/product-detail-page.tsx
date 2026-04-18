@@ -1,25 +1,28 @@
 import Image from "next/image";
 import Link from "next/link";
 
-import { CheckoutAction } from "@/components/checkout/checkout-action";
+import { CheckoutAction, type CheckoutActionItem } from "@/components/checkout/checkout-action";
 import type { Product } from "@/src/domain/catalog/product";
 import { formatProductPrice } from "@/src/presentation/view-models/product";
 
-const cartItems = [
+const cartCheckoutItems: CheckoutActionItem[] = [
   {
-    name: "Limited Runner",
-    detail: "1 item · reservation requested",
-    status: "processing",
+    skuId: "sku_hot_001",
+    quantity: 1,
+    unitPriceAmountMinor: 100000,
+    currency: "TWD",
   },
   {
-    name: "Everyday Tee",
-    detail: "2 items · inventory reserved",
-    status: "reserved",
+    skuId: "sku_tee_001",
+    quantity: 2,
+    unitPriceAmountMinor: 68000,
+    currency: "TWD",
   },
   {
-    name: "Travel Cap",
-    detail: "1 item · waiting for projection update",
-    status: "processing",
+    skuId: "sku_cap_001",
+    quantity: 1,
+    unitPriceAmountMinor: 42000,
+    currency: "TWD",
   },
 ];
 
@@ -95,24 +98,13 @@ export function ProductDetailPage({ product }: { product: Product }) {
         </summary>
 
         <div className="cart-drawer">
-          <p className="eyebrow">Cart checkout products</p>
-          <h2>Per-item reservation progress</h2>
-          <div className="cart-list">
-            {cartItems.map((item) => (
-              <div className="cart-item" key={item.name}>
-                <span className="cart-thumb" aria-hidden="true" />
-                <div>
-                  <strong>{item.name}</strong>
-                  <p className="muted">{item.detail}</p>
-                </div>
-                {item.status === "reserved" ? (
-                  <span className="badge success">reserved</span>
-                ) : (
-                  <span className="spinner" role="status" aria-label={`${item.name} processing`} />
-                )}
-              </div>
-            ))}
-          </div>
+          <p className="eyebrow">Cart checkout</p>
+          <h2>Checkout 3 products</h2>
+          <p className="muted">
+            One checkout intent reserves all cart SKUs together. Completion opens the checkout
+            result page.
+          </p>
+          <CheckoutAction product={product} items={cartCheckoutItems} buttonLabel="Checkout cart" />
         </div>
       </details>
     </main>
@@ -127,7 +119,7 @@ function OperatorStrip({ product }: { product: Product }) {
   const lagLabel =
     product.inventory.projectionLagMs === null
       ? "n/a"
-      : `${Math.max(0, product.inventory.projectionLagMs)}ms`;
+      : formatProjectionLag(product.inventory.projectionLagMs);
 
   return (
     <section className="operator-strip" aria-label="Projection operator strip">
@@ -168,4 +160,20 @@ function OperatorStrip({ product }: { product: Product }) {
       </div>
     </section>
   );
+}
+
+function formatProjectionLag(lagMs: number) {
+  const safeLag = Math.max(0, lagMs);
+
+  if (safeLag < 1000) {
+    return `${safeLag}ms`;
+  }
+
+  const seconds = Math.round(safeLag / 1000);
+
+  if (seconds < 60) {
+    return `${seconds}s`;
+  }
+
+  return `${Math.round(seconds / 60)}m`;
 }

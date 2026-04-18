@@ -33,6 +33,8 @@ Guaranteed stock
 Only 100 left for you
 ```
 
+Price should be visually stronger than inventory availability. Use a distinct but restrained price treatment so price is scannable without making the inventory projection look like the primary call to action.
+
 ## Buy Interaction Pattern
 
 Pressing Buy sends `POST /api/checkout-intents` with an idempotency key and immediately creates an accepted local checkout state when the API returns `checkout_intent_id`.
@@ -182,6 +184,8 @@ show processing detail only after the cart drawer is expanded
 
 Per-item cart rows may use a spinner while an asynchronous reservation or projection update is still in progress. The spinner must stop when the item has a projection-backed outcome such as reserved, rejected, released, or cancelled. Spinners are progress indicators only and must not imply FIFO ordering or successful reservation.
 
+For the first runnable demo, do not show fake per-item cart reservation rows that never resolve. Cart checkout should use the same checkout intent API as Direct Buy, show one top-level processing state, then navigate to the checkout result page after the demo completion path projects the outcome.
+
 Design decision:
 
 ```text
@@ -235,6 +239,8 @@ projection lag hint
 The operator strip helps validate projection behavior manually, but benchmark measurements still come from the benchmark script and database metrics.
 
 An internal admin page may show products, SKUs, SKU inventory projections, latest checkout projections, and projection checkpoints. Keep it under an internal route such as `/internal/admin`, separate from the buyer purchase flow, and treat it as a local verification surface rather than production customer UI.
+
+The operator strip is a server-rendered diagnostic snapshot. After a checkout mutates projections, the client must either refresh the route or navigate to a result page so the operator strip does not appear to be live when it is stale.
 
 ## Visual Design Constraints
 

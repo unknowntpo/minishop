@@ -28,6 +28,10 @@ app/
         inventory/
           route.ts
     internal/
+      checkout-intents/
+        [checkoutIntentId]/
+          complete-demo/
+            route.ts
       projections/
         process/
           route.ts
@@ -224,6 +228,14 @@ State-changing checkout commands use API route handlers, not Server Actions in t
 ```text
 POST /api/checkout-intents
 ```
+
+The local demo may use an internal route to complete a checkout after the intent has been accepted and projected:
+
+```text
+POST /api/internal/checkout-intents/:id/complete-demo
+```
+
+This route is a demo worker substitute. It appends inventory reservation, payment requested, and order confirmation events so the browser can exercise a full result flow before an independent worker exists.
 
 Polling reads also use API route handlers:
 

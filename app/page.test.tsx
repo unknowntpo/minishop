@@ -1,9 +1,16 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { ProductDetailPage } from "@/components/checkout/product-detail-page";
 import { ProductsPageContent } from "@/components/products/products-page-content";
 import { staticCatalogRepository } from "@/src/infrastructure/catalog/static-catalog-repository";
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({
+    push: vi.fn(),
+    refresh: vi.fn(),
+  }),
+}));
 
 describe("Products", () => {
   it("renders a browsable catalog with all preview products", async () => {

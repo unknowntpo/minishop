@@ -1,8 +1,16 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import type { Product } from "@/src/domain/catalog/product";
+
+export type CheckoutActionItem = {
+  skuId: string;
+  quantity: number;
+  unitPriceAmountMinor: number;
+  currency: string;
+};
 
 type CheckoutStatusResponse = {
   checkoutIntentId: string;
@@ -22,7 +30,7 @@ type CheckoutActionState =
       message: string;
     }
   | {
-      phase: "ready";
+      phase: "ready" | "completed";
       checkoutIntentId: string;
       status: string;
       message: string;
@@ -32,7 +40,16 @@ type CheckoutActionState =
       message: string;
     };
 
-export function CheckoutAction({ product }: { product: Product }) {
+export function CheckoutAction({
+  product,
+  items,
+  buttonLabel = "Buy",
+}: {
+  product: Product;
+  items?: CheckoutActionItem[];
+  buttonLabel?: string;
+}) {
+  const router = useRouter();
   const [state, setState] = useState<CheckoutActionState>({ phase: "idle" });
   const [checkoutIntentId, setCheckoutIntentId] = useState<string | null>(null);
 
@@ -81,6 +98,14 @@ export function CheckoutAction({ product }: { product: Product }) {
 
     try {
       const idempotencyKey = crypto.randomUUID();
+      const checkoutItems = items ?? [
+        {
+          skuId: product.skuId,
+          quantity: 1,
+          unitPriceAmountMinor: product.priceAmountMinor,
+          currency: product.currency,
+        },
+      ];
       const response = await fetch("/api/checkout-intents", {
         method: "POST",
         headers: {
@@ -89,14 +114,7 @@ export function CheckoutAction({ product }: { product: Product }) {
         },
         body: JSON.stringify({
           buyerId: "demo_buyer",
-          items: [
-            {
-              skuId: product.skuId,
-              quantity: 1,
-              unitPriceAmountMinor: product.priceAmountMinor,
-              currency: product.currency,
-            },
-          ],
+          items: checkoutItems,
         }),
       });
 
@@ -112,22 +130,39 @@ export function CheckoutAction({ product }: { product: Product }) {
         message: "Checkout accepted. Refreshing projections.",
       });
 
-      await fetch("/api/internal/projections/process", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          projectionName: "main",
-          batchSize: 100,
-        }),
-      });
+      await processProjections();
 
       setState({
-        phase: "polling",
+        phase: "projecting",
         checkoutIntentId: body.checkoutIntentId,
-        message: "Projection refresh requested. Polling checkout status.",
+        message: "Completing checkout.",
       });
+
+      const completeResponse = await fetch(
+        `/api/internal/checkout-intents/${body.checkoutIntentId}/complete-demo`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+          },
+        },
+      );
+
+      if (!completeResponse.ok) {
+        throw new Error(await readError(completeResponse));
+      }
+
+      await processProjections();
+      const completedStatus = await waitForCheckoutStatus(body.checkoutIntentId);
+
+      setState({
+        phase: "completed",
+        checkoutIntentId: body.checkoutIntentId,
+        status: completedStatus.status,
+        message: statusMessage(completedStatus),
+      });
+      router.refresh();
+      router.push(`/checkout-complete/${body.checkoutIntentId}`);
     } catch (error) {
       console.error("checkout_action_failed", error);
       setState({
@@ -142,7 +177,7 @@ export function CheckoutAction({ product }: { product: Product }) {
   return (
     <div className="checkout-demo">
       <button className="button primary" type="button" disabled={disabled} onClick={buy}>
-        {disabled ? "Working" : "Buy"}
+        {disabled ? "Working" : buttonLabel}
       </button>
       {state.phase !== "idle" ? (
         <div className={`checkout-demo-status ${state.phase}`}>
@@ -156,6 +191,49 @@ export function CheckoutAction({ product }: { product: Product }) {
       ) : null}
     </div>
   );
+}
+
+async function processProjections() {
+  await fetch("/api/internal/projections/process", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      projectionName: "main",
+      batchSize: 100,
+    }),
+  });
+}
+
+async function waitForCheckoutStatus(checkoutIntentId: string) {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const response = await fetch(`/api/checkout-intents/${checkoutIntentId}`, {
+      cache: "no-store",
+    });
+
+    if (response.ok) {
+      const body = (await response.json()) as CheckoutStatusResponse;
+
+      if (
+        ["confirmed", "rejected", "cancelled", "expired", "pending_payment"].includes(body.status)
+      ) {
+        return body;
+      }
+    }
+
+    await new Promise((resolve) => window.setTimeout(resolve, 350));
+  }
+
+  const response = await fetch(`/api/checkout-intents/${checkoutIntentId}`, {
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
+
+  return (await response.json()) as CheckoutStatusResponse;
 }
 
 function statusMessage(body: CheckoutStatusResponse) {
