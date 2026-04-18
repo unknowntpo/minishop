@@ -29,7 +29,7 @@ describe("Products", () => {
     );
   });
 
-  it("keeps checkout status copy on product detail pages", async () => {
+  it("renders product detail without static checkout status preview", async () => {
     const product = await staticCatalogRepository.findProductBySlug("everyday-tee");
 
     if (!product) {
@@ -39,7 +39,8 @@ describe("Products", () => {
     render(<ProductDetailPage product={product} />);
 
     expect(screen.getByRole("heading", { name: "Everyday Tee" })).toBeInTheDocument();
-    expect(screen.getByText("Accepted does not mean reserved.")).toBeInTheDocument();
-    expect(screen.getByText("Request received")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Buy" })).toBeInTheDocument();
+    expect(screen.queryByText("Accepted does not mean reserved.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Request received")).not.toBeInTheDocument();
   });
 });

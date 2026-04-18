@@ -6,6 +6,7 @@
       "components/**",
       "db/**",
       "src/**",
+      "scripts/**",
       "test/**",
       "*.ts",
       "*.tsx",

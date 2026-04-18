@@ -14,6 +14,9 @@ app/
     page.tsx
     [slug]/
       page.tsx
+  internal/
+    admin/
+      page.tsx
   api/
     checkout-intents/
       route.ts
@@ -40,16 +43,19 @@ src/
     payment/
     order/
   application/
+    admin/
     checkout/
     inventory/
     projections/
   ports/
+    admin-dashboard-repository.ts
     event-store.ts
     catalog-repository.ts
     projection-repository.ts
     clock.ts
     id-generator.ts
   infrastructure/
+    admin/
     db/
     event-store/
     catalog/
@@ -82,6 +88,72 @@ CheckoutIntentCreated
 ```
 
 This keeps code modules, database objects, and type names distinct.
+
+## API Contracts, View Models, and Repository Adapters
+
+Use TypeScript-style names instead of Java-style DTO/DAO naming.
+
+Concept mapping:
+
+```text
+Java DTO      -> API contract or presentation view model
+Java DAO      -> repository port plus infrastructure adapter
+Java Service  -> application use case
+Java Entity   -> domain model or aggregate state
+```
+
+API request and response shapes live under presentation-oriented modules:
+
+```text
+src/presentation/api/
+src/presentation/view-models/
+```
+
+Example:
+
+```ts
+export type CreateCheckoutIntentRequest = {
+  buyerId: string;
+  items: Array<{
+    skuId: string;
+    quantity: number;
+  }>;
+  idempotencyKey?: string;
+};
+```
+
+Database access is expressed as ports and adapters:
+
+```text
+src/ports/catalog-repository.ts
+src/infrastructure/catalog/postgres-catalog-repository.ts
+```
+
+Do not introduce Java-style folders or suffixes by default:
+
+```text
+dto/
+dao/
+service/
+CheckoutIntentDto
+CheckoutIntentDao
+CheckoutIntentServiceImpl
+```
+
+Only add suffixes like `Request`, `Response`, `ViewModel`, `Repository`, or `Adapter` when they clarify a real boundary.
+
+## Seed Data
+
+Catalog seed data is for local development, preview, and benchmark fixtures only. It must not be treated as production bootstrap data.
+
+Use explicit script names for non-production seed data:
+
+```text
+db:seed:dev
+seed-dev-catalog
+```
+
+Production data loading must be a separate operational process when needed.
 
 ## Dependency Direction
 
@@ -144,6 +216,41 @@ import "server-only";
 ```
 
 Client Components must not import `src/infrastructure/*`, `db/*`, or server-only modules.
+
+## API Error Boundaries and Traceability
+
+API routes must translate unexpected server failures into user-safe response bodies. Frontend UI should not receive raw environment variable names, database errors, stack traces, SQL messages, or server-only configuration details.
+
+Each API request should have a request context:
+
+```text
+request_id:
+  stable per HTTP request
+  returned to the client as a short support/reference value
+
+trace_id:
+  propagated from inbound headers when present
+  used for server logs and later distributed tracing
+```
+
+Response headers may include `x-request-id` and `x-trace-id`. Error response bodies may include `requestId` for support/debug correlation, but must use generic customer-facing messages.
+
+Event metadata may also include request and trace identifiers when a command produces a durable event. Metadata is observability context, not business state.
+
+## Internal Admin Surfaces
+
+Internal admin pages are allowed for local development, projection verification, and benchmark observation. They are not buyer UI.
+
+The first internal admin page may read:
+
+```text
+product and sku catalog rows
+sku_inventory_projection counters
+checkout_intent_projection latest statuses
+projection_checkpoint cursor state
+```
+
+Internal admin pages may use Server Components and server-only repository adapters because they are read-only diagnostic surfaces. They should live under `/internal/*`, stay visually separate from product pages, and avoid becoming required for checkout correctness.
 
 ## Circular Dependency Guard
 

@@ -66,6 +66,8 @@ The page may allow another new Buy attempt only after the current intent reaches
 
 The checkout status panel is the source of truth for the user's current attempt. It reads from `GET /api/checkout-intents/:id` and maps projection status to user-facing copy.
 
+On the real product page, do not render static checkout status rows before a checkout attempt exists. The status panel appears only after `POST /api/checkout-intents` returns a `checkout_intent_id`. Static examples belong in design pattern pages and preview pages, not in the production demo purchase flow.
+
 ```text
 queued:
   title: Request received
@@ -100,7 +102,9 @@ expired:
   body: This checkout expired before completion.
 ```
 
-Error details should be shown only when they are actionable. Internal event, aggregate, and projection names may appear in a development/debug view, but not in primary customer copy.
+Error details should be shown only when they are actionable. Internal event, aggregate, projection, environment, stack trace, SQL, and configuration names must not appear in primary customer copy. Customer-facing API errors may show a short request or reference ID that maps to server logs.
+
+Internal event, aggregate, and projection names may appear only in development/debug surfaces such as an internal admin page.
 
 ## Polling Pattern
 
@@ -229,6 +233,8 @@ projection lag hint
 ```
 
 The operator strip helps validate projection behavior manually, but benchmark measurements still come from the benchmark script and database metrics.
+
+An internal admin page may show products, SKUs, SKU inventory projections, latest checkout projections, and projection checkpoints. Keep it under an internal route such as `/internal/admin`, separate from the buyer purchase flow, and treat it as a local verification surface rather than production customer UI.
 
 ## Visual Design Constraints
 

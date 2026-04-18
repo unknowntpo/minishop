@@ -19,6 +19,7 @@
     "check": "pnpm run typecheck && pnpm run lint && pnpm run deps:check && pnpm run test",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
+    "db:seed:dev": "tsx scripts/seed-dev-catalog.ts",
     "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
@@ -40,6 +41,7 @@
     "dotenv": "^17.4.2",
     "drizzle-kit": "^0.31.10",
     "jsdom": "^27.3.0",
+    "tsx": "^4.21.0",
     "typescript": "^6.0.3",
     "vitest": "^4.0.16"
   }

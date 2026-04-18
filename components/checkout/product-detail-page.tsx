@@ -1,6 +1,7 @@
 import Image from "next/image";
 import Link from "next/link";
 
+import { CheckoutAction } from "@/components/checkout/checkout-action";
 import type { Product } from "@/src/domain/catalog/product";
 import { formatProductPrice } from "@/src/presentation/view-models/product";
 
@@ -19,28 +20,6 @@ const cartItems = [
     name: "Travel Cap",
     detail: "1 item · waiting for projection update",
     status: "processing",
-  },
-];
-
-const statusRows = [
-  {
-    title: "Request received",
-    body: "Your checkout request is waiting to be processed.",
-    badge: "queued",
-    tone: "neutral",
-  },
-  {
-    title: "Checking availability",
-    body: "Inventory is being reserved for this checkout.",
-    badge: "reserving",
-    tone: "warning",
-    active: true,
-  },
-  {
-    title: "Reserved",
-    body: "Inventory is reserved. Payment will start next.",
-    badge: "reserved",
-    tone: "success",
   },
 ];
 
@@ -78,55 +57,11 @@ export function ProductDetailPage({ product }: { product: Product }) {
               </div>
               <span className="badge neutral">projection</span>
             </div>
-            <button className="button primary" type="button">
-              Buy
-            </button>
+            <CheckoutAction product={product} />
             <p className="fine-print">
               This page does not decrement inventory after pressing Buy. Inventory changes only
               after projection refresh.
             </p>
-          </section>
-
-          <section className="panel" aria-labelledby="status-title">
-            <p className="eyebrow">Checkout status</p>
-            <h2 id="status-title">Accepted does not mean reserved.</h2>
-            <div className="status-list">
-              {statusRows.map((row) => (
-                <div className="status-row" key={row.badge}>
-                  <div>
-                    <strong>{row.title}</strong>
-                    <p className="muted">{row.body}</p>
-                  </div>
-                  <span className={`badge ${row.tone}`}>
-                    {row.active ? <span className="spinner small" aria-hidden="true" /> : null}
-                    {row.badge}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </section>
-
-          <section className="panel" aria-labelledby="updates-title">
-            <p className="eyebrow">Notification center</p>
-            <h2 id="updates-title">Unified checkout updates</h2>
-            <div className="status-list">
-              <div className="status-row">
-                <div>
-                  <strong>Checkout request accepted</strong>
-                  <p className="muted">Intent chk_8f2 is queued for reservation processing.</p>
-                </div>
-                <span className="badge neutral">queued</span>
-              </div>
-              <div className="status-row">
-                <div>
-                  <strong>Cart reservation update</strong>
-                  <p className="muted">
-                    1 of 3 products is reserved. Remaining products are processing.
-                  </p>
-                </div>
-                <span className="badge warning">update</span>
-              </div>
-            </div>
           </section>
         </div>
       </section>
