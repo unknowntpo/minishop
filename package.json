@@ -25,8 +25,9 @@
     "db:reset:dev": "MINISHOP_ALLOW_DB_RESET=1 tsx scripts/reset-dev-db.ts && pnpm db:migrate && pnpm db:seed:dev",
     "db:seed:dev": "tsx scripts/seed-dev-catalog.ts",
     "db:studio": "drizzle-kit studio",
-    "benchmark:checkout:postgres": "tsx scripts/benchmark-checkout-postgres.ts",
-    "benchmark:checkout:postgres:reset": "pnpm db:reset:dev && pnpm benchmark:checkout:postgres"
+    "benchmark:checkout:postgres:raw": "tsx scripts/benchmark-checkout-postgres.ts",
+    "benchmark:checkout:postgres": "tsx scripts/run-checkout-postgres-benchmark.ts",
+    "benchmark:checkout:postgres:reset": "BENCHMARK_RESET=1 tsx scripts/run-checkout-postgres-benchmark.ts"
   },
   "dependencies": {
     "drizzle-orm": "^0.45.2",

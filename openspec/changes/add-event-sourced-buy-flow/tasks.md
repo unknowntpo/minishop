@@ -67,3 +67,4 @@
 - [x] 7.6 Add Defer Playwright end-to-end tests to an explicit slow path with product page Buy, checkout polling, projection processing, and internal admin verification
 - [x] 7.7 Add Benchmark Result Dashboard for local checkout-postgres-baseline artifacts and bottleneck trends
 - [x] 7.8 Add dev-only isolated benchmark reset path for local PostgreSQL before clean checkout-postgres-baseline runs
+- [x] 7.9 Add benchmark runner orchestration with app preflight, optional reset, raw benchmark execution, and latest artifact summary

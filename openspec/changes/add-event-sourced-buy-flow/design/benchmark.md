@@ -92,6 +92,22 @@ The script command is:
 pnpm benchmark:checkout:postgres
 ```
 
+The operator-facing benchmark command should behave like a runner:
+
+```text
+preflight:
+  verify local app is reachable
+
+optional reset:
+  for clean local runs, reuse db:reset:dev before load
+
+raw benchmark:
+  submit requests and verify database evidence
+
+summary:
+  print the latest artifact summary after completion
+```
+
 The script is not part of `pnpm check`. It requires:
 
 ```text
@@ -131,6 +147,11 @@ benchmark-results/
 
 `benchmark-results/` is ignored by git. These files are local diagnostic
 artifacts, not product data, migration fixtures, or domain events.
+
+`httpConcurrency` must be enforced by the load script itself. It is not enough
+to record a configured concurrency value in the artifact while still launching
+all requests in an unbounded `Promise.all`, because that misstates the load
+shape under test.
 
 ## Metrics
 

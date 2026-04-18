@@ -73,15 +73,15 @@ async function main() {
   try {
     const beforeEventCount = await readEventCount(pool);
     const startedAt = performance.now();
-    // This baseline measures durable checkout ingress only. Reservation and
-    // order completion benchmarks are separate phases with different pass gates.
-    const results = await Promise.all(
-      Array.from({ length: config.requests }, (_, index) => createCheckoutIntent(index)),
+    // Keep the load shape explicit: the benchmark may submit many requests, but
+    // only up to BENCHMARK_HTTP_CONCURRENCY should be in flight at once.
+    const results = await runWithConcurrency(config.requests, config.httpConcurrency, (index) =>
+      createCheckoutIntent(index),
     );
     const totalMs = performance.now() - startedAt;
     const duplicateReplay = await replayDuplicateIdempotencyKey();
 
-    await processProjectionBatch();
+    const projectionProcessing = await processProjectionUntilCaughtUp(pool);
 
     const [afterEventCount, eventTypeDistribution, statusDistribution, inventory, checkpoint] =
       await Promise.all([
@@ -158,9 +158,18 @@ async function main() {
         eventTypeDistribution,
       },
       projections: {
+        processedEvents: projectionProcessing.processedEvents,
+        processRuns: projectionProcessing.runs,
         checkpointLastEventId: checkpoint,
         eventStoreLastEventId: afterEventCount,
         checkpointLagEvents: Math.max(0, afterEventCount - checkpoint),
+        projectionDurationMs: projectionProcessing.durationMs,
+        projectionThroughputEventsPerSecond: Number(
+          (
+            projectionProcessing.processedEvents /
+            Math.max(projectionProcessing.durationMs / 1000, 0.001)
+          ).toFixed(2),
+        ),
         checkoutProjectionCount: Object.values(statusDistribution).reduce(
           (total, count) => total + count,
           0,
@@ -246,7 +255,7 @@ async function postCheckoutIntent(index: number, idempotencyKey: string): Promis
 }
 
 async function processProjectionBatch() {
-  await fetch(`${config.appUrl}/api/internal/projections/process`, {
+  const response = await fetch(`${config.appUrl}/api/internal/projections/process`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -258,6 +267,49 @@ async function processProjectionBatch() {
       batchSize: config.projectionBatchSize,
     }),
   });
+
+  if (!response.ok) {
+    throw new Error(`Projection process request failed with HTTP ${response.status}.`);
+  }
+
+  return (await response.json()) as {
+    locked: boolean;
+    processedEvents: number;
+  };
+}
+
+async function processProjectionUntilCaughtUp(pool: Pool) {
+  const startedAt = performance.now();
+  let processedEvents = 0;
+  let runs = 0;
+
+  while (true) {
+    const beforeEventCount = await readEventCount(pool);
+    const checkpointBefore = await readCheckpoint(pool);
+
+    if (checkpointBefore >= beforeEventCount) {
+      break;
+    }
+
+    const result = await processProjectionBatch();
+    runs += 1;
+
+    if (!result.locked) {
+      throw new Error("Projection processor could not acquire the advisory lock during benchmark.");
+    }
+
+    processedEvents += result.processedEvents;
+
+    if (result.processedEvents < config.projectionBatchSize) {
+      break;
+    }
+  }
+
+  return {
+    processedEvents,
+    runs,
+    durationMs: Math.round(performance.now() - startedAt),
+  };
 }
 
 async function readEventCount(pool: Pool) {
@@ -328,7 +380,7 @@ function buildRunConditions() {
       node: process.version,
       nextMode: config.nextMode,
       packageManager: "pnpm",
-      loadGenerator: "node-fetch-promise-all",
+      loadGenerator: "node-fetch-concurrency-runner",
     },
     services: {
       nextjs: {
@@ -396,6 +448,34 @@ function countBy<T>(values: T[], keyFor: (value: T) => string) {
   return Object.fromEntries(
     [...counts.entries()].sort(([left], [right]) => left.localeCompare(right)),
   );
+}
+
+async function runWithConcurrency<T>(
+  total: number,
+  concurrency: number,
+  taskFor: (index: number) => Promise<T>,
+) {
+  const results = new Array<T>(total);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (true) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+
+      if (currentIndex >= total) {
+        return;
+      }
+
+      results[currentIndex] = await taskFor(currentIndex);
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: Math.max(1, Math.min(concurrency, total)) }, () => worker()),
+  );
+
+  return results;
 }
 
 async function writeBenchmarkArtifact(report: object) {

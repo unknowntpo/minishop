@@ -85,6 +85,13 @@ results without storing benchmark observations in the domain event store.
 - **THEN** the system SHALL provide a dev-only reset path that recreates local PostgreSQL schema state, reapplies migrations, reseeds catalog projections, and then runs `checkout-postgres-baseline`
 - **AND** the reset path SHALL refuse non-local databases
 
+#### Scenario: Benchmark runner performs preflight and summary
+
+- **WHEN** an operator runs `pnpm benchmark:checkout:postgres` or `pnpm benchmark:checkout:postgres:reset`
+- **THEN** the benchmark runner SHALL verify that the local app is reachable before starting load
+- **AND** the reset variant SHALL run the local database reset path before the raw benchmark
+- **AND** the runner SHALL print a concise summary from the latest benchmark artifact after completion
+
 #### Scenario: Dashboard reads benchmark artifacts
 
 - **WHEN** an operator opens `/internal/benchmarks`
