@@ -1,5 +1,15 @@
-import { type CheckoutItem, isCheckoutItem } from "@/src/domain/checkout/item";
+import type { CheckoutItem } from "@/src/domain/checkout/item";
 import { type EventType, isEventType } from "@/src/domain/events/event-type";
+import {
+  isCheckoutItemJsonList,
+  isNonEmptyString,
+  isNonNegativeInteger,
+  isRecord,
+  isReservationIdentityPayload,
+  isStableTextIdentifier,
+  isUuid,
+  optionalNonEmptyString,
+} from "@/src/domain/schema-conventions";
 
 type BaseDomainEvent<TType extends EventType, TPayload> = {
   type: TType;
@@ -132,11 +142,9 @@ export function isDomainEvent(value: unknown): value is DomainEvent {
   switch (value.type) {
     case "CheckoutIntentCreated":
       return (
-        isNonEmptyString(value.payload.checkout_intent_id) &&
+        isUuid(value.payload.checkout_intent_id) &&
         isNonEmptyString(value.payload.buyer_id) &&
-        Array.isArray(value.payload.items) &&
-        value.payload.items.length > 0 &&
-        value.payload.items.every(isCheckoutItem) &&
+        isCheckoutItemJsonList(value.payload.items) &&
         optionalNonEmptyString(value.payload.idempotency_key)
       );
     case "InventoryReservationRequested":
@@ -147,69 +155,42 @@ export function isDomainEvent(value: unknown): value is DomainEvent {
       return isReservationPayload(value.payload) && isNonEmptyString(value.payload.reason);
     case "PaymentRequested":
       return (
-        isNonEmptyString(value.payload.payment_id) &&
-        isNonEmptyString(value.payload.checkout_intent_id) &&
+        isUuid(value.payload.payment_id) &&
+        isUuid(value.payload.checkout_intent_id) &&
         isNonNegativeInteger(value.payload.amount) &&
         isNonEmptyString(value.payload.idempotency_key)
       );
     case "PaymentSucceeded":
       return (
-        isNonEmptyString(value.payload.payment_id) &&
-        isNonEmptyString(value.payload.checkout_intent_id) &&
+        isUuid(value.payload.payment_id) &&
+        isUuid(value.payload.checkout_intent_id) &&
         isNonEmptyString(value.payload.provider_reference)
       );
     case "PaymentFailed":
       return (
-        isNonEmptyString(value.payload.payment_id) &&
-        isNonEmptyString(value.payload.checkout_intent_id) &&
+        isUuid(value.payload.payment_id) &&
+        isUuid(value.payload.checkout_intent_id) &&
         isNonEmptyString(value.payload.reason)
       );
     case "InventoryReservationReleased":
       return isReservationPayload(value.payload) && isNonEmptyString(value.payload.reason);
     case "OrderConfirmed":
       return (
-        isNonEmptyString(value.payload.order_id) &&
-        isNonEmptyString(value.payload.checkout_intent_id) &&
+        isUuid(value.payload.order_id) &&
+        isUuid(value.payload.checkout_intent_id) &&
         isNonEmptyString(value.payload.buyer_id) &&
-        Array.isArray(value.payload.items) &&
-        value.payload.items.length > 0 &&
-        value.payload.items.every(isCheckoutItem) &&
+        isCheckoutItemJsonList(value.payload.items) &&
         isNonNegativeInteger(value.payload.total_amount_minor)
       );
     case "OrderCancelled":
       return (
-        isNonEmptyString(value.payload.order_id) &&
-        isNonEmptyString(value.payload.checkout_intent_id) &&
+        isUuid(value.payload.order_id) &&
+        isUuid(value.payload.checkout_intent_id) &&
         isNonEmptyString(value.payload.reason)
       );
   }
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function isReservationPayload(value: Record<string, unknown>) {
-  return (
-    isNonEmptyString(value.checkout_intent_id) &&
-    isNonEmptyString(value.reservation_id) &&
-    isNonEmptyString(value.sku_id) &&
-    isPositiveInteger(value.quantity)
-  );
-}
-
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value.trim().length > 0;
-}
-
-function optionalNonEmptyString(value: unknown) {
-  return value === undefined || isNonEmptyString(value);
-}
-
-function isPositiveInteger(value: unknown): value is number {
-  return typeof value === "number" && Number.isInteger(value) && value > 0;
-}
-
-function isNonNegativeInteger(value: unknown): value is number {
-  return typeof value === "number" && Number.isInteger(value) && value >= 0;
+  return isReservationIdentityPayload(value) && isStableTextIdentifier(value.sku_id);
 }

@@ -7,7 +7,7 @@
 - [x] 1.5 Implement Use TypeScript-style API contracts and repository adapters instead of Java-style DTO/DAO naming
 - [x] 1.6 Add base Drizzle migrations for event_store schema, projection schema, and checkpoint tables
 - [x] 1.7 Add Catalog Tables migrations for singular product and sku seed tables with explicit non-production seed script
-- [ ] 1.8 Add Schema Conventions validation for IDs, money minor units, checkout item JSON, event metadata, reservation identity, and FK policy
+- [x] 1.8 Add Schema Conventions validation for IDs, money minor units, checkout item JSON, event metadata, reservation identity, and FK policy
 - [x] 1.9 Implement Use Docker Compose for local PostgreSQL with db:up, db:down, and db:logs scripts
 
 ## 2. Event Store and Checkout Intent

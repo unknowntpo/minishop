@@ -143,3 +143,23 @@ Only some rows refer to sku.sku_id, so a direct FK from event_store.aggregate_id
 ```
 
 Command handlers and aggregate roots validate that referenced catalog entities exist and are active before appending events.
+
+## Validation Boundary
+
+Schema conventions are enforced in TypeScript before durable event append:
+
+```text
+src/domain/schema-conventions.ts:
+  UUID identifiers
+  stable product_id / sku_id text identifiers
+  uppercase currency codes
+  positive integer quantities
+  non-negative integer minor-unit money
+  checkout item JSON shape
+  event metadata JSON shape
+  reservation identity payloads
+```
+
+API parsers validate incoming request shapes before creating commands. Domain event guards validate event payloads before PostgreSQL insert. The PostgreSQL event store validates `event_id`, aggregate identifier shape, and event metadata before inserting into `event_store`.
+
+Tests cover the schema convention validators directly so convention drift is visible before database writes are involved.

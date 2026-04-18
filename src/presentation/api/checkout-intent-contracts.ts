@@ -1,4 +1,12 @@
 import type { CheckoutItem } from "@/src/domain/checkout/item";
+import {
+  isCurrencyCode,
+  isNonEmptyString,
+  isNonNegativeInteger,
+  isPositiveInteger,
+  isRecord,
+  isStableTextIdentifier,
+} from "@/src/domain/schema-conventions";
 
 export type CreateCheckoutIntentRequest = {
   buyerId: string;
@@ -58,26 +66,22 @@ function parseRequestItem(value: unknown): CreateCheckoutIntentRequest["items"][
     throw new Error("Checkout item must be an object.");
   }
 
-  if (!isNonEmptyString(value.skuId)) {
+  if (!isStableTextIdentifier(value.skuId)) {
     throw new Error("item.skuId is required.");
   }
 
   const quantity = value.quantity;
   const unitPriceAmountMinor = value.unitPriceAmountMinor;
 
-  if (typeof quantity !== "number" || !Number.isInteger(quantity) || quantity <= 0) {
+  if (!isPositiveInteger(quantity)) {
     throw new Error("item.quantity must be a positive integer.");
   }
 
-  if (
-    typeof unitPriceAmountMinor !== "number" ||
-    !Number.isInteger(unitPriceAmountMinor) ||
-    unitPriceAmountMinor < 0
-  ) {
+  if (!isNonNegativeInteger(unitPriceAmountMinor)) {
     throw new Error("item.unitPriceAmountMinor must be a non-negative integer.");
   }
 
-  if (!isNonEmptyString(value.currency)) {
+  if (!isCurrencyCode(value.currency)) {
     throw new Error("item.currency is required.");
   }
 
@@ -87,12 +91,4 @@ function parseRequestItem(value: unknown): CreateCheckoutIntentRequest["items"][
     unitPriceAmountMinor,
     currency: value.currency,
   };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value.trim().length > 0;
 }
