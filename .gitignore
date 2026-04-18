@@ -2,6 +2,7 @@
 openspec/.vector-search.db*
 
 node_modules/
+.pnpm-store/
 .next/
 out/
 dist/

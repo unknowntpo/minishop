@@ -79,6 +79,8 @@ Minimum item shape:
 Rules:
 
 ```text
+sku_id is the purchasable unit and inventory boundary
+product_id is not required in checkout item JSON because it is resolved through sku.product_id
 quantity must be a positive integer
 unit_price_amount_minor must be integer minor units
 checkout item currency must match checkout/order currency

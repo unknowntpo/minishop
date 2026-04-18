@@ -13,6 +13,7 @@ Supporting design notes:
 - [Schema conventions](design/schema-conventions.md)
 - [State transitions](design/transitions.md)
 - [Frontend UI/UX pattern](design/frontend-uiux.md)
+- [Code architecture](design/code-architecture.md)
 - [Day 1 benchmark](design/benchmark.md)
 
 ## Goals / Non-Goals
@@ -39,9 +40,11 @@ Supporting design notes:
 
 ### Use Node.js 24 LTS as the production runtime baseline
 
-Node.js 24 LTS is the production runtime baseline. Bun is used for package management and scripts. Bun runtime can be tested later as a performance experiment, but it is not the baseline for correctness or load testing.
+Node.js 24 LTS is the production runtime baseline. pnpm is used for package management and scripts. pnpm keeps dependencies in a shared content-addressable store while preserving `node_modules` compatibility for Next.js and Node.js tooling. Bun runtime can be tested later as a performance experiment, but it is not the baseline for correctness or load testing.
 
 Alternative considered: Bun runtime as the primary production runtime. This was rejected for the first version to keep runtime compatibility from becoming a core uncertainty in the high-concurrency experiment.
+
+Alternative considered: Bun as package manager and script runner. This was replaced with pnpm to reduce ambiguity between package management and runtime choice.
 
 ### Use Drizzle for schema and migrations
 
@@ -61,7 +64,7 @@ Alternative considered: Kafka-first ingress. This can increase ingress throughpu
 
 `CheckoutIntentCreated` belongs to a `checkout` aggregate. It does not consume the SKU aggregate version. Inventory outcomes belong to the `sku` aggregate.
 
-Direct Buy is represented as a checkout intent with one item. Cart checkout is represented as a checkout intent with multiple items. This keeps the ingress path from making all buyers of the same SKU compete for the same SKU stream version.
+Direct Buy is represented as a checkout intent with one item. Cart checkout is represented as a checkout intent with multiple items. Cart items may include SKUs from one or more products. Checkout items store `sku_id`; product display data is resolved through catalog tables. This keeps the ingress path from making all buyers of the same SKU compete for the same SKU stream version.
 
 ### Use SKU as the inventory aggregate
 
@@ -88,6 +91,54 @@ Multiple Next.js instances must coordinate with PostgreSQL transaction-level adv
 ### Use polling before SSE or WebSocket
 
 The first client implementation uses polling for checkout intent status and remaining inventory. SSR provides initial product and inventory data. SSE or WebSocket can be added later for realtime UX, but lost realtime messages must never be required for correctness.
+
+### Use Server Components only for read-only SSR
+
+Next.js Server Components may render read-only product, SKU, and projection-backed initial inventory data. They must not be the write path for checkout commands in the MVP.
+
+State-changing commands use API route handlers:
+
+- `POST /api/checkout-intents`
+- future payment callback endpoints
+- internal projection processing endpoint
+
+Polling reads also use API route handlers:
+
+- `GET /api/checkout-intents/:id`
+- `GET /api/skus/:skuId/inventory`
+
+Server Actions are deferred for checkout writes. This keeps request validation, idempotency, auth checks, event append behavior, rate limiting, and benchmark instrumentation in explicit HTTP boundaries.
+
+### Use lightweight Clean Architecture boundaries
+
+Next.js is the delivery layer. Pages and API route handlers may call application use cases and wire infrastructure dependencies, but domain and application modules must not depend on Next.js, React, request objects, response objects, or route handlers.
+
+The codebase uses a lightweight layer shape:
+
+- `src/domain` for aggregate behavior, events, commands, value objects, and invariants.
+- `src/application` for use cases such as checkout intent creation and projection processing.
+- `src/ports` for interfaces such as event store, catalog repository, projection repository, clock, and ID generator.
+- `src/infrastructure` for PostgreSQL, Drizzle, raw SQL event store, projection repository, and catalog repository implementations.
+- `components` for UI components that consume props or presentation view models.
+- `app` for Next.js routing, SSR entrypoints, and API route handlers.
+
+This keeps the useful parts of Clean Architecture without forcing heavy boilerplate for a small high-concurrency experiment.
+
+Alternative considered: place all logic under `app`. This was rejected because it would couple event sourcing and projection logic to Next.js routing and make a later worker extraction harder.
+
+Alternative considered: full enterprise Clean Architecture naming with entities/use-cases/interface-adapters/frameworks. This was rejected as too heavy for the MVP.
+
+### Add dependency graph checks before domain logic grows
+
+The project should add an automated circular dependency and architecture boundary check before implementing most domain/application modules.
+
+Decision: use `dependency-cruiser` for the first dependency guard because it can detect circular dependencies and validate layer rules. It complements Biome instead of replacing it.
+
+Alternatives considered:
+
+- `dpdm`: lightweight and TypeScript-friendly for circular dependency detection, but less focused on architecture boundary validation.
+- `madge`: useful for dependency visualization, but not the preferred primary boundary guard.
+- ESLint `import/no-cycle`: useful in ESLint stacks, but adding ESLint only for this rule would duplicate Biome responsibilities.
 
 ### Use reservation plus saga for payment
 

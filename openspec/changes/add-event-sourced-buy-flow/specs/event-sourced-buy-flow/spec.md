@@ -11,7 +11,7 @@ The system SHALL create a durable checkout intent when a user presses the Buy bu
 
 #### Scenario: User checks out cart
 
-- **WHEN** a user checks out a cart containing multiple SKUs
+- **WHEN** a user checks out a cart containing multiple SKUs from one or more products
 - **THEN** the system SHALL append `CheckoutIntentCreated` with an item list to the event store and return an accepted queued response with `checkout_intent_id`
 
 #### Scenario: Repeated client submission
@@ -27,6 +27,11 @@ The system SHALL use SKU as the inventory consistency boundary. Inventory reserv
 
 - **WHEN** users checkout two different SKUs under the same product
 - **THEN** the system SHALL process each SKU inventory stream independently
+
+#### Scenario: Cart contains SKUs from multiple products
+
+- **WHEN** one checkout intent contains SKUs that belong to different products
+- **THEN** the system SHALL reserve inventory per SKU stream and SHALL NOT require a product-level inventory aggregate
 
 ### Requirement: Event Store Durability
 

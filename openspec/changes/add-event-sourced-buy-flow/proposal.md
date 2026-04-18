@@ -11,7 +11,7 @@ Minishop is a high-concurrency commerce experiment focused on validating the ful
 - Add projection read models for inventory, checkout intent status, and orders.
 - Start without Kafka; add Kafka later through an outbox relay when it becomes part of the formal processing path.
 - Use polling for client status and remaining inventory updates in the initial client architecture.
-- Use Node.js 24 LTS as the production runtime baseline, Bun as package manager/scripts, PostgreSQL, Redis cache-only later, and Drizzle for schema/migrations.
+- Use Node.js 24 LTS as the production runtime baseline, pnpm as package manager/scripts, PostgreSQL, Redis cache-only later, and Drizzle for schema/migrations.
 
 ## Capabilities
 

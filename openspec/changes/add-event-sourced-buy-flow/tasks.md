@@ -1,10 +1,12 @@
 ## 1. Project Foundation
 
-- [ ] 1.1 Implement Use Node.js 24 LTS as the production runtime baseline in project config and documentation
-- [ ] 1.2 Implement Use Drizzle for schema and migrations with PostgreSQL connection setup
-- [ ] 1.3 Add base Drizzle migrations for event_store schema, projection schema, and checkpoint tables
-- [ ] 1.4 Add Catalog Tables migrations for singular product and sku seed tables
-- [ ] 1.5 Add Schema Conventions validation for IDs, money minor units, checkout item JSON, event metadata, reservation identity, and FK policy
+- [x] 1.1 Implement Use Node.js 24 LTS as the production runtime baseline in project config and documentation
+- [x] 1.2 Implement Use Drizzle for schema and migrations with PostgreSQL connection setup
+- [x] 1.3 Implement Use lightweight Clean Architecture boundaries with app, components, domain, application, ports, infrastructure, and presentation modules
+- [x] 1.4 Implement Add dependency graph checks before domain logic grows using dependency-cruiser circular dependency and architecture boundary rules
+- [ ] 1.5 Add base Drizzle migrations for event_store schema, projection schema, and checkpoint tables
+- [ ] 1.6 Add Catalog Tables migrations for singular product and sku seed tables
+- [ ] 1.7 Add Schema Conventions validation for IDs, money minor units, checkout item JSON, event metadata, reservation identity, and FK policy
 
 ## 2. Event Store and Checkout Intent
 
@@ -43,6 +45,8 @@
 - [ ] 5.3 Implement Use polling before SSE or WebSocket in client state flow
 - [ ] 5.4 Implement product page UI using the frontend UI/UX pattern for direct Buy, status polling, and projection-backed inventory display
 - [ ] 5.5 Implement non-production benchmark operator strip for SKU counters, projection event ids, and projection lag hints
+- [ ] 5.6 Implement Use Server Components only for read-only SSR and keep checkout writes in API route handlers
+- [x] 5.7 Implement product catalog browsing preview for Limited Runner, Everyday Tee, and Travel Cap SKU pages
 
 ## 6. Deferred Kafka Path
 
