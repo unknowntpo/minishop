@@ -2,7 +2,6 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 
 import Link from "next/link";
-import type { ReactNode } from "react";
 
 export const dynamic = "force-dynamic";
 
@@ -133,13 +132,23 @@ type ScenarioSummary = {
   runCount: number;
 };
 
-export default async function InternalBenchmarksPage() {
+export default async function InternalBenchmarksPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ scenario?: string }>;
+}) {
+  const params = await searchParams;
   const runs = await readBenchmarkRuns();
   const latest = runs[0];
-  const latestScenarioName = latest?.scenarioName ?? "unknown";
-  const latestScenarioRuns = runs.filter((run) => scenarioNameFor(run) === latestScenarioName);
-  const trendRuns = latestScenarioRuns.slice(0, 10).reverse();
   const scenarioSummaries = summarizeScenarios(runs);
+  const requestedScenarioName = params?.scenario;
+  const selectedScenarioName = scenarioSummaries.find(
+    (scenario) => scenario.name === requestedScenarioName,
+  )?.name;
+  const selectedScenarioRuns = selectedScenarioName
+    ? runs.filter((run) => scenarioNameFor(run) === selectedScenarioName)
+    : [];
+  const comparisonRuns = selectedScenarioRuns.slice(0, 10).reverse();
 
   return (
     <main className="page-shell admin-shell">
@@ -216,262 +225,60 @@ export default async function InternalBenchmarksPage() {
             <p className="eyebrow">Scenarios</p>
             <h2 id="scenario-title">Benchmark families</h2>
             <p className="muted admin-panel-copy">
-              Each scenario keeps its own comparison lane. Do not compare a single-SKU ingress run
-              directly with a cart, reservation, Kafka, or read-model polling benchmark.
+              Click a scenario to expand its run comparison below. Click the selected scenario again
+              to collapse it. Future cart, reservation, Kafka, or read-model polling benchmarks will
+              appear as separate families.
             </p>
             <div className="benchmark-scenario-grid">
-              {scenarioSummaries.map((scenario) => (
-                <article className="benchmark-scenario-card" key={scenario.name}>
-                  <strong>{scenario.name}</strong>
-                  <span className={`badge ${scenario.latestPass ? "success" : "danger"}`}>
-                    {scenario.latestPass ? "latest pass" : "latest failed"}
-                  </span>
-                  <div className="benchmark-scenario-details">
-                    <KeyValueList
-                      values={{
-                        latest: formatDateTime(scenario.latestFinishedAt),
-                        runs: formatNumber(scenario.runCount),
-                        "latest p95": `${formatNumber(scenario.latestP95LatencyMs)}ms`,
-                        "latest errors": formatNumber(scenario.latestErrors),
-                      }}
-                    />
-                  </div>
-                </article>
-              ))}
+              {scenarioSummaries.map((scenario) => {
+                const isSelected = scenario.name === selectedScenarioName;
+                const href = isSelected
+                  ? "/internal/benchmarks"
+                  : `/internal/benchmarks?scenario=${encodeURIComponent(scenario.name)}`;
+
+                return (
+                  <Link
+                    className={`benchmark-scenario-card${isSelected ? " selected" : ""}`}
+                    href={href}
+                    key={scenario.name}
+                    aria-expanded={isSelected}
+                    aria-label={`${isSelected ? "Collapse" : "Expand"} ${scenario.name} run comparison`}
+                  >
+                    <strong title={scenarioDescription(scenario.name)}>{scenario.name}</strong>
+                    <span className="benchmark-scenario-badges">
+                      {isSelected ? <span className="badge neutral">selected</span> : null}
+                      <span className={`badge ${scenario.latestPass ? "success" : "danger"}`}>
+                        {scenario.latestPass ? "latest pass" : "latest failed"}
+                      </span>
+                    </span>
+                    <div className="benchmark-scenario-details">
+                      <KeyValueList
+                        values={{
+                          latest: formatDateTime(scenario.latestFinishedAt),
+                          runs: formatNumber(scenario.runCount),
+                          "latest p95": `${formatNumber(scenario.latestP95LatencyMs)}ms`,
+                          "latest errors": formatNumber(scenario.latestErrors),
+                        }}
+                      />
+                    </div>
+                  </Link>
+                );
+              })}
             </div>
           </section>
 
-          <section className="benchmark-metric-grid" aria-label="Latest benchmark metrics">
-            <MetricCard
-              label="accepted rate"
-              tone={readAcceptedRate(latest) === 1 ? "success" : "warning"}
-              value={formatPercent(readAcceptedRate(latest))}
-            />
-            <MetricCard
-              label="request/sec"
-              value={formatNumber(latest.requestPath?.requestsPerSecond)}
-            />
-            <MetricCard label="accepted" value={formatNumber(latest.requestPath?.accepted)} />
-            <MetricCard label="errors" value={formatNumber(latest.requestPath?.errors)} />
-            <MetricCard
-              label="p95 latency"
-              value={`${formatNumber(latest.requestPath?.p95LatencyMs)}ms`}
-            />
-            <MetricCard
-              label="append/sec"
-              value={formatNumber(latest.eventStore?.appendThroughputPerSecond)}
-            />
-            <MetricCard
-              label="projection lag"
-              value={formatNumber(readProjectionLagEvents(latest))}
-            />
-            <MetricCard
-              label="no oversell"
-              tone={latest.projections?.skuInventory?.noOversell ? "success" : "danger"}
-              value={latest.projections?.skuInventory?.noOversell ? "true" : "false"}
-            />
-          </section>
-
-          <section className="panel admin-panel" aria-labelledby="conditions-title">
-            <p className="eyebrow">Run conditions</p>
-            <h2 id="conditions-title">Hardware, software, services</h2>
-            <p className="muted admin-panel-copy">
-              Benchmark numbers only compare cleanly when the machine, runtime, service topology,
-              and workload shape are recorded with the result.
-            </p>
-            <div className="benchmark-condition-grid">
-              <ConditionCard
-                title="Hardware"
-                values={{
-                  cpu: formatCpu(latest),
-                  memory: formatBytes(
-                    latest.conditions?.hardware?.totalMemoryBytes ??
-                      latest.environment?.totalMemoryBytes,
-                  ),
-                  platform: latest.conditions?.hardware?.platform ?? latest.environment?.platform,
-                }}
-              />
-              <ConditionCard
-                title="Software"
-                values={{
-                  "load generator": latest.conditions?.software?.loadGenerator ?? "node",
-                  "next mode": latest.conditions?.software?.nextMode ?? "unknown",
-                  node: latest.conditions?.software?.node ?? latest.environment?.runtime,
-                  "package manager": latest.conditions?.software?.packageManager ?? "pnpm",
-                }}
-              />
-              <ConditionCard
-                title="Services"
-                values={{
-                  kafka: formatEnabledCount(
-                    latest.conditions?.services?.kafka?.enabled,
-                    latest.conditions?.services?.kafka?.brokerCount,
-                  ),
-                  nextjs: `${formatNumber(
-                    latest.conditions?.services?.nextjs?.instanceCount ?? 1,
-                  )} instance`,
-                  postgres: formatPostgresCondition(latest),
-                  redis: formatEnabledCount(
-                    latest.conditions?.services?.redis?.enabled,
-                    latest.conditions?.services?.redis?.instanceCount,
-                  ),
-                }}
-              />
-              <ConditionCard
-                title="Workload"
-                values={{
-                  concurrency: formatNumber(latest.conditions?.workload?.httpConcurrency),
-                  "projection batch": formatNumber(
-                    latest.conditions?.workload?.projectionBatchSize,
-                  ),
-                  requests: formatNumber(
-                    latest.conditions?.workload?.requestedBuyClicks ??
-                      latest.scenario?.requestedBuyClicks,
-                  ),
-                  type:
-                    latest.conditions?.workload?.workloadType ??
-                    latest.scenario?.workloadType ??
-                    "single_sku_direct_buy",
-                }}
-              />
-            </div>
-          </section>
-
-          <section className="panel admin-panel" aria-labelledby="evidence-title">
-            <p className="eyebrow">Latest evidence</p>
-            <h2 id="evidence-title">What this run proves</h2>
-            <p className="muted admin-panel-copy">
-              The baseline separates load symptoms from domain correctness. A failed HTTP burst can
-              still prove durable events, projection catch-up, and no oversell for accepted
-              requests.
-            </p>
-            <div className="benchmark-evidence-grid">
-              <EvidenceCard
-                badge={latest.requestPath?.errors ? `${latest.requestPath.errors} errors` : "clean"}
-                detail={`p95 ${formatNumber(latest.requestPath?.p95LatencyMs)}ms · ${formatNumber(
-                  latest.requestPath?.requestsPerSecond,
-                )} req/s`}
-                summary={`${formatNumber(latest.requestPath?.accepted)} accepted of ${formatNumber(
-                  latest.scenario?.requestedBuyClicks,
-                )}`}
-                title="Request ingress"
-                tone={latest.requestPath?.errors ? "danger" : "success"}
-              >
-                <DistributionList
-                  label="HTTP status"
-                  values={latest.requestPath?.statusDistribution}
-                />
-                <DistributionList label="Errors" values={latest.requestPath?.errorDistribution} />
-              </EvidenceCard>
-
-              <EvidenceCard
-                badge={
-                  latest.eventStore?.appendedEvents === latest.requestPath?.accepted
-                    ? "accepted = events"
-                    : "mismatch"
-                }
-                detail={`event ids ${formatNumber(latest.eventStore?.beforeEventCount)} -> ${formatNumber(
-                  latest.eventStore?.afterEventCount,
-                )}`}
-                summary={`${formatNumber(latest.eventStore?.appendedEvents)} events appended`}
-                title="Durable event store"
-                tone={
-                  latest.eventStore?.appendedEvents === latest.requestPath?.accepted
-                    ? "success"
-                    : "danger"
-                }
-              >
-                <DistributionList
-                  label="Event types"
-                  values={latest.eventStore?.eventTypeDistribution}
-                />
-              </EvidenceCard>
-
-              <EvidenceCard
-                badge={readProjectionLagEvents(latest) === 0 ? "caught up" : "behind"}
-                detail={`checkpoint ${formatNumber(
-                  latest.projections?.checkpointLastEventId,
-                )} of ${formatNumber(latest.projections?.eventStoreLastEventId)}`}
-                summary={`${formatNumber(readProjectionLagEvents(latest))} lag events`}
-                title="Projection catch-up"
-                tone={readProjectionLagEvents(latest) === 0 ? "success" : "warning"}
-              >
-                <DistributionList
-                  label="Checkout status"
-                  values={latest.projections?.checkoutStatusDistribution}
-                />
-              </EvidenceCard>
-
-              <EvidenceCard
-                badge={
-                  latest.projections?.skuInventory?.noOversell ? "no oversell" : "inventory risk"
-                }
-                detail={`on_hand ${formatNumber(
-                  latest.projections?.skuInventory?.onHand,
-                )} · reserved ${formatNumber(
-                  latest.projections?.skuInventory?.reserved,
-                )} · sold ${formatNumber(latest.projections?.skuInventory?.sold)}`}
-                summary={`available ${formatNumber(latest.projections?.skuInventory?.available)}`}
-                title="Inventory and idempotency"
-                tone={latest.projections?.skuInventory?.noOversell ? "success" : "danger"}
-              >
-                <KeyValueList
-                  values={{
-                    "duplicate status": formatNumber(latest.requestPath?.duplicateReplay?.status),
-                    "idempotent replay": latest.requestPath?.duplicateReplay?.idempotentReplay
-                      ? "true"
-                      : "false",
-                    workload: latest.scenario?.workloadType ?? "single_sku_direct_buy",
-                    "cart sku count": formatNumber(latest.scenario?.cartSkuCount ?? 1),
-                    sku: latest.scenario?.skuId ?? "n/a",
-                  }}
-                />
-              </EvidenceCard>
-            </div>
-          </section>
-
-          <section className="panel admin-panel" aria-labelledby="trend-title">
-            <p className="eyebrow">Trend</p>
-            <h2 id="trend-title">
-              {latestScenarioName} signals across {trendRuns.length} runs
-            </h2>
-            <p className="muted admin-panel-copy">
-              Trend is scenario-scoped for regression hunting. Compare runs with similar conditions
-              first, then inspect history when hardware, service count, or workload changes.
-            </p>
-            <div className="benchmark-trend-grid">
-              <TrendChart
-                label="accepted rate"
-                runs={trendRuns}
-                unit="%"
-                valueFor={(run) => Math.round(readAcceptedRate(run) * 100)}
-              />
-              <TrendChart
-                label="p95 latency"
-                unit="ms"
-                runs={trendRuns}
-                valueFor={(run) => run.requestPath?.p95LatencyMs ?? 0}
-              />
-              <TrendChart
-                label="append throughput"
-                unit="/s"
-                runs={trendRuns}
-                valueFor={(run) => run.eventStore?.appendThroughputPerSecond ?? 0}
-              />
-              <TrendChart
-                label="errors"
-                unit=""
-                runs={trendRuns}
-                valueFor={(run) => run.requestPath?.errors ?? 0}
-              />
-              <TrendChart
-                label="projection lag"
-                unit="events"
-                runs={trendRuns}
-                valueFor={(run) => readProjectionLagEvents(run) ?? 0}
-              />
-            </div>
-          </section>
+          {selectedScenarioName ? (
+            <RunComparison scenarioName={selectedScenarioName} runs={comparisonRuns} />
+          ) : (
+            <section className="panel admin-panel" aria-labelledby="comparison-title">
+              <p className="eyebrow">Run comparison</p>
+              <h2 id="comparison-title">Select a benchmark family</h2>
+              <p className="muted admin-panel-copy">
+                Run comparison stays collapsed until a scenario is selected. This keeps the page
+                readable when more benchmark families are added.
+              </p>
+            </section>
+          )}
 
           <section className="panel admin-panel" aria-labelledby="history-title">
             <p className="eyebrow">History</p>
@@ -626,99 +433,169 @@ function summarizeScenarios(runs: BenchmarkRun[]): ScenarioSummary[] {
     .sort((left, right) => left.name.localeCompare(right.name));
 }
 
-type Tone = "success" | "warning" | "danger";
-
-function MetricCard({ label, value, tone }: { label: string; value: string; tone?: Tone }) {
+function RunComparison({ scenarioName, runs }: { scenarioName: string; runs: BenchmarkRun[] }) {
   return (
-    <span className={`admin-counter benchmark-metric${tone ? ` ${tone}` : ""}`}>
-      <strong>{label}</strong>
-      <code>{value}</code>
-    </span>
-  );
-}
+    <section className="panel admin-panel" aria-labelledby="comparison-title">
+      <p className="eyebrow">Run comparison</p>
+      <h2 id="comparison-title">Selected scenario: {scenarioName}</h2>
+      <p className="muted admin-panel-copy">
+        This compares runs from the scenario selected in Benchmark families. Conditions are tags
+        beside each run; use the plots for signal, then use the evidence table to explain why a run
+        moved.
+      </p>
 
-function EvidenceCard({
-  badge,
-  children,
-  detail,
-  summary,
-  title,
-  tone,
-}: {
-  badge: string;
-  children: ReactNode;
-  detail: string;
-  summary: string;
-  title: string;
-  tone: Tone;
-}) {
-  return (
-    <article className="benchmark-evidence-card">
-      <div className="benchmark-evidence-header">
-        <strong>{title}</strong>
-        <span className={`badge ${tone}`}>{badge}</span>
+      <div className="benchmark-run-tags">
+        {runs.map((run, index) => (
+          <span className="benchmark-run-tag" key={run.artifactFile}>
+            <strong>r{index + 1}</strong>
+            <span className={`badge ${run.pass ? "success" : "danger"}`}>
+              {run.pass ? "pass" : "fail"}
+            </span>
+            <code>{formatConditionSummary(run)}</code>
+          </span>
+        ))}
       </div>
-      <code>{summary}</code>
-      <p className="muted">{detail}</p>
-      {children}
-    </article>
+
+      <div className="benchmark-comparison-grid">
+        <ComparisonChart
+          description="Accepted requests divided by requested Buy clicks. Lower than 100% means the load path dropped or rejected work before durable verification completed."
+          label="accepted rate"
+          runs={runs}
+          unit="%"
+          valueFor={(run) => Math.round(readAcceptedRate(run) * 100)}
+        />
+        <ComparisonChart
+          description="HTTP requests completed per second by the benchmark client. Use with accepted rate; high throughput with errors is not a healthy result."
+          label="request/sec"
+          runs={runs}
+          unit="/s"
+          valueFor={(run) => run.requestPath?.requestsPerSecond ?? 0}
+        />
+        <ComparisonChart
+          description="95th percentile request latency. This is tail latency for the API ingress path, not reservation or payment completion latency."
+          label="p95 latency"
+          runs={runs}
+          unit="ms"
+          valueFor={(run) => run.requestPath?.p95LatencyMs ?? 0}
+        />
+        <ComparisonChart
+          description="Durable event append throughput. This tracks how quickly accepted work became event_store facts."
+          label="append/sec"
+          runs={runs}
+          unit="/s"
+          valueFor={(run) => run.eventStore?.appendThroughputPerSecond ?? 0}
+        />
+        <ComparisonChart
+          description="Request failures observed by the benchmark client. HTTP status 0 usually means no response was received."
+          label="errors"
+          runs={runs}
+          unit=""
+          valueFor={(run) => run.requestPath?.errors ?? 0}
+        />
+        <ComparisonChart
+          description="Distance between event_store position and projection checkpoint after processing. Non-zero lag means read models are behind durable events."
+          label="projection lag"
+          runs={runs}
+          unit="events"
+          valueFor={(run) => readProjectionLagEvents(run) ?? 0}
+        />
+      </div>
+
+      <RunEvidenceComparison runs={runs} />
+    </section>
   );
 }
 
-function ConditionCard({
-  title,
-  values,
-}: {
-  title: string;
-  values: Record<string, string | undefined>;
-}) {
-  return (
-    <article className="benchmark-condition-card">
-      <strong>{title}</strong>
-      <KeyValueList
-        values={Object.fromEntries(
-          Object.entries(values).map(([label, value]) => [label, value ?? "n/a"]),
-        )}
-      />
-    </article>
-  );
-}
-
-function DistributionList({
+function ComparisonChart({
+  description,
   label,
-  values,
+  runs,
+  unit,
+  valueFor,
 }: {
+  description: string;
   label: string;
-  values: Record<string, number> | undefined;
+  runs: BenchmarkRun[];
+  unit: string;
+  valueFor: (run: BenchmarkRun) => number;
 }) {
-  const entries = Object.entries(values ?? {});
-  const total = entries.reduce((sum, [, value]) => sum + value, 0);
-
-  if (entries.length === 0) {
-    return (
-      <div className="benchmark-distribution">
-        <strong>{label}</strong>
-        <span className="muted">n/a</span>
-      </div>
-    );
-  }
+  const values = runs.map(valueFor);
+  const max = Math.max(1, ...values);
 
   return (
-    <div className="benchmark-distribution">
-      <strong>{label}</strong>
-      {entries.map(([key, value]) => {
-        const percentage = total > 0 ? value / total : 0;
+    <article className="benchmark-comparison-card">
+      <strong>
+        {label}
+        <span className="benchmark-info" title={description}>
+          ?
+        </span>
+      </strong>
+      <div className="benchmark-plot" role="img" aria-label={`${label} comparison`}>
+        {runs.map((run, index) => {
+          const value = valueFor(run);
+          const height = Math.max(6, Math.round((value / max) * 120));
 
-        return (
-          <div className="benchmark-distribution-row" key={key}>
-            <span>{key}</span>
-            <div className="benchmark-distribution-track" aria-hidden="true">
-              <span style={{ width: `${Math.max(2, Math.round(percentage * 100))}%` }} />
-            </div>
-            <code>{formatNumber(value)}</code>
-          </div>
-        );
-      })}
+          return (
+            <span className="benchmark-plot-column" key={run.artifactFile}>
+              <span
+                className={run.pass ? "benchmark-plot-bar" : "benchmark-plot-bar failed"}
+                style={{ height }}
+                title={`r${index + 1} ${run.runId}: ${value}${unit ? ` ${unit}` : ""}\n${formatConditionSummary(
+                  run,
+                )}\nHTTP ${formatDistribution(run.requestPath?.statusDistribution)}`}
+              />
+              <code>r{index + 1}</code>
+            </span>
+          );
+        })}
+      </div>
+      <span className="muted">
+        latest {formatNumber(values.at(-1))}
+        {unit ? ` ${unit}` : ""}
+      </span>
+    </article>
+  );
+}
+
+function RunEvidenceComparison({ runs }: { runs: BenchmarkRun[] }) {
+  return (
+    <div className="admin-table-wrap benchmark-evidence-compare">
+      <div className="benchmark-evidence-purpose">
+        <strong>Diagnostic evidence matrix</strong>
+        <span>
+          These are categorical distributions and invariant checks, so a compact table explains the
+          plots better than another chart.
+        </span>
+      </div>
+      <table className="admin-table benchmark-evidence-table">
+        <thead>
+          <tr>
+            <th>Run</th>
+            <th>HTTP status</th>
+            <th>Errors</th>
+            <th>Event types</th>
+            <th>Checkout status</th>
+            <th>Inventory</th>
+            <th>Idempotency</th>
+          </tr>
+        </thead>
+        <tbody>
+          {runs.map((run, index) => (
+            <tr key={run.artifactFile}>
+              <td>
+                <strong>r{index + 1}</strong>
+                <span className="muted mono">{shortRunId(run.runId)}</span>
+              </td>
+              <td>{formatDistribution(run.requestPath?.statusDistribution)}</td>
+              <td>{formatDistribution(run.requestPath?.errorDistribution)}</td>
+              <td>{formatDistribution(run.eventStore?.eventTypeDistribution)}</td>
+              <td>{formatDistribution(run.projections?.checkoutStatusDistribution)}</td>
+              <td>{formatInventorySummary(run)}</td>
+              <td>{formatIdempotencySummary(run)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -754,46 +631,6 @@ function StatusSummary({ values }: { values: Record<string, number> | undefined 
   );
 }
 
-function TrendChart({
-  label,
-  unit,
-  runs,
-  valueFor,
-}: {
-  label: string;
-  unit: string;
-  runs: BenchmarkRun[];
-  valueFor: (run: BenchmarkRun) => number;
-}) {
-  const values = runs.map(valueFor);
-  const max = Math.max(1, ...values);
-
-  return (
-    <article className="benchmark-trend-card">
-      <strong>{label}</strong>
-      <div className="benchmark-bars" role="img" aria-label={`${label} trend`}>
-        {runs.map((run) => {
-          const value = valueFor(run);
-          const height = Math.max(6, Math.round((value / max) * 96));
-
-          return (
-            <span
-              className={run.pass ? "benchmark-bar" : "benchmark-bar failed"}
-              key={run.artifactFile}
-              style={{ height }}
-              title={`${run.runId}: ${value}${unit ? ` ${unit}` : ""}`}
-            />
-          );
-        })}
-      </div>
-      <span className="muted">
-        latest {values.at(-1) ?? 0}
-        {unit ? ` ${unit}` : ""}
-      </span>
-    </article>
-  );
-}
-
 function timestampFor(run: BenchmarkRun) {
   return Date.parse(run.finishedAt ?? run.startedAt ?? "") || 0;
 }
@@ -807,6 +644,14 @@ function scenarioNameFor(run: BenchmarkRun) {
   return run.scenarioName ?? run.conditions?.workload?.scenarioName ?? "unknown";
 }
 
+function scenarioDescription(name: string) {
+  if (name === "checkout-postgres-baseline") {
+    return "Single hot SKU checkout intent ingress benchmark. It measures API acceptance, durable event append, projection catch-up, idempotency, and no synchronous inventory decrement.";
+  }
+
+  return "Benchmark scenario. Compare only with runs from the same scenario and compatible run conditions.";
+}
+
 function formatConditionSummary(run: BenchmarkRun) {
   const mode = run.conditions?.software?.nextMode ?? "unknown mode";
   const appInstances = formatNumber(run.conditions?.services?.nextjs?.instanceCount ?? 1);
@@ -815,6 +660,42 @@ function formatConditionSummary(run: BenchmarkRun) {
   const concurrency = formatNumber(run.conditions?.workload?.httpConcurrency);
 
   return `${mode} · app ${appInstances} · pg ${pgInstances} · pool ${pgPool} · c ${concurrency}`;
+}
+
+function formatDistribution(values: Record<string, number> | undefined) {
+  const entries = Object.entries(values ?? {});
+
+  if (entries.length === 0) {
+    return "n/a";
+  }
+
+  return entries.map(([key, value]) => `${key}:${formatNumber(value)}`).join(" · ");
+}
+
+function formatInventorySummary(run: BenchmarkRun) {
+  const inventory = run.projections?.skuInventory;
+
+  if (!inventory) {
+    return "n/a";
+  }
+
+  return `available ${formatNumber(inventory.available)} · reserved ${formatNumber(
+    inventory.reserved,
+  )} · sold ${formatNumber(inventory.sold)} · ${inventory.noOversell ? "no oversell" : "risk"}`;
+}
+
+function formatIdempotencySummary(run: BenchmarkRun) {
+  const replay = run.requestPath?.duplicateReplay;
+
+  if (!replay) {
+    return "n/a";
+  }
+
+  return `${formatNumber(replay.status)} · replay ${replay.idempotentReplay ? "true" : "false"}`;
+}
+
+function shortRunId(runId: string) {
+  return runId.length > 18 ? `${runId.slice(0, 18)}...` : runId;
 }
 
 function formatCpu(run: BenchmarkRun) {

@@ -380,41 +380,37 @@ Purpose:
 read local benchmark JSON artifacts from benchmark-results/<scenario>/
 show scenario families without hard-coding one benchmark as the only result set
 show latest run health
-show latest run data-flow map
-show latest run conditions
-show latest run evidence
+show data-flow map
+show run conditions as compact comparison tags
+show evidence across runs
 show bounded historical run table
-show scenario-scoped lightweight trends for bottleneck hunting
+show scenario-scoped plots for bottleneck hunting
 keep benchmark observations separate from domain projections
 ```
 
 The dashboard should use the same quiet internal admin visual language as the
 projection admin page. It is an operator surface, not buyer UI.
 
-Initial cards:
-
-```text
-latest pass/fail
-workload shape
-request throughput
-accepted rate
-accepted requests
-error count
-p95 latency
-append throughput
-projection lag
-no oversell
-```
-
 Scenario overview:
 
 ```text
 scenario name
+click/select scenario to expand run comparison
+click the selected scenario again to collapse run comparison
 latest pass/fail
 run count
 latest p95 latency
 latest error count
 latest completion time
+```
+
+Run comparison should stay collapsed when no scenario is selected. This keeps
+the page useful as more scenario families are added and makes the relationship
+explicit:
+
+```text
+scenario card selected -> compare runs for that scenario
+scenario card collapsed -> show only benchmark family overview
 ```
 
 Data flow map:
@@ -439,40 +435,73 @@ verify:
   idempotency replay
 ```
 
-Initial trends:
+Run comparison plots:
 
 ```text
 accepted rate over recent runs
+request throughput over recent runs
 p95 latency over recent runs
 append throughput over recent runs
 error count over recent runs
 projection lag over recent runs
 ```
 
-Latest run evidence:
+Each plot should explain the metric in place, preferably with a compact hover
+hint or similarly low-noise affordance. Each run marker should expose the run
+identifier, metric value, condition summary, and enough status context to
+explain why the bar moved.
+
+Run comparison tags:
+
+```text
+run label
+pass/fail
+Next.js mode
+app instance count
+PostgreSQL instance count
+PostgreSQL pool size
+HTTP concurrency
+```
+
+Diagnostic evidence matrix:
 
 ```text
 request ingress:
-  accepted of requested
-  request throughput
   HTTP status distribution
   error distribution
 
 event store:
-  appended events
-  event id before/after
   event type distribution
 
 projection:
-  checkpoint id versus event_store id
-  projection lag events
   checkout status distribution
 
 inventory and idempotency:
-  on_hand/reserved/sold/available
-  no oversell
+  inventory counter summary
   duplicate replay status
-  idempotent replay flag
+idempotent replay flag
+```
+
+The evidence matrix exists as drilldown for changed plots. It should not compete
+with the plots as the primary visual. The plotted cards answer "did a metric
+move"; the matrix answers "why might it have moved" using categorical
+distributions and invariant checks that are less useful as trend bars:
+
+```text
+HTTP status distribution:
+  categorical, explains whether accepted rate changed because responses failed
+
+error distribution:
+  categorical, explains load-generator or application failure shape
+
+event type distribution:
+  categorical, proves which facts actually became durable
+
+checkout status distribution:
+  categorical, explains projection state at benchmark boundary
+
+inventory/idempotency:
+  invariant checks, better read as pass/fail and counter summaries
 ```
 
 The page must tolerate no artifacts yet:
