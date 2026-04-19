@@ -887,6 +887,7 @@ function LaneMetricChart({
   );
   const maxValue = Math.max(1, ...lanes.flatMap((lane) => lane.points.map(valueFor)));
   const colors = ["#2e9462", "#b75f4b", "#2f6fd6", "#c48326"];
+  const unitLabel = unit === "/s" ? "requests or events per second" : unit || "count";
 
   return (
     <article className="capacity-chart-card">
@@ -894,6 +895,7 @@ function LaneMetricChart({
         <div>
           <strong>{label}</strong>
           <p className="muted">{description}</p>
+          <span className="capacity-chart-meta">X-axis: concurrency · Y-axis: {unitLabel}</span>
         </div>
       </div>
       <svg
@@ -928,7 +930,11 @@ function LaneMetricChart({
                 stroke={color}
               />
               {points.map(({ point, x, y }) => (
-                <g key={`${lane.name}-${point.concurrency}`}>
+                <g
+                  className="capacity-point-group"
+                  key={`${lane.name}-${point.concurrency}`}
+                  tabIndex={0}
+                >
                   <circle
                     className={`capacity-point${lane.source === "preview" ? " preview" : ""}`}
                     cx={x}
@@ -936,6 +942,22 @@ function LaneMetricChart({
                     fill={color}
                     r={4}
                   />
+                  <foreignObject
+                    className="capacity-point-tooltip"
+                    height="60"
+                    width="132"
+                    x={Math.min(Math.max(x - 54, 10), 214)}
+                    y={Math.max(y - 58, 8)}
+                  >
+                    <div className="capacity-point-tooltip-card">
+                      <strong>{lane.name}</strong>
+                      <span>c{formatNumber(point.concurrency)}</span>
+                      <span>
+                        {formatNumber(valueFor(point))}
+                        {unit ? ` ${unit}` : ""}
+                      </span>
+                    </div>
+                  </foreignObject>
                   <title>
                     {`${lane.name} · c${point.concurrency} · ${formatNumber(valueFor(point))}${unit ? ` ${unit}` : ""}`}
                   </title>

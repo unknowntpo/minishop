@@ -34,6 +34,7 @@ export function ProductDetailPage({
   const [cartEntries, setCartEntries] = useState<CartEntry[]>([]);
   const [directQuantity, setDirectQuantity] = useState(1);
   const [cartOpen, setCartOpen] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
   const maxDirectQuantity = maxQuantityFor(product);
   const cartProducts = useMemo(
     () => hydrateCartProducts(cartEntries, productBySlug),
@@ -63,6 +64,18 @@ export function ProductDetailPage({
     setDirectQuantity((current) => clampQuantity(current, maxDirectQuantity));
   }, [maxDirectQuantity]);
 
+  useEffect(() => {
+    if (!toastMessage) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      setToastMessage(null);
+    }, 2600);
+
+    return () => window.clearTimeout(timeout);
+  }, [toastMessage]);
+
   function syncCart(nextEntries: CartEntry[]) {
     const normalized = normalizeCart(nextEntries, productBySlug);
     setCartEntries(normalized);
@@ -76,7 +89,9 @@ export function ProductDetailPage({
         slug: product.slug,
       }),
     );
-    setCartOpen(true);
+    setToastMessage(
+      `${product.name} · ${formatNumber(directQuantity)} unit${directQuantity > 1 ? "s" : ""} added to cart.`,
+    );
   }
 
   function updateCartQuantity(slug: string, quantity: number) {
@@ -167,6 +182,14 @@ export function ProductDetailPage({
               </div>
 
               <div className="purchase-actions">
+                <button
+                  className="button secondary"
+                  type="button"
+                  disabled={maxDirectQuantity <= 0}
+                  onClick={addCurrentProductToCart}
+                >
+                  Add to cart
+                </button>
                 <CheckoutAction
                   product={product}
                   items={[
@@ -179,14 +202,6 @@ export function ProductDetailPage({
                   ]}
                   buttonLabel={`Buy ${directQuantity > 1 ? `${formatNumber(directQuantity)} units` : "now"}`}
                 />
-                <button
-                  className="button secondary"
-                  type="button"
-                  disabled={maxDirectQuantity <= 0}
-                  onClick={addCurrentProductToCart}
-                >
-                  Add to cart
-                </button>
               </div>
             </div>
 
@@ -238,6 +253,9 @@ export function ProductDetailPage({
           {cartProducts.length > 0 ? (
             <span className="badge neutral cart-status">ready</span>
           ) : null}
+          <span className="cart-toggle-hint" aria-hidden="true">
+            {cartOpen ? "Hide" : "Open"}
+          </span>
         </summary>
 
         <div className="cart-drawer">
@@ -246,11 +264,20 @@ export function ProductDetailPage({
               <p className="eyebrow">Cart checkout</p>
               <h2>Checkout {formatNumber(totalUnits)} items</h2>
             </div>
-            {cartProducts.length > 0 ? (
-              <span className="badge neutral">
-                {formatMoney(totalAmountMinor, cartProducts[0].currency)}
-              </span>
-            ) : null}
+            <div className="cart-drawer-controls">
+              {cartProducts.length > 0 ? (
+                <span className="badge neutral">
+                  {formatMoney(totalAmountMinor, cartProducts[0].currency)}
+                </span>
+              ) : null}
+              <button
+                className="text-button subtle"
+                type="button"
+                onClick={() => setCartOpen(false)}
+              >
+                Collapse
+              </button>
+            </div>
           </div>
 
           {cartProducts.length > 0 ? (
@@ -340,6 +367,24 @@ export function ProductDetailPage({
           )}
         </div>
       </details>
+      {toastMessage ? (
+        <div className="cart-toast" role="status" aria-live="polite">
+          <div className="cart-toast-body">
+            <strong>Added to cart</strong>
+            <span>{toastMessage}</span>
+          </div>
+          <button
+            className="text-button subtle"
+            type="button"
+            onClick={() => {
+              setCartOpen(true);
+              setToastMessage(null);
+            }}
+          >
+            View cart
+          </button>
+        </div>
+      ) : null}
     </main>
   );
 }
