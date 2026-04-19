@@ -1,0 +1,2768 @@
+# event-sourced-buy-flow Specification
+
+## Purpose
+
+Define Minishop's event-sourced checkout architecture, including durable checkout intent creation, SKU-scoped inventory consistency, projection-backed reads, client polling, and local demo flows for direct buy and cart checkout.
+
+## Requirements
+
+### Requirement: Checkout Intent Creation
+
+The system SHALL create a durable checkout intent when a user presses the Buy button or checks out a cart. The checkout intent event SHALL use `aggregate_type = checkout` and `aggregate_id = checkout_intent_id`. Creating a checkout intent SHALL NOT synchronously reserve or decrement SKU inventory.
+
+#### Scenario: User presses Buy
+
+- **WHEN** a user presses Buy for a SKU
+- **THEN** the system SHALL append `CheckoutIntentCreated` with one item to the event store and return an accepted queued response with `checkout_intent_id`
+
+#### Scenario: User checks out cart
+
+- **WHEN** a user checks out a cart containing multiple SKUs from one or more products
+- **THEN** the system SHALL append `CheckoutIntentCreated` with an item list to the event store and return an accepted queued response with `checkout_intent_id`
+
+#### Scenario: Repeated client submission
+
+- **WHEN** the same client operation is retried with the same idempotency key
+- **THEN** the system SHALL return the existing checkout intent result without appending a duplicate `CheckoutIntentCreated` event
+
+
+<!-- @trace
+source: add-event-sourced-buy-flow
+updated: 2026-04-19
+code:
+  - .github/prompts/spectra-audit.prompt.md
+  - app/api/internal/projections/process/route.ts
+  - src/domain/checkout/status.ts
+  - .opencode/skills/spectra-ingest/SKILL.md
+  - .opencode/commands/spectra-debug.md
+  - src/application/admin/get-admin-dashboard.ts
+  - src/application/catalog/get-products.ts
+  - .opencode/skills/spectra-archive/SKILL.md
+  - db/schema.ts
+  - src/domain/schema-rules.ts
+  - profiles/CPU.20260419.062459.59977.0.001.cpuprofile
+  - app/api/skus/[skuId]/inventory/route.ts
+  - src/domain/payment/commands.ts
+  - src/domain/checkout/item.ts
+  - src/presentation/view-models/admin-dashboard.ts
+  - src/infrastructure/projections/postgres-projection-writer.ts
+  - app/page.tsx
+  - app/layout.tsx
+  - .opencode/skills/spectra-apply/SKILL.md
+  - app/internal/benchmarks/page.tsx
+  - AGENTS.md
+  - db/client.ts
+  - scripts/benchmark-checkout-postgres.ts
+  - scripts/seed-dev-catalog.ts
+  - src/application/checkout/create-checkout-intent.ts
+  - .github/prompts/spectra-ask.prompt.md
+  - app/products/page.tsx
+  - components/admin/admin-dashboard.tsx
+  - db/migrations/meta/_journal.json
+  - src/infrastructure/admin/index.ts
+  - .github/prompts/spectra-ingest.prompt.md
+  - .opencode/skills/spectra-propose/SKILL.md
+  - app/globals.css
+  - .github/skills/spectra-debug/SKILL.md
+  - src/application/checkout/complete-demo-checkout.ts
+  - next.config.ts
+  - src/presentation/api/checkout-intent-contracts.ts
+  - frontend/checkout-preview.html
+  - src/application/checkout-saga/checkout-reservation-saga.ts
+  - src/domain/inventory/sku-inventory-aggregate.ts
+  - src/ports/admin-dashboard-repository.ts
+  - src/domain/checkout/commands.ts
+  - src/domain/catalog/product.ts
+  - .github/skills/spectra-ingest/SKILL.md
+  - .github/prompts/spectra-archive.prompt.md
+  - .opencode/commands/spectra-audit.md
+  - .github/skills/spectra-apply/SKILL.md
+  - CLAUDE.md
+  - components/products/products-page-content.tsx
+  - dependency-cruiser.config.cjs
+  - .opencode/skills/spectra-discuss/SKILL.md
+  - drizzle.config.ts
+  - package.json
+  - scripts/run-checkout-postgres-benchmark.ts
+  - src/domain/events/event-type.ts
+  - .opencode/commands/spectra-apply.md
+  - app/api/internal/admin/dashboard/route.ts
+  - db/migrations/0000_kind_galactus.sql
+  - components/products/product-card.tsx
+  - src/domain/order/status.ts
+  - .opencode/skills/spectra-debug/SKILL.md
+  - app/internal/admin/page.tsx
+  - src/infrastructure/projections/postgres-projection-repository.ts
+  - tsconfig.json
+  - GEMINI.md
+  - .github/skills/spectra-ask/SKILL.md
+  - db/migrations/meta/0000_snapshot.json
+  - docker-compose.yml
+  - .opencode/commands/spectra-propose.md
+  - app/products/[slug]/page.tsx
+  - app/checkout-complete/[checkoutIntentId]/page.tsx
+  - .spectra.yaml
+  - src/ports/event-store.ts
+  - scripts/run-checkout-postgres-sweep.ts
+  - .github/prompts/spectra-discuss.prompt.md
+  - src/infrastructure/projections/index.ts
+  - app/api/checkout-intents/[checkoutIntentId]/route.ts
+  - .opencode/skills/spectra-ask/SKILL.md
+  - src/presentation/api/request-context.ts
+  - app/api/checkout-intents/route.ts
+  - vitest.config.ts
+  - profiles/fixed/CPU.20260419.063326.71427.0.001.cpuprofile
+  - src/infrastructure/catalog/index.ts
+  - src/application/inventory/reserve-inventory.ts
+  - biome.json
+  - .npmrc
+  - .env.example
+  - src/infrastructure/admin/postgres-admin-dashboard.ts
+  - src/infrastructure/checkout-demo/index.ts
+  - src/infrastructure/checkout-demo/postgres-checkout-demo-repository.ts
+  - src/infrastructure/event-store/index.ts
+  - .github/prompts/spectra-propose.prompt.md
+  - src/ports/projection-repository.ts
+  - .opencode/commands/spectra-archive.md
+  - .github/skills/spectra-archive/SKILL.md
+  - src/presentation/view-models/product.ts
+  - .github/skills/spectra-discuss/SKILL.md
+  - next-env.d.ts
+  - test/setup.ts
+  - profiles/fixed/CPU.20260419.063326.71970.0.001.cpuprofile
+  - .nvmrc
+  - components/products/product-grid.tsx
+  - src/domain/payment/status.ts
+  - .github/prompts/spectra-apply.prompt.md
+  - .opencode/commands/spectra-ask.md
+  - profiles/CPU.20260419.062500.60544.0.001.cpuprofile
+  - .github/skills/spectra-audit/SKILL.md
+  - src/domain/order/commands.ts
+  - src/infrastructure/event-store/postgres-event-store.ts
+  - .opencode/commands/spectra-discuss.md
+  - components/checkout/checkout-action.tsx
+  - src/domain/inventory/commands.ts
+  - src/infrastructure/catalog/postgres-catalog-repository.ts
+  - src/application/payment/payment-compensation.ts
+  - .opencode/commands/spectra-ingest.md
+  - app/api/internal/checkout-intents/[checkoutIntentId]/complete-demo/route.ts
+  - scripts/reset-dev-db.ts
+  - src/ports/checkout-demo-repository.ts
+  - frontend/design-pattern.html
+  - src/domain/events/event-metadata.ts
+  - .github/skills/spectra-propose/SKILL.md
+  - .github/prompts/spectra-debug.prompt.md
+  - components/checkout/product-detail-page.tsx
+  - src/application/projections/process-projections.ts
+  - src/infrastructure/catalog/static-catalog-repository.ts
+  - src/infrastructure/catalog/catalog-row-mapper.ts
+  - src/domain/events/domain-event.ts
+  - src/ports/id-generator.ts
+  - src/ports/clock.ts
+  - src/ports/catalog-repository.ts
+  - .opencode/skills/spectra-audit/SKILL.md
+tests:
+  - src/domain/schema-rules.test.ts
+  - src/application/checkout/create-checkout-intent.test.ts
+  - src/domain/inventory/sku-inventory-aggregate.test.ts
+  - src/application/payment/payment-compensation.test.ts
+  - src/application/projections/process-projections.test.ts
+  - src/application/inventory/reserve-inventory.test.ts
+  - app/page.test.tsx
+  - src/infrastructure/catalog/postgres-catalog-repository.test.ts
+  - src/application/checkout-saga/checkout-reservation-saga.test.ts
+-->
+
+---
+### Requirement: SKU Inventory Aggregate
+
+The system SHALL use SKU as the inventory consistency boundary. Inventory reservation events SHALL use `aggregate_type = sku` and `aggregate_id = sku_id`. Product SHALL remain a catalog and display concept and SHALL NOT be the inventory reservation aggregate.
+
+#### Scenario: Two SKUs under one product receive checkout intents
+
+- **WHEN** users checkout two different SKUs under the same product
+- **THEN** the system SHALL process each SKU inventory stream independently
+
+#### Scenario: Cart contains SKUs from multiple products
+
+- **WHEN** one checkout intent contains SKUs that belong to different products
+- **THEN** the system SHALL reserve inventory per SKU stream and SHALL NOT require a product-level inventory aggregate
+
+
+<!-- @trace
+source: add-event-sourced-buy-flow
+updated: 2026-04-19
+code:
+  - .github/prompts/spectra-audit.prompt.md
+  - app/api/internal/projections/process/route.ts
+  - src/domain/checkout/status.ts
+  - .opencode/skills/spectra-ingest/SKILL.md
+  - .opencode/commands/spectra-debug.md
+  - src/application/admin/get-admin-dashboard.ts
+  - src/application/catalog/get-products.ts
+  - .opencode/skills/spectra-archive/SKILL.md
+  - db/schema.ts
+  - src/domain/schema-rules.ts
+  - profiles/CPU.20260419.062459.59977.0.001.cpuprofile
+  - app/api/skus/[skuId]/inventory/route.ts
+  - src/domain/payment/commands.ts
+  - src/domain/checkout/item.ts
+  - src/presentation/view-models/admin-dashboard.ts
+  - src/infrastructure/projections/postgres-projection-writer.ts
+  - app/page.tsx
+  - app/layout.tsx
+  - .opencode/skills/spectra-apply/SKILL.md
+  - app/internal/benchmarks/page.tsx
+  - AGENTS.md
+  - db/client.ts
+  - scripts/benchmark-checkout-postgres.ts
+  - scripts/seed-dev-catalog.ts
+  - src/application/checkout/create-checkout-intent.ts
+  - .github/prompts/spectra-ask.prompt.md
+  - app/products/page.tsx
+  - components/admin/admin-dashboard.tsx
+  - db/migrations/meta/_journal.json
+  - src/infrastructure/admin/index.ts
+  - .github/prompts/spectra-ingest.prompt.md
+  - .opencode/skills/spectra-propose/SKILL.md
+  - app/globals.css
+  - .github/skills/spectra-debug/SKILL.md
+  - src/application/checkout/complete-demo-checkout.ts
+  - next.config.ts
+  - src/presentation/api/checkout-intent-contracts.ts
+  - frontend/checkout-preview.html
+  - src/application/checkout-saga/checkout-reservation-saga.ts
+  - src/domain/inventory/sku-inventory-aggregate.ts
+  - src/ports/admin-dashboard-repository.ts
+  - src/domain/checkout/commands.ts
+  - src/domain/catalog/product.ts
+  - .github/skills/spectra-ingest/SKILL.md
+  - .github/prompts/spectra-archive.prompt.md
+  - .opencode/commands/spectra-audit.md
+  - .github/skills/spectra-apply/SKILL.md
+  - CLAUDE.md
+  - components/products/products-page-content.tsx
+  - dependency-cruiser.config.cjs
+  - .opencode/skills/spectra-discuss/SKILL.md
+  - drizzle.config.ts
+  - package.json
+  - scripts/run-checkout-postgres-benchmark.ts
+  - src/domain/events/event-type.ts
+  - .opencode/commands/spectra-apply.md
+  - app/api/internal/admin/dashboard/route.ts
+  - db/migrations/0000_kind_galactus.sql
+  - components/products/product-card.tsx
+  - src/domain/order/status.ts
+  - .opencode/skills/spectra-debug/SKILL.md
+  - app/internal/admin/page.tsx
+  - src/infrastructure/projections/postgres-projection-repository.ts
+  - tsconfig.json
+  - GEMINI.md
+  - .github/skills/spectra-ask/SKILL.md
+  - db/migrations/meta/0000_snapshot.json
+  - docker-compose.yml
+  - .opencode/commands/spectra-propose.md
+  - app/products/[slug]/page.tsx
+  - app/checkout-complete/[checkoutIntentId]/page.tsx
+  - .spectra.yaml
+  - src/ports/event-store.ts
+  - scripts/run-checkout-postgres-sweep.ts
+  - .github/prompts/spectra-discuss.prompt.md
+  - src/infrastructure/projections/index.ts
+  - app/api/checkout-intents/[checkoutIntentId]/route.ts
+  - .opencode/skills/spectra-ask/SKILL.md
+  - src/presentation/api/request-context.ts
+  - app/api/checkout-intents/route.ts
+  - vitest.config.ts
+  - profiles/fixed/CPU.20260419.063326.71427.0.001.cpuprofile
+  - src/infrastructure/catalog/index.ts
+  - src/application/inventory/reserve-inventory.ts
+  - biome.json
+  - .npmrc
+  - .env.example
+  - src/infrastructure/admin/postgres-admin-dashboard.ts
+  - src/infrastructure/checkout-demo/index.ts
+  - src/infrastructure/checkout-demo/postgres-checkout-demo-repository.ts
+  - src/infrastructure/event-store/index.ts
+  - .github/prompts/spectra-propose.prompt.md
+  - src/ports/projection-repository.ts
+  - .opencode/commands/spectra-archive.md
+  - .github/skills/spectra-archive/SKILL.md
+  - src/presentation/view-models/product.ts
+  - .github/skills/spectra-discuss/SKILL.md
+  - next-env.d.ts
+  - test/setup.ts
+  - profiles/fixed/CPU.20260419.063326.71970.0.001.cpuprofile
+  - .nvmrc
+  - components/products/product-grid.tsx
+  - src/domain/payment/status.ts
+  - .github/prompts/spectra-apply.prompt.md
+  - .opencode/commands/spectra-ask.md
+  - profiles/CPU.20260419.062500.60544.0.001.cpuprofile
+  - .github/skills/spectra-audit/SKILL.md
+  - src/domain/order/commands.ts
+  - src/infrastructure/event-store/postgres-event-store.ts
+  - .opencode/commands/spectra-discuss.md
+  - components/checkout/checkout-action.tsx
+  - src/domain/inventory/commands.ts
+  - src/infrastructure/catalog/postgres-catalog-repository.ts
+  - src/application/payment/payment-compensation.ts
+  - .opencode/commands/spectra-ingest.md
+  - app/api/internal/checkout-intents/[checkoutIntentId]/complete-demo/route.ts
+  - scripts/reset-dev-db.ts
+  - src/ports/checkout-demo-repository.ts
+  - frontend/design-pattern.html
+  - src/domain/events/event-metadata.ts
+  - .github/skills/spectra-propose/SKILL.md
+  - .github/prompts/spectra-debug.prompt.md
+  - components/checkout/product-detail-page.tsx
+  - src/application/projections/process-projections.ts
+  - src/infrastructure/catalog/static-catalog-repository.ts
+  - src/infrastructure/catalog/catalog-row-mapper.ts
+  - src/domain/events/domain-event.ts
+  - src/ports/id-generator.ts
+  - src/ports/clock.ts
+  - src/ports/catalog-repository.ts
+  - .opencode/skills/spectra-audit/SKILL.md
+tests:
+  - src/domain/schema-rules.test.ts
+  - src/application/checkout/create-checkout-intent.test.ts
+  - src/domain/inventory/sku-inventory-aggregate.test.ts
+  - src/application/payment/payment-compensation.test.ts
+  - src/application/projections/process-projections.test.ts
+  - src/application/inventory/reserve-inventory.test.ts
+  - app/page.test.tsx
+  - src/infrastructure/catalog/postgres-catalog-repository.test.ts
+  - src/application/checkout-saga/checkout-reservation-saga.test.ts
+-->
+
+---
+### Requirement: Event Store Durability
+
+The system SHALL store domain events in PostgreSQL as the durable source of truth. The event store SHALL be append-only for domain facts. Kafka SHALL NOT be required for the initial implementation.
+
+#### Scenario: Event is accepted
+
+- **WHEN** the API accepts a checkout intent
+- **THEN** the corresponding event SHALL be durable in PostgreSQL before the API reports acceptance
+
+#### Scenario: Event store schema is created
+
+- **WHEN** database migrations run
+- **THEN** the system SHALL create `event_store` with `id`, `event_id`, `event_type`, `event_version`, `aggregate_type`, `aggregate_id`, `aggregate_version`, `payload`, `metadata`, `idempotency_key`, and `occurred_at`
+
+#### Scenario: Event store uniqueness is enforced
+
+- **WHEN** events are appended
+- **THEN** the system SHALL enforce unique `event_id`, unique `(aggregate_type, aggregate_id, aggregate_version)`, and unique non-null `idempotency_key`
+
+
+<!-- @trace
+source: add-event-sourced-buy-flow
+updated: 2026-04-19
+code:
+  - .github/prompts/spectra-audit.prompt.md
+  - app/api/internal/projections/process/route.ts
+  - src/domain/checkout/status.ts
+  - .opencode/skills/spectra-ingest/SKILL.md
+  - .opencode/commands/spectra-debug.md
+  - src/application/admin/get-admin-dashboard.ts
+  - src/application/catalog/get-products.ts
+  - .opencode/skills/spectra-archive/SKILL.md
+  - db/schema.ts
+  - src/domain/schema-rules.ts
+  - profiles/CPU.20260419.062459.59977.0.001.cpuprofile
+  - app/api/skus/[skuId]/inventory/route.ts
+  - src/domain/payment/commands.ts
+  - src/domain/checkout/item.ts
+  - src/presentation/view-models/admin-dashboard.ts
+  - src/infrastructure/projections/postgres-projection-writer.ts
+  - app/page.tsx
+  - app/layout.tsx
+  - .opencode/skills/spectra-apply/SKILL.md
+  - app/internal/benchmarks/page.tsx
+  - AGENTS.md
+  - db/client.ts
+  - scripts/benchmark-checkout-postgres.ts
+  - scripts/seed-dev-catalog.ts
+  - src/application/checkout/create-checkout-intent.ts
+  - .github/prompts/spectra-ask.prompt.md
+  - app/products/page.tsx
+  - components/admin/admin-dashboard.tsx
+  - db/migrations/meta/_journal.json
+  - src/infrastructure/admin/index.ts
+  - .github/prompts/spectra-ingest.prompt.md
+  - .opencode/skills/spectra-propose/SKILL.md
+  - app/globals.css
+  - .github/skills/spectra-debug/SKILL.md
+  - src/application/checkout/complete-demo-checkout.ts
+  - next.config.ts
+  - src/presentation/api/checkout-intent-contracts.ts
+  - frontend/checkout-preview.html
+  - src/application/checkout-saga/checkout-reservation-saga.ts
+  - src/domain/inventory/sku-inventory-aggregate.ts
+  - src/ports/admin-dashboard-repository.ts
+  - src/domain/checkout/commands.ts
+  - src/domain/catalog/product.ts
+  - .github/skills/spectra-ingest/SKILL.md
+  - .github/prompts/spectra-archive.prompt.md
+  - .opencode/commands/spectra-audit.md
+  - .github/skills/spectra-apply/SKILL.md
+  - CLAUDE.md
+  - components/products/products-page-content.tsx
+  - dependency-cruiser.config.cjs
+  - .opencode/skills/spectra-discuss/SKILL.md
+  - drizzle.config.ts
+  - package.json
+  - scripts/run-checkout-postgres-benchmark.ts
+  - src/domain/events/event-type.ts
+  - .opencode/commands/spectra-apply.md
+  - app/api/internal/admin/dashboard/route.ts
+  - db/migrations/0000_kind_galactus.sql
+  - components/products/product-card.tsx
+  - src/domain/order/status.ts
+  - .opencode/skills/spectra-debug/SKILL.md
+  - app/internal/admin/page.tsx
+  - src/infrastructure/projections/postgres-projection-repository.ts
+  - tsconfig.json
+  - GEMINI.md
+  - .github/skills/spectra-ask/SKILL.md
+  - db/migrations/meta/0000_snapshot.json
+  - docker-compose.yml
+  - .opencode/commands/spectra-propose.md
+  - app/products/[slug]/page.tsx
+  - app/checkout-complete/[checkoutIntentId]/page.tsx
+  - .spectra.yaml
+  - src/ports/event-store.ts
+  - scripts/run-checkout-postgres-sweep.ts
+  - .github/prompts/spectra-discuss.prompt.md
+  - src/infrastructure/projections/index.ts
+  - app/api/checkout-intents/[checkoutIntentId]/route.ts
+  - .opencode/skills/spectra-ask/SKILL.md
+  - src/presentation/api/request-context.ts
+  - app/api/checkout-intents/route.ts
+  - vitest.config.ts
+  - profiles/fixed/CPU.20260419.063326.71427.0.001.cpuprofile
+  - src/infrastructure/catalog/index.ts
+  - src/application/inventory/reserve-inventory.ts
+  - biome.json
+  - .npmrc
+  - .env.example
+  - src/infrastructure/admin/postgres-admin-dashboard.ts
+  - src/infrastructure/checkout-demo/index.ts
+  - src/infrastructure/checkout-demo/postgres-checkout-demo-repository.ts
+  - src/infrastructure/event-store/index.ts
+  - .github/prompts/spectra-propose.prompt.md
+  - src/ports/projection-repository.ts
+  - .opencode/commands/spectra-archive.md
+  - .github/skills/spectra-archive/SKILL.md
+  - src/presentation/view-models/product.ts
+  - .github/skills/spectra-discuss/SKILL.md
+  - next-env.d.ts
+  - test/setup.ts
+  - profiles/fixed/CPU.20260419.063326.71970.0.001.cpuprofile
+  - .nvmrc
+  - components/products/product-grid.tsx
+  - src/domain/payment/status.ts
+  - .github/prompts/spectra-apply.prompt.md
+  - .opencode/commands/spectra-ask.md
+  - profiles/CPU.20260419.062500.60544.0.001.cpuprofile
+  - .github/skills/spectra-audit/SKILL.md
+  - src/domain/order/commands.ts
+  - src/infrastructure/event-store/postgres-event-store.ts
+  - .opencode/commands/spectra-discuss.md
+  - components/checkout/checkout-action.tsx
+  - src/domain/inventory/commands.ts
+  - src/infrastructure/catalog/postgres-catalog-repository.ts
+  - src/application/payment/payment-compensation.ts
+  - .opencode/commands/spectra-ingest.md
+  - app/api/internal/checkout-intents/[checkoutIntentId]/complete-demo/route.ts
+  - scripts/reset-dev-db.ts
+  - src/ports/checkout-demo-repository.ts
+  - frontend/design-pattern.html
+  - src/domain/events/event-metadata.ts
+  - .github/skills/spectra-propose/SKILL.md
+  - .github/prompts/spectra-debug.prompt.md
+  - components/checkout/product-detail-page.tsx
+  - src/application/projections/process-projections.ts
+  - src/infrastructure/catalog/static-catalog-repository.ts
+  - src/infrastructure/catalog/catalog-row-mapper.ts
+  - src/domain/events/domain-event.ts
+  - src/ports/id-generator.ts
+  - src/ports/clock.ts
+  - src/ports/catalog-repository.ts
+  - .opencode/skills/spectra-audit/SKILL.md
+tests:
+  - src/domain/schema-rules.test.ts
+  - src/application/checkout/create-checkout-intent.test.ts
+  - src/domain/inventory/sku-inventory-aggregate.test.ts
+  - src/application/payment/payment-compensation.test.ts
+  - src/application/projections/process-projections.test.ts
+  - src/application/inventory/reserve-inventory.test.ts
+  - app/page.test.tsx
+  - src/infrastructure/catalog/postgres-catalog-repository.test.ts
+  - src/application/checkout-saga/checkout-reservation-saga.test.ts
+-->
+
+---
+### Requirement: Event Dictionary
+
+The system SHALL define the supported event types before implementation. Each event type SHALL have a clear aggregate, meaning, and minimum payload so commands, facts, and projection states are not confused.
+
+#### Scenario: Checkout intent event is implemented
+
+- **WHEN** `CheckoutIntentCreated` is appended
+- **THEN** the event SHALL represent a submitted direct Buy or cart checkout request and include `checkout_intent_id`, `buyer_id`, `items`, and `idempotency_key`
+
+#### Scenario: Inventory reservation events are implemented
+
+- **WHEN** inventory processing appends reservation events
+- **THEN** `InventoryReservationRequested`, `InventoryReserved`, `InventoryReservationRejected`, and `InventoryReservationReleased` SHALL use the SKU aggregate and include `checkout_intent_id`, `reservation_id`, `sku_id`, and `quantity`
+
+#### Scenario: Payment events are implemented
+
+- **WHEN** payment processing appends payment events
+- **THEN** `PaymentRequested`, `PaymentSucceeded`, and `PaymentFailed` SHALL use the payment aggregate and include `payment_id` and `checkout_intent_id`
+
+#### Scenario: Order events are implemented
+
+- **WHEN** order processing appends order events
+- **THEN** `OrderConfirmed` and `OrderCancelled` SHALL use the order aggregate and include `order_id` and `checkout_intent_id`
+
+#### Scenario: Event type is constrained
+
+- **WHEN** an event is appended
+- **THEN** `event_type` SHALL be one of `CheckoutIntentCreated`, `InventoryReservationRequested`, `InventoryReserved`, `InventoryReservationRejected`, `PaymentRequested`, `PaymentSucceeded`, `PaymentFailed`, `InventoryReservationReleased`, `OrderConfirmed`, or `OrderCancelled`
+
+#### Scenario: Event handlers are exhaustive
+
+- **WHEN** event handling code is compiled
+- **THEN** TypeScript SHALL expose supported event types as a string union or equivalent constant object for exhaustive handling
+
+
+<!-- @trace
+source: add-event-sourced-buy-flow
+updated: 2026-04-19
+code:
+  - .github/prompts/spectra-audit.prompt.md
+  - app/api/internal/projections/process/route.ts
+  - src/domain/checkout/status.ts
+  - .opencode/skills/spectra-ingest/SKILL.md
+  - .opencode/commands/spectra-debug.md
+  - src/application/admin/get-admin-dashboard.ts
+  - src/application/catalog/get-products.ts
+  - .opencode/skills/spectra-archive/SKILL.md
+  - db/schema.ts
+  - src/domain/schema-rules.ts
+  - profiles/CPU.20260419.062459.59977.0.001.cpuprofile
+  - app/api/skus/[skuId]/inventory/route.ts
+  - src/domain/payment/commands.ts
+  - src/domain/checkout/item.ts
+  - src/presentation/view-models/admin-dashboard.ts
+  - src/infrastructure/projections/postgres-projection-writer.ts
+  - app/page.tsx
+  - app/layout.tsx
+  - .opencode/skills/spectra-apply/SKILL.md
+  - app/internal/benchmarks/page.tsx
+  - AGENTS.md
+  - db/client.ts
+  - scripts/benchmark-checkout-postgres.ts
+  - scripts/seed-dev-catalog.ts
+  - src/application/checkout/create-checkout-intent.ts
+  - .github/prompts/spectra-ask.prompt.md
+  - app/products/page.tsx
+  - components/admin/admin-dashboard.tsx
+  - db/migrations/meta/_journal.json
+  - src/infrastructure/admin/index.ts
+  - .github/prompts/spectra-ingest.prompt.md
+  - .opencode/skills/spectra-propose/SKILL.md
+  - app/globals.css
+  - .github/skills/spectra-debug/SKILL.md
+  - src/application/checkout/complete-demo-checkout.ts
+  - next.config.ts
+  - src/presentation/api/checkout-intent-contracts.ts
+  - frontend/checkout-preview.html
+  - src/application/checkout-saga/checkout-reservation-saga.ts
+  - src/domain/inventory/sku-inventory-aggregate.ts
+  - src/ports/admin-dashboard-repository.ts
+  - src/domain/checkout/commands.ts
+  - src/domain/catalog/product.ts
+  - .github/skills/spectra-ingest/SKILL.md
+  - .github/prompts/spectra-archive.prompt.md
+  - .opencode/commands/spectra-audit.md
+  - .github/skills/spectra-apply/SKILL.md
+  - CLAUDE.md
+  - components/products/products-page-content.tsx
+  - dependency-cruiser.config.cjs
+  - .opencode/skills/spectra-discuss/SKILL.md
+  - drizzle.config.ts
+  - package.json
+  - scripts/run-checkout-postgres-benchmark.ts
+  - src/domain/events/event-type.ts
+  - .opencode/commands/spectra-apply.md
+  - app/api/internal/admin/dashboard/route.ts
+  - db/migrations/0000_kind_galactus.sql
+  - components/products/product-card.tsx
+  - src/domain/order/status.ts
+  - .opencode/skills/spectra-debug/SKILL.md
+  - app/internal/admin/page.tsx
+  - src/infrastructure/projections/postgres-projection-repository.ts
+  - tsconfig.json
+  - GEMINI.md
+  - .github/skills/spectra-ask/SKILL.md
+  - db/migrations/meta/0000_snapshot.json
+  - docker-compose.yml
+  - .opencode/commands/spectra-propose.md
+  - app/products/[slug]/page.tsx
+  - app/checkout-complete/[checkoutIntentId]/page.tsx
+  - .spectra.yaml
+  - src/ports/event-store.ts
+  - scripts/run-checkout-postgres-sweep.ts
+  - .github/prompts/spectra-discuss.prompt.md
+  - src/infrastructure/projections/index.ts
+  - app/api/checkout-intents/[checkoutIntentId]/route.ts
+  - .opencode/skills/spectra-ask/SKILL.md
+  - src/presentation/api/request-context.ts
+  - app/api/checkout-intents/route.ts
+  - vitest.config.ts
+  - profiles/fixed/CPU.20260419.063326.71427.0.001.cpuprofile
+  - src/infrastructure/catalog/index.ts
+  - src/application/inventory/reserve-inventory.ts
+  - biome.json
+  - .npmrc
+  - .env.example
+  - src/infrastructure/admin/postgres-admin-dashboard.ts
+  - src/infrastructure/checkout-demo/index.ts
+  - src/infrastructure/checkout-demo/postgres-checkout-demo-repository.ts
+  - src/infrastructure/event-store/index.ts
+  - .github/prompts/spectra-propose.prompt.md
+  - src/ports/projection-repository.ts
+  - .opencode/commands/spectra-archive.md
+  - .github/skills/spectra-archive/SKILL.md
+  - src/presentation/view-models/product.ts
+  - .github/skills/spectra-discuss/SKILL.md
+  - next-env.d.ts
+  - test/setup.ts
+  - profiles/fixed/CPU.20260419.063326.71970.0.001.cpuprofile
+  - .nvmrc
+  - components/products/product-grid.tsx
+  - src/domain/payment/status.ts
+  - .github/prompts/spectra-apply.prompt.md
+  - .opencode/commands/spectra-ask.md
+  - profiles/CPU.20260419.062500.60544.0.001.cpuprofile
+  - .github/skills/spectra-audit/SKILL.md
+  - src/domain/order/commands.ts
+  - src/infrastructure/event-store/postgres-event-store.ts
+  - .opencode/commands/spectra-discuss.md
+  - components/checkout/checkout-action.tsx
+  - src/domain/inventory/commands.ts
+  - src/infrastructure/catalog/postgres-catalog-repository.ts
+  - src/application/payment/payment-compensation.ts
+  - .opencode/commands/spectra-ingest.md
+  - app/api/internal/checkout-intents/[checkoutIntentId]/complete-demo/route.ts
+  - scripts/reset-dev-db.ts
+  - src/ports/checkout-demo-repository.ts
+  - frontend/design-pattern.html
+  - src/domain/events/event-metadata.ts
+  - .github/skills/spectra-propose/SKILL.md
+  - .github/prompts/spectra-debug.prompt.md
+  - components/checkout/product-detail-page.tsx
+  - src/application/projections/process-projections.ts
+  - src/infrastructure/catalog/static-catalog-repository.ts
+  - src/infrastructure/catalog/catalog-row-mapper.ts
+  - src/domain/events/domain-event.ts
+  - src/ports/id-generator.ts
+  - src/ports/clock.ts
+  - src/ports/catalog-repository.ts
+  - .opencode/skills/spectra-audit/SKILL.md
+tests:
+  - src/domain/schema-rules.test.ts
+  - src/application/checkout/create-checkout-intent.test.ts
+  - src/domain/inventory/sku-inventory-aggregate.test.ts
+  - src/application/payment/payment-compensation.test.ts
+  - src/application/projections/process-projections.test.ts
+  - src/application/inventory/reserve-inventory.test.ts
+  - app/page.test.tsx
+  - src/infrastructure/catalog/postgres-catalog-repository.test.ts
+  - src/application/checkout-saga/checkout-reservation-saga.test.ts
+-->
+
+---
+### Requirement: Command Boundary
+
+The system SHALL separate commands from events. Commands SHALL represent requests that can fail validation. Events SHALL represent facts that already happened and SHALL be stored in `event_store`.
+
+#### Scenario: Checkout creation command succeeds
+
+- **WHEN** `CreateCheckoutIntent` passes validation
+- **THEN** the system SHALL append `CheckoutIntentCreated`
+
+#### Scenario: Inventory reservation command is handled
+
+- **WHEN** `ReserveInventory` is handled for a SKU
+- **THEN** the system SHALL append either `InventoryReserved` or `InventoryReservationRejected`
+
+#### Scenario: Payment command is handled
+
+- **WHEN** payment processing starts or receives provider results
+- **THEN** the system SHALL append `PaymentRequested`, `PaymentSucceeded`, or `PaymentFailed`
+
+#### Scenario: Order command is handled
+
+- **WHEN** order processing confirms or cancels an order
+- **THEN** the system SHALL append `OrderConfirmed` or `OrderCancelled`
+
+
+<!-- @trace
+source: add-event-sourced-buy-flow
+updated: 2026-04-19
+code:
+  - .github/prompts/spectra-audit.prompt.md
+  - app/api/internal/projections/process/route.ts
+  - src/domain/checkout/status.ts
+  - .opencode/skills/spectra-ingest/SKILL.md
+  - .opencode/commands/spectra-debug.md
+  - src/application/admin/get-admin-dashboard.ts
+  - src/application/catalog/get-products.ts
+  - .opencode/skills/spectra-archive/SKILL.md
+  - db/schema.ts
+  - src/domain/schema-rules.ts
+  - profiles/CPU.20260419.062459.59977.0.001.cpuprofile
+  - app/api/skus/[skuId]/inventory/route.ts
+  - src/domain/payment/commands.ts
+  - src/domain/checkout/item.ts
+  - src/presentation/view-models/admin-dashboard.ts
+  - src/infrastructure/projections/postgres-projection-writer.ts
+  - app/page.tsx
+  - app/layout.tsx
+  - .opencode/skills/spectra-apply/SKILL.md
+  - app/internal/benchmarks/page.tsx
+  - AGENTS.md
+  - db/client.ts
+  - scripts/benchmark-checkout-postgres.ts
+  - scripts/seed-dev-catalog.ts
+  - src/application/checkout/create-checkout-intent.ts
+  - .github/prompts/spectra-ask.prompt.md
+  - app/products/page.tsx
+  - components/admin/admin-dashboard.tsx
+  - db/migrations/meta/_journal.json
+  - src/infrastructure/admin/index.ts
+  - .github/prompts/spectra-ingest.prompt.md
+  - .opencode/skills/spectra-propose/SKILL.md
+  - app/globals.css
+  - .github/skills/spectra-debug/SKILL.md
+  - src/application/checkout/complete-demo-checkout.ts
+  - next.config.ts
+  - src/presentation/api/checkout-intent-contracts.ts
+  - frontend/checkout-preview.html
+  - src/application/checkout-saga/checkout-reservation-saga.ts
+  - src/domain/inventory/sku-inventory-aggregate.ts
+  - src/ports/admin-dashboard-repository.ts
+  - src/domain/checkout/commands.ts
+  - src/domain/catalog/product.ts
+  - .github/skills/spectra-ingest/SKILL.md
+  - .github/prompts/spectra-archive.prompt.md
+  - .opencode/commands/spectra-audit.md
+  - .github/skills/spectra-apply/SKILL.md
+  - CLAUDE.md
+  - components/products/products-page-content.tsx
+  - dependency-cruiser.config.cjs
+  - .opencode/skills/spectra-discuss/SKILL.md
+  - drizzle.config.ts
+  - package.json
+  - scripts/run-checkout-postgres-benchmark.ts
+  - src/domain/events/event-type.ts
+  - .opencode/commands/spectra-apply.md
+  - app/api/internal/admin/dashboard/route.ts
+  - db/migrations/0000_kind_galactus.sql
+  - components/products/product-card.tsx
+  - src/domain/order/status.ts
+  - .opencode/skills/spectra-debug/SKILL.md
+  - app/internal/admin/page.tsx
+  - src/infrastructure/projections/postgres-projection-repository.ts
+  - tsconfig.json
+  - GEMINI.md
+  - .github/skills/spectra-ask/SKILL.md
+  - db/migrations/meta/0000_snapshot.json
+  - docker-compose.yml
+  - .opencode/commands/spectra-propose.md
+  - app/products/[slug]/page.tsx
+  - app/checkout-complete/[checkoutIntentId]/page.tsx
+  - .spectra.yaml
+  - src/ports/event-store.ts
+  - scripts/run-checkout-postgres-sweep.ts
+  - .github/prompts/spectra-discuss.prompt.md
+  - src/infrastructure/projections/index.ts
+  - app/api/checkout-intents/[checkoutIntentId]/route.ts
+  - .opencode/skills/spectra-ask/SKILL.md
+  - src/presentation/api/request-context.ts
+  - app/api/checkout-intents/route.ts
+  - vitest.config.ts
+  - profiles/fixed/CPU.20260419.063326.71427.0.001.cpuprofile
+  - src/infrastructure/catalog/index.ts
+  - src/application/inventory/reserve-inventory.ts
+  - biome.json
+  - .npmrc
+  - .env.example
+  - src/infrastructure/admin/postgres-admin-dashboard.ts
+  - src/infrastructure/checkout-demo/index.ts
+  - src/infrastructure/checkout-demo/postgres-checkout-demo-repository.ts
+  - src/infrastructure/event-store/index.ts
+  - .github/prompts/spectra-propose.prompt.md
+  - src/ports/projection-repository.ts
+  - .opencode/commands/spectra-archive.md
+  - .github/skills/spectra-archive/SKILL.md
+  - src/presentation/view-models/product.ts
+  - .github/skills/spectra-discuss/SKILL.md
+  - next-env.d.ts
+  - test/setup.ts
+  - profiles/fixed/CPU.20260419.063326.71970.0.001.cpuprofile
+  - .nvmrc
+  - components/products/product-grid.tsx
+  - src/domain/payment/status.ts
+  - .github/prompts/spectra-apply.prompt.md
+  - .opencode/commands/spectra-ask.md
+  - profiles/CPU.20260419.062500.60544.0.001.cpuprofile
+  - .github/skills/spectra-audit/SKILL.md
+  - src/domain/order/commands.ts
+  - src/infrastructure/event-store/postgres-event-store.ts
+  - .opencode/commands/spectra-discuss.md
+  - components/checkout/checkout-action.tsx
+  - src/domain/inventory/commands.ts
+  - src/infrastructure/catalog/postgres-catalog-repository.ts
+  - src/application/payment/payment-compensation.ts
+  - .opencode/commands/spectra-ingest.md
+  - app/api/internal/checkout-intents/[checkoutIntentId]/complete-demo/route.ts
+  - scripts/reset-dev-db.ts
+  - src/ports/checkout-demo-repository.ts
+  - frontend/design-pattern.html
+  - src/domain/events/event-metadata.ts
+  - .github/skills/spectra-propose/SKILL.md
+  - .github/prompts/spectra-debug.prompt.md
+  - components/checkout/product-detail-page.tsx
+  - src/application/projections/process-projections.ts
+  - src/infrastructure/catalog/static-catalog-repository.ts
+  - src/infrastructure/catalog/catalog-row-mapper.ts
+  - src/domain/events/domain-event.ts
+  - src/ports/id-generator.ts
+  - src/ports/clock.ts
+  - src/ports/catalog-repository.ts
+  - .opencode/skills/spectra-audit/SKILL.md
+tests:
+  - src/domain/schema-rules.test.ts
+  - src/application/checkout/create-checkout-intent.test.ts
+  - src/domain/inventory/sku-inventory-aggregate.test.ts
+  - src/application/payment/payment-compensation.test.ts
+  - src/application/projections/process-projections.test.ts
+  - src/application/inventory/reserve-inventory.test.ts
+  - app/page.test.tsx
+  - src/infrastructure/catalog/postgres-catalog-repository.test.ts
+  - src/application/checkout-saga/checkout-reservation-saga.test.ts
+-->
+
+---
+### Requirement: Catalog Tables
+
+The system SHALL store MVP catalog metadata in singular PostgreSQL tables named `product` and `sku`. Catalog metadata SHALL NOT be event sourced in the first implementation. SKU SHALL remain the inventory aggregate for reservation events.
+
+#### Scenario: Catalog schema is created
+
+- **WHEN** database migrations run
+- **THEN** the system SHALL create `product` and `sku` tables using singular table names
+
+#### Scenario: Product row stores display data
+
+- **WHEN** a product row is stored
+- **THEN** the row SHALL include `product_id`, `name`, optional `description`, `status`, `created_at`, and `updated_at`
+
+#### Scenario: SKU row stores purchasable unit data
+
+- **WHEN** a SKU row is stored
+- **THEN** the row SHALL include `sku_id`, `product_id`, unique `sku_code`, `name`, `price_amount_minor`, `currency`, `status`, `attributes`, `created_at`, and `updated_at`
+
+#### Scenario: Catalog is read for SSR
+
+- **WHEN** the product page is server-rendered
+- **THEN** the system SHALL read product and SKU metadata from `product` and `sku` tables and inventory state from `sku_inventory_projection`
+
+
+<!-- @trace
+source: add-event-sourced-buy-flow
+updated: 2026-04-19
+code:
+  - .github/prompts/spectra-audit.prompt.md
+  - app/api/internal/projections/process/route.ts
+  - src/domain/checkout/status.ts
+  - .opencode/skills/spectra-ingest/SKILL.md
+  - .opencode/commands/spectra-debug.md
+  - src/application/admin/get-admin-dashboard.ts
+  - src/application/catalog/get-products.ts
+  - .opencode/skills/spectra-archive/SKILL.md
+  - db/schema.ts
+  - src/domain/schema-rules.ts
+  - profiles/CPU.20260419.062459.59977.0.001.cpuprofile
+  - app/api/skus/[skuId]/inventory/route.ts
+  - src/domain/payment/commands.ts
+  - src/domain/checkout/item.ts
+  - src/presentation/view-models/admin-dashboard.ts
+  - src/infrastructure/projections/postgres-projection-writer.ts
+  - app/page.tsx
+  - app/layout.tsx
+  - .opencode/skills/spectra-apply/SKILL.md
+  - app/internal/benchmarks/page.tsx
+  - AGENTS.md
+  - db/client.ts
+  - scripts/benchmark-checkout-postgres.ts
+  - scripts/seed-dev-catalog.ts
+  - src/application/checkout/create-checkout-intent.ts
+  - .github/prompts/spectra-ask.prompt.md
+  - app/products/page.tsx
+  - components/admin/admin-dashboard.tsx
+  - db/migrations/meta/_journal.json
+  - src/infrastructure/admin/index.ts
+  - .github/prompts/spectra-ingest.prompt.md
+  - .opencode/skills/spectra-propose/SKILL.md
+  - app/globals.css
+  - .github/skills/spectra-debug/SKILL.md
+  - src/application/checkout/complete-demo-checkout.ts
+  - next.config.ts
+  - src/presentation/api/checkout-intent-contracts.ts
+  - frontend/checkout-preview.html
+  - src/application/checkout-saga/checkout-reservation-saga.ts
+  - src/domain/inventory/sku-inventory-aggregate.ts
+  - src/ports/admin-dashboard-repository.ts
+  - src/domain/checkout/commands.ts
+  - src/domain/catalog/product.ts
+  - .github/skills/spectra-ingest/SKILL.md
+  - .github/prompts/spectra-archive.prompt.md
+  - .opencode/commands/spectra-audit.md
+  - .github/skills/spectra-apply/SKILL.md
+  - CLAUDE.md
+  - components/products/products-page-content.tsx
+  - dependency-cruiser.config.cjs
+  - .opencode/skills/spectra-discuss/SKILL.md
+  - drizzle.config.ts
+  - package.json
+  - scripts/run-checkout-postgres-benchmark.ts
+  - src/domain/events/event-type.ts
+  - .opencode/commands/spectra-apply.md
+  - app/api/internal/admin/dashboard/route.ts
+  - db/migrations/0000_kind_galactus.sql
+  - components/products/product-card.tsx
+  - src/domain/order/status.ts
+  - .opencode/skills/spectra-debug/SKILL.md
+  - app/internal/admin/page.tsx
+  - src/infrastructure/projections/postgres-projection-repository.ts
+  - tsconfig.json
+  - GEMINI.md
+  - .github/skills/spectra-ask/SKILL.md
+  - db/migrations/meta/0000_snapshot.json
+  - docker-compose.yml
+  - .opencode/commands/spectra-propose.md
+  - app/products/[slug]/page.tsx
+  - app/checkout-complete/[checkoutIntentId]/page.tsx
+  - .spectra.yaml
+  - src/ports/event-store.ts
+  - scripts/run-checkout-postgres-sweep.ts
+  - .github/prompts/spectra-discuss.prompt.md
+  - src/infrastructure/projections/index.ts
+  - app/api/checkout-intents/[checkoutIntentId]/route.ts
+  - .opencode/skills/spectra-ask/SKILL.md
+  - src/presentation/api/request-context.ts
+  - app/api/checkout-intents/route.ts
+  - vitest.config.ts
+  - profiles/fixed/CPU.20260419.063326.71427.0.001.cpuprofile
+  - src/infrastructure/catalog/index.ts
+  - src/application/inventory/reserve-inventory.ts
+  - biome.json
+  - .npmrc
+  - .env.example
+  - src/infrastructure/admin/postgres-admin-dashboard.ts
+  - src/infrastructure/checkout-demo/index.ts
+  - src/infrastructure/checkout-demo/postgres-checkout-demo-repository.ts
+  - src/infrastructure/event-store/index.ts
+  - .github/prompts/spectra-propose.prompt.md
+  - src/ports/projection-repository.ts
+  - .opencode/commands/spectra-archive.md
+  - .github/skills/spectra-archive/SKILL.md
+  - src/presentation/view-models/product.ts
+  - .github/skills/spectra-discuss/SKILL.md
+  - next-env.d.ts
+  - test/setup.ts
+  - profiles/fixed/CPU.20260419.063326.71970.0.001.cpuprofile
+  - .nvmrc
+  - components/products/product-grid.tsx
+  - src/domain/payment/status.ts
+  - .github/prompts/spectra-apply.prompt.md
+  - .opencode/commands/spectra-ask.md
+  - profiles/CPU.20260419.062500.60544.0.001.cpuprofile
+  - .github/skills/spectra-audit/SKILL.md
+  - src/domain/order/commands.ts
+  - src/infrastructure/event-store/postgres-event-store.ts
+  - .opencode/commands/spectra-discuss.md
+  - components/checkout/checkout-action.tsx
+  - src/domain/inventory/commands.ts
+  - src/infrastructure/catalog/postgres-catalog-repository.ts
+  - src/application/payment/payment-compensation.ts
+  - .opencode/commands/spectra-ingest.md
+  - app/api/internal/checkout-intents/[checkoutIntentId]/complete-demo/route.ts
+  - scripts/reset-dev-db.ts
+  - src/ports/checkout-demo-repository.ts
+  - frontend/design-pattern.html
+  - src/domain/events/event-metadata.ts
+  - .github/skills/spectra-propose/SKILL.md
+  - .github/prompts/spectra-debug.prompt.md
+  - components/checkout/product-detail-page.tsx
+  - src/application/projections/process-projections.ts
+  - src/infrastructure/catalog/static-catalog-repository.ts
+  - src/infrastructure/catalog/catalog-row-mapper.ts
+  - src/domain/events/domain-event.ts
+  - src/ports/id-generator.ts
+  - src/ports/clock.ts
+  - src/ports/catalog-repository.ts
+  - .opencode/skills/spectra-audit/SKILL.md
+tests:
+  - src/domain/schema-rules.test.ts
+  - src/application/checkout/create-checkout-intent.test.ts
+  - src/domain/inventory/sku-inventory-aggregate.test.ts
+  - src/application/payment/payment-compensation.test.ts
+  - src/application/projections/process-projections.test.ts
+  - src/application/inventory/reserve-inventory.test.ts
+  - app/page.test.tsx
+  - src/infrastructure/catalog/postgres-catalog-repository.test.ts
+  - src/application/checkout-saga/checkout-reservation-saga.test.ts
+-->
+
+---
+### Requirement: Schema Conventions
+
+The system SHALL use explicit schema conventions for identifiers, money, JSON payloads, reservation identity, buyer identity, event metadata, and foreign keys.
+
+#### Scenario: Identifiers are stored consistently
+
+- **WHEN** rows or events store `checkout_intent_id`, `event_id`, `reservation_id`, `payment_id`, or `order_id`
+- **THEN** those identifiers SHALL be UUID values
+
+#### Scenario: Catalog identifiers are stable
+
+- **WHEN** rows store `product_id` or `sku_id`
+- **THEN** those identifiers SHALL be stable text identifiers suitable for seed data and benchmarks
+
+#### Scenario: Buyer identity is stored
+
+- **WHEN** checkout or order state stores buyer identity
+- **THEN** `buyer_id` SHALL be text and SHALL NOT require a user table in the MVP
+
+#### Scenario: Money is stored
+
+- **WHEN** price or total amount is stored
+- **THEN** the amount SHALL be a `BIGINT` integer minor-unit value using an `_amount_minor` field name and currency SHALL be an uppercase currency code
+
+#### Scenario: Checkout item JSON is stored
+
+- **WHEN** checkout `items` JSONB is stored
+- **THEN** each item SHALL include `sku_id`, positive integer `quantity`, integer `unit_price_amount_minor`, and `currency`
+
+#### Scenario: Event metadata JSON is stored
+
+- **WHEN** an event is appended
+- **THEN** `metadata` SHALL support `request_id`, `trace_id`, `source`, and `actor_id`
+
+#### Scenario: Reservation identity is stored in events
+
+- **WHEN** reservation-related events are appended
+- **THEN** they SHALL include `reservation_id`, `checkout_intent_id`, `sku_id`, and `quantity`
+
+#### Scenario: Event store foreign keys are avoided
+
+- **WHEN** `event_store` is created
+- **THEN** it SHALL NOT define foreign keys from polymorphic `aggregate_id` to aggregate-specific tables such as `sku`
+
+
+<!-- @trace
+source: add-event-sourced-buy-flow
+updated: 2026-04-19
+code:
+  - .github/prompts/spectra-audit.prompt.md
+  - app/api/internal/projections/process/route.ts
+  - src/domain/checkout/status.ts
+  - .opencode/skills/spectra-ingest/SKILL.md
+  - .opencode/commands/spectra-debug.md
+  - src/application/admin/get-admin-dashboard.ts
+  - src/application/catalog/get-products.ts
+  - .opencode/skills/spectra-archive/SKILL.md
+  - db/schema.ts
+  - src/domain/schema-rules.ts
+  - profiles/CPU.20260419.062459.59977.0.001.cpuprofile
+  - app/api/skus/[skuId]/inventory/route.ts
+  - src/domain/payment/commands.ts
+  - src/domain/checkout/item.ts
+  - src/presentation/view-models/admin-dashboard.ts
+  - src/infrastructure/projections/postgres-projection-writer.ts
+  - app/page.tsx
+  - app/layout.tsx
+  - .opencode/skills/spectra-apply/SKILL.md
+  - app/internal/benchmarks/page.tsx
+  - AGENTS.md
+  - db/client.ts
+  - scripts/benchmark-checkout-postgres.ts
+  - scripts/seed-dev-catalog.ts
+  - src/application/checkout/create-checkout-intent.ts
+  - .github/prompts/spectra-ask.prompt.md
+  - app/products/page.tsx
+  - components/admin/admin-dashboard.tsx
+  - db/migrations/meta/_journal.json
+  - src/infrastructure/admin/index.ts
+  - .github/prompts/spectra-ingest.prompt.md
+  - .opencode/skills/spectra-propose/SKILL.md
+  - app/globals.css
+  - .github/skills/spectra-debug/SKILL.md
+  - src/application/checkout/complete-demo-checkout.ts
+  - next.config.ts
+  - src/presentation/api/checkout-intent-contracts.ts
+  - frontend/checkout-preview.html
+  - src/application/checkout-saga/checkout-reservation-saga.ts
+  - src/domain/inventory/sku-inventory-aggregate.ts
+  - src/ports/admin-dashboard-repository.ts
+  - src/domain/checkout/commands.ts
+  - src/domain/catalog/product.ts
+  - .github/skills/spectra-ingest/SKILL.md
+  - .github/prompts/spectra-archive.prompt.md
+  - .opencode/commands/spectra-audit.md
+  - .github/skills/spectra-apply/SKILL.md
+  - CLAUDE.md
+  - components/products/products-page-content.tsx
+  - dependency-cruiser.config.cjs
+  - .opencode/skills/spectra-discuss/SKILL.md
+  - drizzle.config.ts
+  - package.json
+  - scripts/run-checkout-postgres-benchmark.ts
+  - src/domain/events/event-type.ts
+  - .opencode/commands/spectra-apply.md
+  - app/api/internal/admin/dashboard/route.ts
+  - db/migrations/0000_kind_galactus.sql
+  - components/products/product-card.tsx
+  - src/domain/order/status.ts
+  - .opencode/skills/spectra-debug/SKILL.md
+  - app/internal/admin/page.tsx
+  - src/infrastructure/projections/postgres-projection-repository.ts
+  - tsconfig.json
+  - GEMINI.md
+  - .github/skills/spectra-ask/SKILL.md
+  - db/migrations/meta/0000_snapshot.json
+  - docker-compose.yml
+  - .opencode/commands/spectra-propose.md
+  - app/products/[slug]/page.tsx
+  - app/checkout-complete/[checkoutIntentId]/page.tsx
+  - .spectra.yaml
+  - src/ports/event-store.ts
+  - scripts/run-checkout-postgres-sweep.ts
+  - .github/prompts/spectra-discuss.prompt.md
+  - src/infrastructure/projections/index.ts
+  - app/api/checkout-intents/[checkoutIntentId]/route.ts
+  - .opencode/skills/spectra-ask/SKILL.md
+  - src/presentation/api/request-context.ts
+  - app/api/checkout-intents/route.ts
+  - vitest.config.ts
+  - profiles/fixed/CPU.20260419.063326.71427.0.001.cpuprofile
+  - src/infrastructure/catalog/index.ts
+  - src/application/inventory/reserve-inventory.ts
+  - biome.json
+  - .npmrc
+  - .env.example
+  - src/infrastructure/admin/postgres-admin-dashboard.ts
+  - src/infrastructure/checkout-demo/index.ts
+  - src/infrastructure/checkout-demo/postgres-checkout-demo-repository.ts
+  - src/infrastructure/event-store/index.ts
+  - .github/prompts/spectra-propose.prompt.md
+  - src/ports/projection-repository.ts
+  - .opencode/commands/spectra-archive.md
+  - .github/skills/spectra-archive/SKILL.md
+  - src/presentation/view-models/product.ts
+  - .github/skills/spectra-discuss/SKILL.md
+  - next-env.d.ts
+  - test/setup.ts
+  - profiles/fixed/CPU.20260419.063326.71970.0.001.cpuprofile
+  - .nvmrc
+  - components/products/product-grid.tsx
+  - src/domain/payment/status.ts
+  - .github/prompts/spectra-apply.prompt.md
+  - .opencode/commands/spectra-ask.md
+  - profiles/CPU.20260419.062500.60544.0.001.cpuprofile
+  - .github/skills/spectra-audit/SKILL.md
+  - src/domain/order/commands.ts
+  - src/infrastructure/event-store/postgres-event-store.ts
+  - .opencode/commands/spectra-discuss.md
+  - components/checkout/checkout-action.tsx
+  - src/domain/inventory/commands.ts
+  - src/infrastructure/catalog/postgres-catalog-repository.ts
+  - src/application/payment/payment-compensation.ts
+  - .opencode/commands/spectra-ingest.md
+  - app/api/internal/checkout-intents/[checkoutIntentId]/complete-demo/route.ts
+  - scripts/reset-dev-db.ts
+  - src/ports/checkout-demo-repository.ts
+  - frontend/design-pattern.html
+  - src/domain/events/event-metadata.ts
+  - .github/skills/spectra-propose/SKILL.md
+  - .github/prompts/spectra-debug.prompt.md
+  - components/checkout/product-detail-page.tsx
+  - src/application/projections/process-projections.ts
+  - src/infrastructure/catalog/static-catalog-repository.ts
+  - src/infrastructure/catalog/catalog-row-mapper.ts
+  - src/domain/events/domain-event.ts
+  - src/ports/id-generator.ts
+  - src/ports/clock.ts
+  - src/ports/catalog-repository.ts
+  - .opencode/skills/spectra-audit/SKILL.md
+tests:
+  - src/domain/schema-rules.test.ts
+  - src/application/checkout/create-checkout-intent.test.ts
+  - src/domain/inventory/sku-inventory-aggregate.test.ts
+  - src/application/payment/payment-compensation.test.ts
+  - src/application/projections/process-projections.test.ts
+  - src/application/inventory/reserve-inventory.test.ts
+  - app/page.test.tsx
+  - src/infrastructure/catalog/postgres-catalog-repository.test.ts
+  - src/application/checkout-saga/checkout-reservation-saga.test.ts
+-->
+
+---
+### Requirement: Projection Read Models
+
+The system SHALL expose client and SSR reads through projection tables rather than replaying raw events per request. The system SHALL maintain projections for SKU inventory, checkout intent status, and order state.
+
+#### Scenario: Projection schema is created
+
+- **WHEN** database migrations run
+- **THEN** the system SHALL create `checkout_intent_projection`, `sku_inventory_projection`, `order_projection`, and `projection_checkpoint`
+
+#### Scenario: Checkout intent projection stores status
+
+- **WHEN** a checkout intent projection row is written
+- **THEN** the row SHALL include `checkout_intent_id`, `aggregate_version`, `last_event_id`, `buyer_id`, `status`, `items`, optional `payment_id`, optional `order_id`, optional rejection or cancellation reason, `created_at`, and `updated_at`
+
+#### Scenario: Checkout intent status is constrained
+
+- **WHEN** a checkout intent projection row is written
+- **THEN** `status` SHALL be one of `queued`, `reserving`, `reserved`, `pending_payment`, `confirmed`, `rejected`, `cancelled`, or `expired`
+
+#### Scenario: SKU inventory projection stores inventory counters
+
+- **WHEN** a SKU inventory projection row is written
+- **THEN** the row SHALL include `sku_id`, `aggregate_version`, `last_event_id`, `on_hand`, `reserved`, `sold`, `available`, and `updated_at`
+
+#### Scenario: Order projection stores order state
+
+- **WHEN** an order projection row is written
+- **THEN** the row SHALL include `order_id`, `aggregate_version`, `last_event_id`, `checkout_intent_id`, `buyer_id`, `status`, `payment_status`, `items`, `total_amount_minor`, `created_at`, and `updated_at`
+
+#### Scenario: Order status is constrained
+
+- **WHEN** an order projection row is written
+- **THEN** `status` SHALL be one of `pending_payment`, `confirmed`, or `cancelled`
+
+#### Scenario: Payment status is constrained
+
+- **WHEN** an order projection row is written
+- **THEN** `payment_status` SHALL be one of `not_requested`, `requested`, `succeeded`, `failed`, or `timeout`
+
+#### Scenario: Checkout intent status transition is valid
+
+- **WHEN** checkout intent projection status changes
+- **THEN** the transition SHALL follow `queued` to `reserving`, `reserving` to `reserved` or `rejected`, `reserved` to `pending_payment`, and `pending_payment` to `confirmed`, `cancelled`, or `expired`
+
+#### Scenario: Order status transition is valid
+
+- **WHEN** order projection status changes
+- **THEN** the transition SHALL follow `pending_payment` to `confirmed` or `cancelled`
+
+#### Scenario: Payment status transition is valid
+
+- **WHEN** payment status changes
+- **THEN** the transition SHALL follow `not_requested` to `requested`, and `requested` to `succeeded`, `failed`, or `timeout`
+
+#### Scenario: Inventory counters stay consistent
+
+- **WHEN** inventory projection counters are updated
+- **THEN** `reserved`, `sold`, and `available` SHALL NOT become negative, and `available` SHALL equal `on_hand - reserved - sold`
+
+#### Scenario: Projection checkpoint stores progress
+
+- **WHEN** a projection batch completes
+- **THEN** the system SHALL update `projection_checkpoint` with `projection_name`, `last_event_id`, and `updated_at`
+
+#### Scenario: Projection row records its source event
+
+- **WHEN** an aggregate projection row is updated from an event
+- **THEN** the row SHALL store the source event's `aggregate_version` and global `event_store.id` as `last_event_id`
+
+#### Scenario: Worker resumes from checkpoint
+
+- **WHEN** a projection worker restarts
+- **THEN** the worker SHALL read `projection_checkpoint.last_event_id` and continue scanning the shared `event_store` from the next global event id
+
+#### Scenario: Client polls checkout intent status
+
+- **WHEN** the client requests the status for an intent
+- **THEN** the API SHALL read `checkout_intent_projection` and return the current status
+
+#### Scenario: Client polls remaining inventory
+
+- **WHEN** the client requests remaining inventory for a SKU
+- **THEN** the API SHALL read `sku_inventory_projection` and return the current available quantity
+
+
+<!-- @trace
+source: add-event-sourced-buy-flow
+updated: 2026-04-19
+code:
+  - .github/prompts/spectra-audit.prompt.md
+  - app/api/internal/projections/process/route.ts
+  - src/domain/checkout/status.ts
+  - .opencode/skills/spectra-ingest/SKILL.md
+  - .opencode/commands/spectra-debug.md
+  - src/application/admin/get-admin-dashboard.ts
+  - src/application/catalog/get-products.ts
+  - .opencode/skills/spectra-archive/SKILL.md
+  - db/schema.ts
+  - src/domain/schema-rules.ts
+  - profiles/CPU.20260419.062459.59977.0.001.cpuprofile
+  - app/api/skus/[skuId]/inventory/route.ts
+  - src/domain/payment/commands.ts
+  - src/domain/checkout/item.ts
+  - src/presentation/view-models/admin-dashboard.ts
+  - src/infrastructure/projections/postgres-projection-writer.ts
+  - app/page.tsx
+  - app/layout.tsx
+  - .opencode/skills/spectra-apply/SKILL.md
+  - app/internal/benchmarks/page.tsx
+  - AGENTS.md
+  - db/client.ts
+  - scripts/benchmark-checkout-postgres.ts
+  - scripts/seed-dev-catalog.ts
+  - src/application/checkout/create-checkout-intent.ts
+  - .github/prompts/spectra-ask.prompt.md
+  - app/products/page.tsx
+  - components/admin/admin-dashboard.tsx
+  - db/migrations/meta/_journal.json
+  - src/infrastructure/admin/index.ts
+  - .github/prompts/spectra-ingest.prompt.md
+  - .opencode/skills/spectra-propose/SKILL.md
+  - app/globals.css
+  - .github/skills/spectra-debug/SKILL.md
+  - src/application/checkout/complete-demo-checkout.ts
+  - next.config.ts
+  - src/presentation/api/checkout-intent-contracts.ts
+  - frontend/checkout-preview.html
+  - src/application/checkout-saga/checkout-reservation-saga.ts
+  - src/domain/inventory/sku-inventory-aggregate.ts
+  - src/ports/admin-dashboard-repository.ts
+  - src/domain/checkout/commands.ts
+  - src/domain/catalog/product.ts
+  - .github/skills/spectra-ingest/SKILL.md
+  - .github/prompts/spectra-archive.prompt.md
+  - .opencode/commands/spectra-audit.md
+  - .github/skills/spectra-apply/SKILL.md
+  - CLAUDE.md
+  - components/products/products-page-content.tsx
+  - dependency-cruiser.config.cjs
+  - .opencode/skills/spectra-discuss/SKILL.md
+  - drizzle.config.ts
+  - package.json
+  - scripts/run-checkout-postgres-benchmark.ts
+  - src/domain/events/event-type.ts
+  - .opencode/commands/spectra-apply.md
+  - app/api/internal/admin/dashboard/route.ts
+  - db/migrations/0000_kind_galactus.sql
+  - components/products/product-card.tsx
+  - src/domain/order/status.ts
+  - .opencode/skills/spectra-debug/SKILL.md
+  - app/internal/admin/page.tsx
+  - src/infrastructure/projections/postgres-projection-repository.ts
+  - tsconfig.json
+  - GEMINI.md
+  - .github/skills/spectra-ask/SKILL.md
+  - db/migrations/meta/0000_snapshot.json
+  - docker-compose.yml
+  - .opencode/commands/spectra-propose.md
+  - app/products/[slug]/page.tsx
+  - app/checkout-complete/[checkoutIntentId]/page.tsx
+  - .spectra.yaml
+  - src/ports/event-store.ts
+  - scripts/run-checkout-postgres-sweep.ts
+  - .github/prompts/spectra-discuss.prompt.md
+  - src/infrastructure/projections/index.ts
+  - app/api/checkout-intents/[checkoutIntentId]/route.ts
+  - .opencode/skills/spectra-ask/SKILL.md
+  - src/presentation/api/request-context.ts
+  - app/api/checkout-intents/route.ts
+  - vitest.config.ts
+  - profiles/fixed/CPU.20260419.063326.71427.0.001.cpuprofile
+  - src/infrastructure/catalog/index.ts
+  - src/application/inventory/reserve-inventory.ts
+  - biome.json
+  - .npmrc
+  - .env.example
+  - src/infrastructure/admin/postgres-admin-dashboard.ts
+  - src/infrastructure/checkout-demo/index.ts
+  - src/infrastructure/checkout-demo/postgres-checkout-demo-repository.ts
+  - src/infrastructure/event-store/index.ts
+  - .github/prompts/spectra-propose.prompt.md
+  - src/ports/projection-repository.ts
+  - .opencode/commands/spectra-archive.md
+  - .github/skills/spectra-archive/SKILL.md
+  - src/presentation/view-models/product.ts
+  - .github/skills/spectra-discuss/SKILL.md
+  - next-env.d.ts
+  - test/setup.ts
+  - profiles/fixed/CPU.20260419.063326.71970.0.001.cpuprofile
+  - .nvmrc
+  - components/products/product-grid.tsx
+  - src/domain/payment/status.ts
+  - .github/prompts/spectra-apply.prompt.md
+  - .opencode/commands/spectra-ask.md
+  - profiles/CPU.20260419.062500.60544.0.001.cpuprofile
+  - .github/skills/spectra-audit/SKILL.md
+  - src/domain/order/commands.ts
+  - src/infrastructure/event-store/postgres-event-store.ts
+  - .opencode/commands/spectra-discuss.md
+  - components/checkout/checkout-action.tsx
+  - src/domain/inventory/commands.ts
+  - src/infrastructure/catalog/postgres-catalog-repository.ts
+  - src/application/payment/payment-compensation.ts
+  - .opencode/commands/spectra-ingest.md
+  - app/api/internal/checkout-intents/[checkoutIntentId]/complete-demo/route.ts
+  - scripts/reset-dev-db.ts
+  - src/ports/checkout-demo-repository.ts
+  - frontend/design-pattern.html
+  - src/domain/events/event-metadata.ts
+  - .github/skills/spectra-propose/SKILL.md
+  - .github/prompts/spectra-debug.prompt.md
+  - components/checkout/product-detail-page.tsx
+  - src/application/projections/process-projections.ts
+  - src/infrastructure/catalog/static-catalog-repository.ts
+  - src/infrastructure/catalog/catalog-row-mapper.ts
+  - src/domain/events/domain-event.ts
+  - src/ports/id-generator.ts
+  - src/ports/clock.ts
+  - src/ports/catalog-repository.ts
+  - .opencode/skills/spectra-audit/SKILL.md
+tests:
+  - src/domain/schema-rules.test.ts
+  - src/application/checkout/create-checkout-intent.test.ts
+  - src/domain/inventory/sku-inventory-aggregate.test.ts
+  - src/application/payment/payment-compensation.test.ts
+  - src/application/projections/process-projections.test.ts
+  - src/application/inventory/reserve-inventory.test.ts
+  - app/page.test.tsx
+  - src/infrastructure/catalog/postgres-catalog-repository.test.ts
+  - src/application/checkout-saga/checkout-reservation-saga.test.ts
+-->
+
+---
+### Requirement: Projection Processing Coordination
+
+The system SHALL ensure only one projection processor applies a projection batch at a time for a given projection. The initial implementation SHALL coordinate multiple Next.js instances using PostgreSQL transaction-level advisory locks and projection checkpoints.
+
+#### Scenario: Multiple servers process projections
+
+- **WHEN** two Next.js instances attempt to process the same projection batch at the same time
+- **THEN** only one instance SHALL acquire the projection lock and update the checkpoint
+
+
+<!-- @trace
+source: add-event-sourced-buy-flow
+updated: 2026-04-19
+code:
+  - .github/prompts/spectra-audit.prompt.md
+  - app/api/internal/projections/process/route.ts
+  - src/domain/checkout/status.ts
+  - .opencode/skills/spectra-ingest/SKILL.md
+  - .opencode/commands/spectra-debug.md
+  - src/application/admin/get-admin-dashboard.ts
+  - src/application/catalog/get-products.ts
+  - .opencode/skills/spectra-archive/SKILL.md
+  - db/schema.ts
+  - src/domain/schema-rules.ts
+  - profiles/CPU.20260419.062459.59977.0.001.cpuprofile
+  - app/api/skus/[skuId]/inventory/route.ts
+  - src/domain/payment/commands.ts
+  - src/domain/checkout/item.ts
+  - src/presentation/view-models/admin-dashboard.ts
+  - src/infrastructure/projections/postgres-projection-writer.ts
+  - app/page.tsx
+  - app/layout.tsx
+  - .opencode/skills/spectra-apply/SKILL.md
+  - app/internal/benchmarks/page.tsx
+  - AGENTS.md
+  - db/client.ts
+  - scripts/benchmark-checkout-postgres.ts
+  - scripts/seed-dev-catalog.ts
+  - src/application/checkout/create-checkout-intent.ts
+  - .github/prompts/spectra-ask.prompt.md
+  - app/products/page.tsx
+  - components/admin/admin-dashboard.tsx
+  - db/migrations/meta/_journal.json
+  - src/infrastructure/admin/index.ts
+  - .github/prompts/spectra-ingest.prompt.md
+  - .opencode/skills/spectra-propose/SKILL.md
+  - app/globals.css
+  - .github/skills/spectra-debug/SKILL.md
+  - src/application/checkout/complete-demo-checkout.ts
+  - next.config.ts
+  - src/presentation/api/checkout-intent-contracts.ts
+  - frontend/checkout-preview.html
+  - src/application/checkout-saga/checkout-reservation-saga.ts
+  - src/domain/inventory/sku-inventory-aggregate.ts
+  - src/ports/admin-dashboard-repository.ts
+  - src/domain/checkout/commands.ts
+  - src/domain/catalog/product.ts
+  - .github/skills/spectra-ingest/SKILL.md
+  - .github/prompts/spectra-archive.prompt.md
+  - .opencode/commands/spectra-audit.md
+  - .github/skills/spectra-apply/SKILL.md
+  - CLAUDE.md
+  - components/products/products-page-content.tsx
+  - dependency-cruiser.config.cjs
+  - .opencode/skills/spectra-discuss/SKILL.md
+  - drizzle.config.ts
+  - package.json
+  - scripts/run-checkout-postgres-benchmark.ts
+  - src/domain/events/event-type.ts
+  - .opencode/commands/spectra-apply.md
+  - app/api/internal/admin/dashboard/route.ts
+  - db/migrations/0000_kind_galactus.sql
+  - components/products/product-card.tsx
+  - src/domain/order/status.ts
+  - .opencode/skills/spectra-debug/SKILL.md
+  - app/internal/admin/page.tsx
+  - src/infrastructure/projections/postgres-projection-repository.ts
+  - tsconfig.json
+  - GEMINI.md
+  - .github/skills/spectra-ask/SKILL.md
+  - db/migrations/meta/0000_snapshot.json
+  - docker-compose.yml
+  - .opencode/commands/spectra-propose.md
+  - app/products/[slug]/page.tsx
+  - app/checkout-complete/[checkoutIntentId]/page.tsx
+  - .spectra.yaml
+  - src/ports/event-store.ts
+  - scripts/run-checkout-postgres-sweep.ts
+  - .github/prompts/spectra-discuss.prompt.md
+  - src/infrastructure/projections/index.ts
+  - app/api/checkout-intents/[checkoutIntentId]/route.ts
+  - .opencode/skills/spectra-ask/SKILL.md
+  - src/presentation/api/request-context.ts
+  - app/api/checkout-intents/route.ts
+  - vitest.config.ts
+  - profiles/fixed/CPU.20260419.063326.71427.0.001.cpuprofile
+  - src/infrastructure/catalog/index.ts
+  - src/application/inventory/reserve-inventory.ts
+  - biome.json
+  - .npmrc
+  - .env.example
+  - src/infrastructure/admin/postgres-admin-dashboard.ts
+  - src/infrastructure/checkout-demo/index.ts
+  - src/infrastructure/checkout-demo/postgres-checkout-demo-repository.ts
+  - src/infrastructure/event-store/index.ts
+  - .github/prompts/spectra-propose.prompt.md
+  - src/ports/projection-repository.ts
+  - .opencode/commands/spectra-archive.md
+  - .github/skills/spectra-archive/SKILL.md
+  - src/presentation/view-models/product.ts
+  - .github/skills/spectra-discuss/SKILL.md
+  - next-env.d.ts
+  - test/setup.ts
+  - profiles/fixed/CPU.20260419.063326.71970.0.001.cpuprofile
+  - .nvmrc
+  - components/products/product-grid.tsx
+  - src/domain/payment/status.ts
+  - .github/prompts/spectra-apply.prompt.md
+  - .opencode/commands/spectra-ask.md
+  - profiles/CPU.20260419.062500.60544.0.001.cpuprofile
+  - .github/skills/spectra-audit/SKILL.md
+  - src/domain/order/commands.ts
+  - src/infrastructure/event-store/postgres-event-store.ts
+  - .opencode/commands/spectra-discuss.md
+  - components/checkout/checkout-action.tsx
+  - src/domain/inventory/commands.ts
+  - src/infrastructure/catalog/postgres-catalog-repository.ts
+  - src/application/payment/payment-compensation.ts
+  - .opencode/commands/spectra-ingest.md
+  - app/api/internal/checkout-intents/[checkoutIntentId]/complete-demo/route.ts
+  - scripts/reset-dev-db.ts
+  - src/ports/checkout-demo-repository.ts
+  - frontend/design-pattern.html
+  - src/domain/events/event-metadata.ts
+  - .github/skills/spectra-propose/SKILL.md
+  - .github/prompts/spectra-debug.prompt.md
+  - components/checkout/product-detail-page.tsx
+  - src/application/projections/process-projections.ts
+  - src/infrastructure/catalog/static-catalog-repository.ts
+  - src/infrastructure/catalog/catalog-row-mapper.ts
+  - src/domain/events/domain-event.ts
+  - src/ports/id-generator.ts
+  - src/ports/clock.ts
+  - src/ports/catalog-repository.ts
+  - .opencode/skills/spectra-audit/SKILL.md
+tests:
+  - src/domain/schema-rules.test.ts
+  - src/application/checkout/create-checkout-intent.test.ts
+  - src/domain/inventory/sku-inventory-aggregate.test.ts
+  - src/application/payment/payment-compensation.test.ts
+  - src/application/projections/process-projections.test.ts
+  - src/application/inventory/reserve-inventory.test.ts
+  - app/page.test.tsx
+  - src/infrastructure/catalog/postgres-catalog-repository.test.ts
+  - src/application/checkout-saga/checkout-reservation-saga.test.ts
+-->
+
+---
+### Requirement: Inventory Reservation Outcome
+
+The system SHALL convert checkout intents into inventory outcomes asynchronously. A checkout intent SHALL eventually become reserved, rejected, cancelled, expired, or confirmed.
+
+#### Scenario: Inventory is available
+
+- **WHEN** a checkout item is processed and sufficient SKU inventory is available
+- **THEN** the system SHALL append `InventoryReserved` and update the checkout intent projection to a reserved or pending payment state when all required items are reserved
+
+#### Scenario: Inventory is unavailable
+
+- **WHEN** a checkout item is processed and sufficient SKU inventory is unavailable
+- **THEN** the system SHALL append `InventoryReservationRejected` and update the checkout intent projection to rejected after releasing any already reserved items
+
+
+<!-- @trace
+source: add-event-sourced-buy-flow
+updated: 2026-04-19
+code:
+  - .github/prompts/spectra-audit.prompt.md
+  - app/api/internal/projections/process/route.ts
+  - src/domain/checkout/status.ts
+  - .opencode/skills/spectra-ingest/SKILL.md
+  - .opencode/commands/spectra-debug.md
+  - src/application/admin/get-admin-dashboard.ts
+  - src/application/catalog/get-products.ts
+  - .opencode/skills/spectra-archive/SKILL.md
+  - db/schema.ts
+  - src/domain/schema-rules.ts
+  - profiles/CPU.20260419.062459.59977.0.001.cpuprofile
+  - app/api/skus/[skuId]/inventory/route.ts
+  - src/domain/payment/commands.ts
+  - src/domain/checkout/item.ts
+  - src/presentation/view-models/admin-dashboard.ts
+  - src/infrastructure/projections/postgres-projection-writer.ts
+  - app/page.tsx
+  - app/layout.tsx
+  - .opencode/skills/spectra-apply/SKILL.md
+  - app/internal/benchmarks/page.tsx
+  - AGENTS.md
+  - db/client.ts
+  - scripts/benchmark-checkout-postgres.ts
+  - scripts/seed-dev-catalog.ts
+  - src/application/checkout/create-checkout-intent.ts
+  - .github/prompts/spectra-ask.prompt.md
+  - app/products/page.tsx
+  - components/admin/admin-dashboard.tsx
+  - db/migrations/meta/_journal.json
+  - src/infrastructure/admin/index.ts
+  - .github/prompts/spectra-ingest.prompt.md
+  - .opencode/skills/spectra-propose/SKILL.md
+  - app/globals.css
+  - .github/skills/spectra-debug/SKILL.md
+  - src/application/checkout/complete-demo-checkout.ts
+  - next.config.ts
+  - src/presentation/api/checkout-intent-contracts.ts
+  - frontend/checkout-preview.html
+  - src/application/checkout-saga/checkout-reservation-saga.ts
+  - src/domain/inventory/sku-inventory-aggregate.ts
+  - src/ports/admin-dashboard-repository.ts
+  - src/domain/checkout/commands.ts
+  - src/domain/catalog/product.ts
+  - .github/skills/spectra-ingest/SKILL.md
+  - .github/prompts/spectra-archive.prompt.md
+  - .opencode/commands/spectra-audit.md
+  - .github/skills/spectra-apply/SKILL.md
+  - CLAUDE.md
+  - components/products/products-page-content.tsx
+  - dependency-cruiser.config.cjs
+  - .opencode/skills/spectra-discuss/SKILL.md
+  - drizzle.config.ts
+  - package.json
+  - scripts/run-checkout-postgres-benchmark.ts
+  - src/domain/events/event-type.ts
+  - .opencode/commands/spectra-apply.md
+  - app/api/internal/admin/dashboard/route.ts
+  - db/migrations/0000_kind_galactus.sql
+  - components/products/product-card.tsx
+  - src/domain/order/status.ts
+  - .opencode/skills/spectra-debug/SKILL.md
+  - app/internal/admin/page.tsx
+  - src/infrastructure/projections/postgres-projection-repository.ts
+  - tsconfig.json
+  - GEMINI.md
+  - .github/skills/spectra-ask/SKILL.md
+  - db/migrations/meta/0000_snapshot.json
+  - docker-compose.yml
+  - .opencode/commands/spectra-propose.md
+  - app/products/[slug]/page.tsx
+  - app/checkout-complete/[checkoutIntentId]/page.tsx
+  - .spectra.yaml
+  - src/ports/event-store.ts
+  - scripts/run-checkout-postgres-sweep.ts
+  - .github/prompts/spectra-discuss.prompt.md
+  - src/infrastructure/projections/index.ts
+  - app/api/checkout-intents/[checkoutIntentId]/route.ts
+  - .opencode/skills/spectra-ask/SKILL.md
+  - src/presentation/api/request-context.ts
+  - app/api/checkout-intents/route.ts
+  - vitest.config.ts
+  - profiles/fixed/CPU.20260419.063326.71427.0.001.cpuprofile
+  - src/infrastructure/catalog/index.ts
+  - src/application/inventory/reserve-inventory.ts
+  - biome.json
+  - .npmrc
+  - .env.example
+  - src/infrastructure/admin/postgres-admin-dashboard.ts
+  - src/infrastructure/checkout-demo/index.ts
+  - src/infrastructure/checkout-demo/postgres-checkout-demo-repository.ts
+  - src/infrastructure/event-store/index.ts
+  - .github/prompts/spectra-propose.prompt.md
+  - src/ports/projection-repository.ts
+  - .opencode/commands/spectra-archive.md
+  - .github/skills/spectra-archive/SKILL.md
+  - src/presentation/view-models/product.ts
+  - .github/skills/spectra-discuss/SKILL.md
+  - next-env.d.ts
+  - test/setup.ts
+  - profiles/fixed/CPU.20260419.063326.71970.0.001.cpuprofile
+  - .nvmrc
+  - components/products/product-grid.tsx
+  - src/domain/payment/status.ts
+  - .github/prompts/spectra-apply.prompt.md
+  - .opencode/commands/spectra-ask.md
+  - profiles/CPU.20260419.062500.60544.0.001.cpuprofile
+  - .github/skills/spectra-audit/SKILL.md
+  - src/domain/order/commands.ts
+  - src/infrastructure/event-store/postgres-event-store.ts
+  - .opencode/commands/spectra-discuss.md
+  - components/checkout/checkout-action.tsx
+  - src/domain/inventory/commands.ts
+  - src/infrastructure/catalog/postgres-catalog-repository.ts
+  - src/application/payment/payment-compensation.ts
+  - .opencode/commands/spectra-ingest.md
+  - app/api/internal/checkout-intents/[checkoutIntentId]/complete-demo/route.ts
+  - scripts/reset-dev-db.ts
+  - src/ports/checkout-demo-repository.ts
+  - frontend/design-pattern.html
+  - src/domain/events/event-metadata.ts
+  - .github/skills/spectra-propose/SKILL.md
+  - .github/prompts/spectra-debug.prompt.md
+  - components/checkout/product-detail-page.tsx
+  - src/application/projections/process-projections.ts
+  - src/infrastructure/catalog/static-catalog-repository.ts
+  - src/infrastructure/catalog/catalog-row-mapper.ts
+  - src/domain/events/domain-event.ts
+  - src/ports/id-generator.ts
+  - src/ports/clock.ts
+  - src/ports/catalog-repository.ts
+  - .opencode/skills/spectra-audit/SKILL.md
+tests:
+  - src/domain/schema-rules.test.ts
+  - src/application/checkout/create-checkout-intent.test.ts
+  - src/domain/inventory/sku-inventory-aggregate.test.ts
+  - src/application/payment/payment-compensation.test.ts
+  - src/application/projections/process-projections.test.ts
+  - src/application/inventory/reserve-inventory.test.ts
+  - app/page.test.tsx
+  - src/infrastructure/catalog/postgres-catalog-repository.test.ts
+  - src/application/checkout-saga/checkout-reservation-saga.test.ts
+-->
+
+---
+### Requirement: Multi-SKU Checkout Saga
+
+The system SHALL coordinate multi-SKU checkout through a Saga. The Saga SHALL request reservations per SKU, SHALL proceed to payment only when all items are reserved, and SHALL release already reserved inventory when any required item is rejected.
+
+#### Scenario: All cart items reserve successfully
+
+- **WHEN** every item in a checkout intent is reserved
+- **THEN** the system SHALL append a payment request event and move the checkout intent to pending payment
+
+#### Scenario: One cart item fails reservation
+
+- **WHEN** any item in a checkout intent is rejected
+- **THEN** the system SHALL append release events for already reserved items and move the checkout intent to rejected
+
+
+<!-- @trace
+source: add-event-sourced-buy-flow
+updated: 2026-04-19
+code:
+  - .github/prompts/spectra-audit.prompt.md
+  - app/api/internal/projections/process/route.ts
+  - src/domain/checkout/status.ts
+  - .opencode/skills/spectra-ingest/SKILL.md
+  - .opencode/commands/spectra-debug.md
+  - src/application/admin/get-admin-dashboard.ts
+  - src/application/catalog/get-products.ts
+  - .opencode/skills/spectra-archive/SKILL.md
+  - db/schema.ts
+  - src/domain/schema-rules.ts
+  - profiles/CPU.20260419.062459.59977.0.001.cpuprofile
+  - app/api/skus/[skuId]/inventory/route.ts
+  - src/domain/payment/commands.ts
+  - src/domain/checkout/item.ts
+  - src/presentation/view-models/admin-dashboard.ts
+  - src/infrastructure/projections/postgres-projection-writer.ts
+  - app/page.tsx
+  - app/layout.tsx
+  - .opencode/skills/spectra-apply/SKILL.md
+  - app/internal/benchmarks/page.tsx
+  - AGENTS.md
+  - db/client.ts
+  - scripts/benchmark-checkout-postgres.ts
+  - scripts/seed-dev-catalog.ts
+  - src/application/checkout/create-checkout-intent.ts
+  - .github/prompts/spectra-ask.prompt.md
+  - app/products/page.tsx
+  - components/admin/admin-dashboard.tsx
+  - db/migrations/meta/_journal.json
+  - src/infrastructure/admin/index.ts
+  - .github/prompts/spectra-ingest.prompt.md
+  - .opencode/skills/spectra-propose/SKILL.md
+  - app/globals.css
+  - .github/skills/spectra-debug/SKILL.md
+  - src/application/checkout/complete-demo-checkout.ts
+  - next.config.ts
+  - src/presentation/api/checkout-intent-contracts.ts
+  - frontend/checkout-preview.html
+  - src/application/checkout-saga/checkout-reservation-saga.ts
+  - src/domain/inventory/sku-inventory-aggregate.ts
+  - src/ports/admin-dashboard-repository.ts
+  - src/domain/checkout/commands.ts
+  - src/domain/catalog/product.ts
+  - .github/skills/spectra-ingest/SKILL.md
+  - .github/prompts/spectra-archive.prompt.md
+  - .opencode/commands/spectra-audit.md
+  - .github/skills/spectra-apply/SKILL.md
+  - CLAUDE.md
+  - components/products/products-page-content.tsx
+  - dependency-cruiser.config.cjs
+  - .opencode/skills/spectra-discuss/SKILL.md
+  - drizzle.config.ts
+  - package.json
+  - scripts/run-checkout-postgres-benchmark.ts
+  - src/domain/events/event-type.ts
+  - .opencode/commands/spectra-apply.md
+  - app/api/internal/admin/dashboard/route.ts
+  - db/migrations/0000_kind_galactus.sql
+  - components/products/product-card.tsx
+  - src/domain/order/status.ts
+  - .opencode/skills/spectra-debug/SKILL.md
+  - app/internal/admin/page.tsx
+  - src/infrastructure/projections/postgres-projection-repository.ts
+  - tsconfig.json
+  - GEMINI.md
+  - .github/skills/spectra-ask/SKILL.md
+  - db/migrations/meta/0000_snapshot.json
+  - docker-compose.yml
+  - .opencode/commands/spectra-propose.md
+  - app/products/[slug]/page.tsx
+  - app/checkout-complete/[checkoutIntentId]/page.tsx
+  - .spectra.yaml
+  - src/ports/event-store.ts
+  - scripts/run-checkout-postgres-sweep.ts
+  - .github/prompts/spectra-discuss.prompt.md
+  - src/infrastructure/projections/index.ts
+  - app/api/checkout-intents/[checkoutIntentId]/route.ts
+  - .opencode/skills/spectra-ask/SKILL.md
+  - src/presentation/api/request-context.ts
+  - app/api/checkout-intents/route.ts
+  - vitest.config.ts
+  - profiles/fixed/CPU.20260419.063326.71427.0.001.cpuprofile
+  - src/infrastructure/catalog/index.ts
+  - src/application/inventory/reserve-inventory.ts
+  - biome.json
+  - .npmrc
+  - .env.example
+  - src/infrastructure/admin/postgres-admin-dashboard.ts
+  - src/infrastructure/checkout-demo/index.ts
+  - src/infrastructure/checkout-demo/postgres-checkout-demo-repository.ts
+  - src/infrastructure/event-store/index.ts
+  - .github/prompts/spectra-propose.prompt.md
+  - src/ports/projection-repository.ts
+  - .opencode/commands/spectra-archive.md
+  - .github/skills/spectra-archive/SKILL.md
+  - src/presentation/view-models/product.ts
+  - .github/skills/spectra-discuss/SKILL.md
+  - next-env.d.ts
+  - test/setup.ts
+  - profiles/fixed/CPU.20260419.063326.71970.0.001.cpuprofile
+  - .nvmrc
+  - components/products/product-grid.tsx
+  - src/domain/payment/status.ts
+  - .github/prompts/spectra-apply.prompt.md
+  - .opencode/commands/spectra-ask.md
+  - profiles/CPU.20260419.062500.60544.0.001.cpuprofile
+  - .github/skills/spectra-audit/SKILL.md
+  - src/domain/order/commands.ts
+  - src/infrastructure/event-store/postgres-event-store.ts
+  - .opencode/commands/spectra-discuss.md
+  - components/checkout/checkout-action.tsx
+  - src/domain/inventory/commands.ts
+  - src/infrastructure/catalog/postgres-catalog-repository.ts
+  - src/application/payment/payment-compensation.ts
+  - .opencode/commands/spectra-ingest.md
+  - app/api/internal/checkout-intents/[checkoutIntentId]/complete-demo/route.ts
+  - scripts/reset-dev-db.ts
+  - src/ports/checkout-demo-repository.ts
+  - frontend/design-pattern.html
+  - src/domain/events/event-metadata.ts
+  - .github/skills/spectra-propose/SKILL.md
+  - .github/prompts/spectra-debug.prompt.md
+  - components/checkout/product-detail-page.tsx
+  - src/application/projections/process-projections.ts
+  - src/infrastructure/catalog/static-catalog-repository.ts
+  - src/infrastructure/catalog/catalog-row-mapper.ts
+  - src/domain/events/domain-event.ts
+  - src/ports/id-generator.ts
+  - src/ports/clock.ts
+  - src/ports/catalog-repository.ts
+  - .opencode/skills/spectra-audit/SKILL.md
+tests:
+  - src/domain/schema-rules.test.ts
+  - src/application/checkout/create-checkout-intent.test.ts
+  - src/domain/inventory/sku-inventory-aggregate.test.ts
+  - src/application/payment/payment-compensation.test.ts
+  - src/application/projections/process-projections.test.ts
+  - src/application/inventory/reserve-inventory.test.ts
+  - app/page.test.tsx
+  - src/infrastructure/catalog/postgres-catalog-repository.test.ts
+  - src/application/checkout-saga/checkout-reservation-saga.test.ts
+-->
+
+---
+### Requirement: Aggregate Root Invariants
+
+The system SHALL enforce local consistency rules through aggregate roots before appending state-changing events. SKU, checkout, order, and payment aggregates SHALL each own their local invariants.
+
+#### Scenario: SKU reservation command is handled
+
+- **WHEN** the system attempts to reserve SKU inventory
+- **THEN** the SKU aggregate root SHALL validate available inventory and duplicate reservation rules before `InventoryReserved` is appended
+
+#### Scenario: Checkout saga advances state
+
+- **WHEN** reservation outcomes arrive for a checkout intent
+- **THEN** the checkout aggregate root SHALL validate the next checkout state before payment or rejection events are appended
+
+
+<!-- @trace
+source: add-event-sourced-buy-flow
+updated: 2026-04-19
+code:
+  - .github/prompts/spectra-audit.prompt.md
+  - app/api/internal/projections/process/route.ts
+  - src/domain/checkout/status.ts
+  - .opencode/skills/spectra-ingest/SKILL.md
+  - .opencode/commands/spectra-debug.md
+  - src/application/admin/get-admin-dashboard.ts
+  - src/application/catalog/get-products.ts
+  - .opencode/skills/spectra-archive/SKILL.md
+  - db/schema.ts
+  - src/domain/schema-rules.ts
+  - profiles/CPU.20260419.062459.59977.0.001.cpuprofile
+  - app/api/skus/[skuId]/inventory/route.ts
+  - src/domain/payment/commands.ts
+  - src/domain/checkout/item.ts
+  - src/presentation/view-models/admin-dashboard.ts
+  - src/infrastructure/projections/postgres-projection-writer.ts
+  - app/page.tsx
+  - app/layout.tsx
+  - .opencode/skills/spectra-apply/SKILL.md
+  - app/internal/benchmarks/page.tsx
+  - AGENTS.md
+  - db/client.ts
+  - scripts/benchmark-checkout-postgres.ts
+  - scripts/seed-dev-catalog.ts
+  - src/application/checkout/create-checkout-intent.ts
+  - .github/prompts/spectra-ask.prompt.md
+  - app/products/page.tsx
+  - components/admin/admin-dashboard.tsx
+  - db/migrations/meta/_journal.json
+  - src/infrastructure/admin/index.ts
+  - .github/prompts/spectra-ingest.prompt.md
+  - .opencode/skills/spectra-propose/SKILL.md
+  - app/globals.css
+  - .github/skills/spectra-debug/SKILL.md
+  - src/application/checkout/complete-demo-checkout.ts
+  - next.config.ts
+  - src/presentation/api/checkout-intent-contracts.ts
+  - frontend/checkout-preview.html
+  - src/application/checkout-saga/checkout-reservation-saga.ts
+  - src/domain/inventory/sku-inventory-aggregate.ts
+  - src/ports/admin-dashboard-repository.ts
+  - src/domain/checkout/commands.ts
+  - src/domain/catalog/product.ts
+  - .github/skills/spectra-ingest/SKILL.md
+  - .github/prompts/spectra-archive.prompt.md
+  - .opencode/commands/spectra-audit.md
+  - .github/skills/spectra-apply/SKILL.md
+  - CLAUDE.md
+  - components/products/products-page-content.tsx
+  - dependency-cruiser.config.cjs
+  - .opencode/skills/spectra-discuss/SKILL.md
+  - drizzle.config.ts
+  - package.json
+  - scripts/run-checkout-postgres-benchmark.ts
+  - src/domain/events/event-type.ts
+  - .opencode/commands/spectra-apply.md
+  - app/api/internal/admin/dashboard/route.ts
+  - db/migrations/0000_kind_galactus.sql
+  - components/products/product-card.tsx
+  - src/domain/order/status.ts
+  - .opencode/skills/spectra-debug/SKILL.md
+  - app/internal/admin/page.tsx
+  - src/infrastructure/projections/postgres-projection-repository.ts
+  - tsconfig.json
+  - GEMINI.md
+  - .github/skills/spectra-ask/SKILL.md
+  - db/migrations/meta/0000_snapshot.json
+  - docker-compose.yml
+  - .opencode/commands/spectra-propose.md
+  - app/products/[slug]/page.tsx
+  - app/checkout-complete/[checkoutIntentId]/page.tsx
+  - .spectra.yaml
+  - src/ports/event-store.ts
+  - scripts/run-checkout-postgres-sweep.ts
+  - .github/prompts/spectra-discuss.prompt.md
+  - src/infrastructure/projections/index.ts
+  - app/api/checkout-intents/[checkoutIntentId]/route.ts
+  - .opencode/skills/spectra-ask/SKILL.md
+  - src/presentation/api/request-context.ts
+  - app/api/checkout-intents/route.ts
+  - vitest.config.ts
+  - profiles/fixed/CPU.20260419.063326.71427.0.001.cpuprofile
+  - src/infrastructure/catalog/index.ts
+  - src/application/inventory/reserve-inventory.ts
+  - biome.json
+  - .npmrc
+  - .env.example
+  - src/infrastructure/admin/postgres-admin-dashboard.ts
+  - src/infrastructure/checkout-demo/index.ts
+  - src/infrastructure/checkout-demo/postgres-checkout-demo-repository.ts
+  - src/infrastructure/event-store/index.ts
+  - .github/prompts/spectra-propose.prompt.md
+  - src/ports/projection-repository.ts
+  - .opencode/commands/spectra-archive.md
+  - .github/skills/spectra-archive/SKILL.md
+  - src/presentation/view-models/product.ts
+  - .github/skills/spectra-discuss/SKILL.md
+  - next-env.d.ts
+  - test/setup.ts
+  - profiles/fixed/CPU.20260419.063326.71970.0.001.cpuprofile
+  - .nvmrc
+  - components/products/product-grid.tsx
+  - src/domain/payment/status.ts
+  - .github/prompts/spectra-apply.prompt.md
+  - .opencode/commands/spectra-ask.md
+  - profiles/CPU.20260419.062500.60544.0.001.cpuprofile
+  - .github/skills/spectra-audit/SKILL.md
+  - src/domain/order/commands.ts
+  - src/infrastructure/event-store/postgres-event-store.ts
+  - .opencode/commands/spectra-discuss.md
+  - components/checkout/checkout-action.tsx
+  - src/domain/inventory/commands.ts
+  - src/infrastructure/catalog/postgres-catalog-repository.ts
+  - src/application/payment/payment-compensation.ts
+  - .opencode/commands/spectra-ingest.md
+  - app/api/internal/checkout-intents/[checkoutIntentId]/complete-demo/route.ts
+  - scripts/reset-dev-db.ts
+  - src/ports/checkout-demo-repository.ts
+  - frontend/design-pattern.html
+  - src/domain/events/event-metadata.ts
+  - .github/skills/spectra-propose/SKILL.md
+  - .github/prompts/spectra-debug.prompt.md
+  - components/checkout/product-detail-page.tsx
+  - src/application/projections/process-projections.ts
+  - src/infrastructure/catalog/static-catalog-repository.ts
+  - src/infrastructure/catalog/catalog-row-mapper.ts
+  - src/domain/events/domain-event.ts
+  - src/ports/id-generator.ts
+  - src/ports/clock.ts
+  - src/ports/catalog-repository.ts
+  - .opencode/skills/spectra-audit/SKILL.md
+tests:
+  - src/domain/schema-rules.test.ts
+  - src/application/checkout/create-checkout-intent.test.ts
+  - src/domain/inventory/sku-inventory-aggregate.test.ts
+  - src/application/payment/payment-compensation.test.ts
+  - src/application/projections/process-projections.test.ts
+  - src/application/inventory/reserve-inventory.test.ts
+  - app/page.test.tsx
+  - src/infrastructure/catalog/postgres-catalog-repository.test.ts
+  - src/application/checkout-saga/checkout-reservation-saga.test.ts
+-->
+
+---
+### Requirement: Payment Failure Compensation
+
+The system SHALL handle payment failure or timeout through compensation events. The system SHALL NOT roll back committed events when payment fails.
+
+#### Scenario: Payment fails after reservation
+
+- **WHEN** payment fails after inventory has been reserved
+- **THEN** the system SHALL append `PaymentFailed`, append `InventoryReservationReleased`, and update the order projection to cancelled
+
+#### Scenario: Payment callback is duplicated
+
+- **WHEN** the same payment failure callback is received more than once
+- **THEN** the system SHALL apply compensation at most once for the affected reservation
+
+
+<!-- @trace
+source: add-event-sourced-buy-flow
+updated: 2026-04-19
+code:
+  - .github/prompts/spectra-audit.prompt.md
+  - app/api/internal/projections/process/route.ts
+  - src/domain/checkout/status.ts
+  - .opencode/skills/spectra-ingest/SKILL.md
+  - .opencode/commands/spectra-debug.md
+  - src/application/admin/get-admin-dashboard.ts
+  - src/application/catalog/get-products.ts
+  - .opencode/skills/spectra-archive/SKILL.md
+  - db/schema.ts
+  - src/domain/schema-rules.ts
+  - profiles/CPU.20260419.062459.59977.0.001.cpuprofile
+  - app/api/skus/[skuId]/inventory/route.ts
+  - src/domain/payment/commands.ts
+  - src/domain/checkout/item.ts
+  - src/presentation/view-models/admin-dashboard.ts
+  - src/infrastructure/projections/postgres-projection-writer.ts
+  - app/page.tsx
+  - app/layout.tsx
+  - .opencode/skills/spectra-apply/SKILL.md
+  - app/internal/benchmarks/page.tsx
+  - AGENTS.md
+  - db/client.ts
+  - scripts/benchmark-checkout-postgres.ts
+  - scripts/seed-dev-catalog.ts
+  - src/application/checkout/create-checkout-intent.ts
+  - .github/prompts/spectra-ask.prompt.md
+  - app/products/page.tsx
+  - components/admin/admin-dashboard.tsx
+  - db/migrations/meta/_journal.json
+  - src/infrastructure/admin/index.ts
+  - .github/prompts/spectra-ingest.prompt.md
+  - .opencode/skills/spectra-propose/SKILL.md
+  - app/globals.css
+  - .github/skills/spectra-debug/SKILL.md
+  - src/application/checkout/complete-demo-checkout.ts
+  - next.config.ts
+  - src/presentation/api/checkout-intent-contracts.ts
+  - frontend/checkout-preview.html
+  - src/application/checkout-saga/checkout-reservation-saga.ts
+  - src/domain/inventory/sku-inventory-aggregate.ts
+  - src/ports/admin-dashboard-repository.ts
+  - src/domain/checkout/commands.ts
+  - src/domain/catalog/product.ts
+  - .github/skills/spectra-ingest/SKILL.md
+  - .github/prompts/spectra-archive.prompt.md
+  - .opencode/commands/spectra-audit.md
+  - .github/skills/spectra-apply/SKILL.md
+  - CLAUDE.md
+  - components/products/products-page-content.tsx
+  - dependency-cruiser.config.cjs
+  - .opencode/skills/spectra-discuss/SKILL.md
+  - drizzle.config.ts
+  - package.json
+  - scripts/run-checkout-postgres-benchmark.ts
+  - src/domain/events/event-type.ts
+  - .opencode/commands/spectra-apply.md
+  - app/api/internal/admin/dashboard/route.ts
+  - db/migrations/0000_kind_galactus.sql
+  - components/products/product-card.tsx
+  - src/domain/order/status.ts
+  - .opencode/skills/spectra-debug/SKILL.md
+  - app/internal/admin/page.tsx
+  - src/infrastructure/projections/postgres-projection-repository.ts
+  - tsconfig.json
+  - GEMINI.md
+  - .github/skills/spectra-ask/SKILL.md
+  - db/migrations/meta/0000_snapshot.json
+  - docker-compose.yml
+  - .opencode/commands/spectra-propose.md
+  - app/products/[slug]/page.tsx
+  - app/checkout-complete/[checkoutIntentId]/page.tsx
+  - .spectra.yaml
+  - src/ports/event-store.ts
+  - scripts/run-checkout-postgres-sweep.ts
+  - .github/prompts/spectra-discuss.prompt.md
+  - src/infrastructure/projections/index.ts
+  - app/api/checkout-intents/[checkoutIntentId]/route.ts
+  - .opencode/skills/spectra-ask/SKILL.md
+  - src/presentation/api/request-context.ts
+  - app/api/checkout-intents/route.ts
+  - vitest.config.ts
+  - profiles/fixed/CPU.20260419.063326.71427.0.001.cpuprofile
+  - src/infrastructure/catalog/index.ts
+  - src/application/inventory/reserve-inventory.ts
+  - biome.json
+  - .npmrc
+  - .env.example
+  - src/infrastructure/admin/postgres-admin-dashboard.ts
+  - src/infrastructure/checkout-demo/index.ts
+  - src/infrastructure/checkout-demo/postgres-checkout-demo-repository.ts
+  - src/infrastructure/event-store/index.ts
+  - .github/prompts/spectra-propose.prompt.md
+  - src/ports/projection-repository.ts
+  - .opencode/commands/spectra-archive.md
+  - .github/skills/spectra-archive/SKILL.md
+  - src/presentation/view-models/product.ts
+  - .github/skills/spectra-discuss/SKILL.md
+  - next-env.d.ts
+  - test/setup.ts
+  - profiles/fixed/CPU.20260419.063326.71970.0.001.cpuprofile
+  - .nvmrc
+  - components/products/product-grid.tsx
+  - src/domain/payment/status.ts
+  - .github/prompts/spectra-apply.prompt.md
+  - .opencode/commands/spectra-ask.md
+  - profiles/CPU.20260419.062500.60544.0.001.cpuprofile
+  - .github/skills/spectra-audit/SKILL.md
+  - src/domain/order/commands.ts
+  - src/infrastructure/event-store/postgres-event-store.ts
+  - .opencode/commands/spectra-discuss.md
+  - components/checkout/checkout-action.tsx
+  - src/domain/inventory/commands.ts
+  - src/infrastructure/catalog/postgres-catalog-repository.ts
+  - src/application/payment/payment-compensation.ts
+  - .opencode/commands/spectra-ingest.md
+  - app/api/internal/checkout-intents/[checkoutIntentId]/complete-demo/route.ts
+  - scripts/reset-dev-db.ts
+  - src/ports/checkout-demo-repository.ts
+  - frontend/design-pattern.html
+  - src/domain/events/event-metadata.ts
+  - .github/skills/spectra-propose/SKILL.md
+  - .github/prompts/spectra-debug.prompt.md
+  - components/checkout/product-detail-page.tsx
+  - src/application/projections/process-projections.ts
+  - src/infrastructure/catalog/static-catalog-repository.ts
+  - src/infrastructure/catalog/catalog-row-mapper.ts
+  - src/domain/events/domain-event.ts
+  - src/ports/id-generator.ts
+  - src/ports/clock.ts
+  - src/ports/catalog-repository.ts
+  - .opencode/skills/spectra-audit/SKILL.md
+tests:
+  - src/domain/schema-rules.test.ts
+  - src/application/checkout/create-checkout-intent.test.ts
+  - src/domain/inventory/sku-inventory-aggregate.test.ts
+  - src/application/payment/payment-compensation.test.ts
+  - src/application/projections/process-projections.test.ts
+  - src/application/inventory/reserve-inventory.test.ts
+  - app/page.test.tsx
+  - src/infrastructure/catalog/postgres-catalog-repository.test.ts
+  - src/application/checkout-saga/checkout-reservation-saga.test.ts
+-->
+
+---
+### Requirement: Client Polling UX
+
+The system SHALL use SSR for initial product and inventory data and polling for checkout intent status and remaining inventory updates in the first implementation. The system SHALL NOT require SSE or WebSocket for correctness.
+
+#### Scenario: Product page loads
+
+- **WHEN** the product page is server-rendered
+- **THEN** the system SHALL include product, SKU, and initial inventory projection data
+
+#### Scenario: User waits after pressing Buy
+
+- **WHEN** the user has an accepted checkout intent
+- **THEN** the client SHALL poll the checkout intent status endpoint until the intent reaches a terminal or payment state
+
+#### Scenario: Accepted checkout intent is not a reservation
+
+- **WHEN** `POST /api/checkout-intents` returns an accepted checkout intent
+- **THEN** the client SHALL show that the request was received without presenting inventory as reserved until the checkout intent projection reaches a reserved or payment state
+
+#### Scenario: Inventory display updates
+
+- **WHEN** inventory projection data changes after asynchronous processing
+- **THEN** the client SHALL update visible SKU inventory from the inventory polling endpoint rather than decrementing inventory optimistically in the Buy request path
+
+
+<!-- @trace
+source: add-event-sourced-buy-flow
+updated: 2026-04-19
+code:
+  - .github/prompts/spectra-audit.prompt.md
+  - app/api/internal/projections/process/route.ts
+  - src/domain/checkout/status.ts
+  - .opencode/skills/spectra-ingest/SKILL.md
+  - .opencode/commands/spectra-debug.md
+  - src/application/admin/get-admin-dashboard.ts
+  - src/application/catalog/get-products.ts
+  - .opencode/skills/spectra-archive/SKILL.md
+  - db/schema.ts
+  - src/domain/schema-rules.ts
+  - profiles/CPU.20260419.062459.59977.0.001.cpuprofile
+  - app/api/skus/[skuId]/inventory/route.ts
+  - src/domain/payment/commands.ts
+  - src/domain/checkout/item.ts
+  - src/presentation/view-models/admin-dashboard.ts
+  - src/infrastructure/projections/postgres-projection-writer.ts
+  - app/page.tsx
+  - app/layout.tsx
+  - .opencode/skills/spectra-apply/SKILL.md
+  - app/internal/benchmarks/page.tsx
+  - AGENTS.md
+  - db/client.ts
+  - scripts/benchmark-checkout-postgres.ts
+  - scripts/seed-dev-catalog.ts
+  - src/application/checkout/create-checkout-intent.ts
+  - .github/prompts/spectra-ask.prompt.md
+  - app/products/page.tsx
+  - components/admin/admin-dashboard.tsx
+  - db/migrations/meta/_journal.json
+  - src/infrastructure/admin/index.ts
+  - .github/prompts/spectra-ingest.prompt.md
+  - .opencode/skills/spectra-propose/SKILL.md
+  - app/globals.css
+  - .github/skills/spectra-debug/SKILL.md
+  - src/application/checkout/complete-demo-checkout.ts
+  - next.config.ts
+  - src/presentation/api/checkout-intent-contracts.ts
+  - frontend/checkout-preview.html
+  - src/application/checkout-saga/checkout-reservation-saga.ts
+  - src/domain/inventory/sku-inventory-aggregate.ts
+  - src/ports/admin-dashboard-repository.ts
+  - src/domain/checkout/commands.ts
+  - src/domain/catalog/product.ts
+  - .github/skills/spectra-ingest/SKILL.md
+  - .github/prompts/spectra-archive.prompt.md
+  - .opencode/commands/spectra-audit.md
+  - .github/skills/spectra-apply/SKILL.md
+  - CLAUDE.md
+  - components/products/products-page-content.tsx
+  - dependency-cruiser.config.cjs
+  - .opencode/skills/spectra-discuss/SKILL.md
+  - drizzle.config.ts
+  - package.json
+  - scripts/run-checkout-postgres-benchmark.ts
+  - src/domain/events/event-type.ts
+  - .opencode/commands/spectra-apply.md
+  - app/api/internal/admin/dashboard/route.ts
+  - db/migrations/0000_kind_galactus.sql
+  - components/products/product-card.tsx
+  - src/domain/order/status.ts
+  - .opencode/skills/spectra-debug/SKILL.md
+  - app/internal/admin/page.tsx
+  - src/infrastructure/projections/postgres-projection-repository.ts
+  - tsconfig.json
+  - GEMINI.md
+  - .github/skills/spectra-ask/SKILL.md
+  - db/migrations/meta/0000_snapshot.json
+  - docker-compose.yml
+  - .opencode/commands/spectra-propose.md
+  - app/products/[slug]/page.tsx
+  - app/checkout-complete/[checkoutIntentId]/page.tsx
+  - .spectra.yaml
+  - src/ports/event-store.ts
+  - scripts/run-checkout-postgres-sweep.ts
+  - .github/prompts/spectra-discuss.prompt.md
+  - src/infrastructure/projections/index.ts
+  - app/api/checkout-intents/[checkoutIntentId]/route.ts
+  - .opencode/skills/spectra-ask/SKILL.md
+  - src/presentation/api/request-context.ts
+  - app/api/checkout-intents/route.ts
+  - vitest.config.ts
+  - profiles/fixed/CPU.20260419.063326.71427.0.001.cpuprofile
+  - src/infrastructure/catalog/index.ts
+  - src/application/inventory/reserve-inventory.ts
+  - biome.json
+  - .npmrc
+  - .env.example
+  - src/infrastructure/admin/postgres-admin-dashboard.ts
+  - src/infrastructure/checkout-demo/index.ts
+  - src/infrastructure/checkout-demo/postgres-checkout-demo-repository.ts
+  - src/infrastructure/event-store/index.ts
+  - .github/prompts/spectra-propose.prompt.md
+  - src/ports/projection-repository.ts
+  - .opencode/commands/spectra-archive.md
+  - .github/skills/spectra-archive/SKILL.md
+  - src/presentation/view-models/product.ts
+  - .github/skills/spectra-discuss/SKILL.md
+  - next-env.d.ts
+  - test/setup.ts
+  - profiles/fixed/CPU.20260419.063326.71970.0.001.cpuprofile
+  - .nvmrc
+  - components/products/product-grid.tsx
+  - src/domain/payment/status.ts
+  - .github/prompts/spectra-apply.prompt.md
+  - .opencode/commands/spectra-ask.md
+  - profiles/CPU.20260419.062500.60544.0.001.cpuprofile
+  - .github/skills/spectra-audit/SKILL.md
+  - src/domain/order/commands.ts
+  - src/infrastructure/event-store/postgres-event-store.ts
+  - .opencode/commands/spectra-discuss.md
+  - components/checkout/checkout-action.tsx
+  - src/domain/inventory/commands.ts
+  - src/infrastructure/catalog/postgres-catalog-repository.ts
+  - src/application/payment/payment-compensation.ts
+  - .opencode/commands/spectra-ingest.md
+  - app/api/internal/checkout-intents/[checkoutIntentId]/complete-demo/route.ts
+  - scripts/reset-dev-db.ts
+  - src/ports/checkout-demo-repository.ts
+  - frontend/design-pattern.html
+  - src/domain/events/event-metadata.ts
+  - .github/skills/spectra-propose/SKILL.md
+  - .github/prompts/spectra-debug.prompt.md
+  - components/checkout/product-detail-page.tsx
+  - src/application/projections/process-projections.ts
+  - src/infrastructure/catalog/static-catalog-repository.ts
+  - src/infrastructure/catalog/catalog-row-mapper.ts
+  - src/domain/events/domain-event.ts
+  - src/ports/id-generator.ts
+  - src/ports/clock.ts
+  - src/ports/catalog-repository.ts
+  - .opencode/skills/spectra-audit/SKILL.md
+tests:
+  - src/domain/schema-rules.test.ts
+  - src/application/checkout/create-checkout-intent.test.ts
+  - src/domain/inventory/sku-inventory-aggregate.test.ts
+  - src/application/payment/payment-compensation.test.ts
+  - src/application/projections/process-projections.test.ts
+  - src/application/inventory/reserve-inventory.test.ts
+  - app/page.test.tsx
+  - src/infrastructure/catalog/postgres-catalog-repository.test.ts
+  - src/application/checkout-saga/checkout-reservation-saga.test.ts
+-->
+
+---
+### Requirement: Deferred Kafka Integration
+
+The system SHALL start without Kafka in the initial implementation. When Kafka becomes part of the formal processing path, the system SHALL use an outbox relay to publish committed PostgreSQL events.
+
+#### Scenario: Kafka is not enabled
+
+- **WHEN** the system runs the initial implementation
+- **THEN** projection and inventory processing SHALL operate from PostgreSQL events without Kafka
+
+#### Scenario: Kafka is enabled later
+
+- **WHEN** Kafka is added to the formal processing path
+- **THEN** the system SHALL publish through an outbox relay rather than relying on direct API dual writes
+
+
+<!-- @trace
+source: add-event-sourced-buy-flow
+updated: 2026-04-19
+code:
+  - .github/prompts/spectra-audit.prompt.md
+  - app/api/internal/projections/process/route.ts
+  - src/domain/checkout/status.ts
+  - .opencode/skills/spectra-ingest/SKILL.md
+  - .opencode/commands/spectra-debug.md
+  - src/application/admin/get-admin-dashboard.ts
+  - src/application/catalog/get-products.ts
+  - .opencode/skills/spectra-archive/SKILL.md
+  - db/schema.ts
+  - src/domain/schema-rules.ts
+  - profiles/CPU.20260419.062459.59977.0.001.cpuprofile
+  - app/api/skus/[skuId]/inventory/route.ts
+  - src/domain/payment/commands.ts
+  - src/domain/checkout/item.ts
+  - src/presentation/view-models/admin-dashboard.ts
+  - src/infrastructure/projections/postgres-projection-writer.ts
+  - app/page.tsx
+  - app/layout.tsx
+  - .opencode/skills/spectra-apply/SKILL.md
+  - app/internal/benchmarks/page.tsx
+  - AGENTS.md
+  - db/client.ts
+  - scripts/benchmark-checkout-postgres.ts
+  - scripts/seed-dev-catalog.ts
+  - src/application/checkout/create-checkout-intent.ts
+  - .github/prompts/spectra-ask.prompt.md
+  - app/products/page.tsx
+  - components/admin/admin-dashboard.tsx
+  - db/migrations/meta/_journal.json
+  - src/infrastructure/admin/index.ts
+  - .github/prompts/spectra-ingest.prompt.md
+  - .opencode/skills/spectra-propose/SKILL.md
+  - app/globals.css
+  - .github/skills/spectra-debug/SKILL.md
+  - src/application/checkout/complete-demo-checkout.ts
+  - next.config.ts
+  - src/presentation/api/checkout-intent-contracts.ts
+  - frontend/checkout-preview.html
+  - src/application/checkout-saga/checkout-reservation-saga.ts
+  - src/domain/inventory/sku-inventory-aggregate.ts
+  - src/ports/admin-dashboard-repository.ts
+  - src/domain/checkout/commands.ts
+  - src/domain/catalog/product.ts
+  - .github/skills/spectra-ingest/SKILL.md
+  - .github/prompts/spectra-archive.prompt.md
+  - .opencode/commands/spectra-audit.md
+  - .github/skills/spectra-apply/SKILL.md
+  - CLAUDE.md
+  - components/products/products-page-content.tsx
+  - dependency-cruiser.config.cjs
+  - .opencode/skills/spectra-discuss/SKILL.md
+  - drizzle.config.ts
+  - package.json
+  - scripts/run-checkout-postgres-benchmark.ts
+  - src/domain/events/event-type.ts
+  - .opencode/commands/spectra-apply.md
+  - app/api/internal/admin/dashboard/route.ts
+  - db/migrations/0000_kind_galactus.sql
+  - components/products/product-card.tsx
+  - src/domain/order/status.ts
+  - .opencode/skills/spectra-debug/SKILL.md
+  - app/internal/admin/page.tsx
+  - src/infrastructure/projections/postgres-projection-repository.ts
+  - tsconfig.json
+  - GEMINI.md
+  - .github/skills/spectra-ask/SKILL.md
+  - db/migrations/meta/0000_snapshot.json
+  - docker-compose.yml
+  - .opencode/commands/spectra-propose.md
+  - app/products/[slug]/page.tsx
+  - app/checkout-complete/[checkoutIntentId]/page.tsx
+  - .spectra.yaml
+  - src/ports/event-store.ts
+  - scripts/run-checkout-postgres-sweep.ts
+  - .github/prompts/spectra-discuss.prompt.md
+  - src/infrastructure/projections/index.ts
+  - app/api/checkout-intents/[checkoutIntentId]/route.ts
+  - .opencode/skills/spectra-ask/SKILL.md
+  - src/presentation/api/request-context.ts
+  - app/api/checkout-intents/route.ts
+  - vitest.config.ts
+  - profiles/fixed/CPU.20260419.063326.71427.0.001.cpuprofile
+  - src/infrastructure/catalog/index.ts
+  - src/application/inventory/reserve-inventory.ts
+  - biome.json
+  - .npmrc
+  - .env.example
+  - src/infrastructure/admin/postgres-admin-dashboard.ts
+  - src/infrastructure/checkout-demo/index.ts
+  - src/infrastructure/checkout-demo/postgres-checkout-demo-repository.ts
+  - src/infrastructure/event-store/index.ts
+  - .github/prompts/spectra-propose.prompt.md
+  - src/ports/projection-repository.ts
+  - .opencode/commands/spectra-archive.md
+  - .github/skills/spectra-archive/SKILL.md
+  - src/presentation/view-models/product.ts
+  - .github/skills/spectra-discuss/SKILL.md
+  - next-env.d.ts
+  - test/setup.ts
+  - profiles/fixed/CPU.20260419.063326.71970.0.001.cpuprofile
+  - .nvmrc
+  - components/products/product-grid.tsx
+  - src/domain/payment/status.ts
+  - .github/prompts/spectra-apply.prompt.md
+  - .opencode/commands/spectra-ask.md
+  - profiles/CPU.20260419.062500.60544.0.001.cpuprofile
+  - .github/skills/spectra-audit/SKILL.md
+  - src/domain/order/commands.ts
+  - src/infrastructure/event-store/postgres-event-store.ts
+  - .opencode/commands/spectra-discuss.md
+  - components/checkout/checkout-action.tsx
+  - src/domain/inventory/commands.ts
+  - src/infrastructure/catalog/postgres-catalog-repository.ts
+  - src/application/payment/payment-compensation.ts
+  - .opencode/commands/spectra-ingest.md
+  - app/api/internal/checkout-intents/[checkoutIntentId]/complete-demo/route.ts
+  - scripts/reset-dev-db.ts
+  - src/ports/checkout-demo-repository.ts
+  - frontend/design-pattern.html
+  - src/domain/events/event-metadata.ts
+  - .github/skills/spectra-propose/SKILL.md
+  - .github/prompts/spectra-debug.prompt.md
+  - components/checkout/product-detail-page.tsx
+  - src/application/projections/process-projections.ts
+  - src/infrastructure/catalog/static-catalog-repository.ts
+  - src/infrastructure/catalog/catalog-row-mapper.ts
+  - src/domain/events/domain-event.ts
+  - src/ports/id-generator.ts
+  - src/ports/clock.ts
+  - src/ports/catalog-repository.ts
+  - .opencode/skills/spectra-audit/SKILL.md
+tests:
+  - src/domain/schema-rules.test.ts
+  - src/application/checkout/create-checkout-intent.test.ts
+  - src/domain/inventory/sku-inventory-aggregate.test.ts
+  - src/application/payment/payment-compensation.test.ts
+  - src/application/projections/process-projections.test.ts
+  - src/application/inventory/reserve-inventory.test.ts
+  - app/page.test.tsx
+  - src/infrastructure/catalog/postgres-catalog-repository.test.ts
+  - src/application/checkout-saga/checkout-reservation-saga.test.ts
+-->
+
+---
+### Requirement: Checkout Benchmark Baseline
+
+The system SHALL define a repeatable PostgreSQL-only benchmark for the first implementation. The benchmark SHALL measure correctness, API latency, event store append throughput, and projection lag.
+
+#### Scenario: Hot SKU benchmark runs
+
+- **WHEN** the benchmark submits 1,000 concurrent buy attempts for one hot SKU
+- **THEN** the system SHALL record accepted intents per second, API latency percentiles, event store append throughput, projection lag, and checkout projection status distribution
+
+#### Scenario: Benchmark verifies correctness
+
+- **WHEN** the benchmark completes
+- **THEN** the system SHALL verify that inventory is not oversold, duplicate idempotency keys do not create duplicate intents, and every accepted intent is visible in projection state appropriate for the benchmark phase
+
+<!-- @trace
+source: add-event-sourced-buy-flow
+updated: 2026-04-19
+code:
+  - .github/prompts/spectra-audit.prompt.md
+  - app/api/internal/projections/process/route.ts
+  - src/domain/checkout/status.ts
+  - .opencode/skills/spectra-ingest/SKILL.md
+  - .opencode/commands/spectra-debug.md
+  - src/application/admin/get-admin-dashboard.ts
+  - src/application/catalog/get-products.ts
+  - .opencode/skills/spectra-archive/SKILL.md
+  - db/schema.ts
+  - src/domain/schema-rules.ts
+  - profiles/CPU.20260419.062459.59977.0.001.cpuprofile
+  - app/api/skus/[skuId]/inventory/route.ts
+  - src/domain/payment/commands.ts
+  - src/domain/checkout/item.ts
+  - src/presentation/view-models/admin-dashboard.ts
+  - src/infrastructure/projections/postgres-projection-writer.ts
+  - app/page.tsx
+  - app/layout.tsx
+  - .opencode/skills/spectra-apply/SKILL.md
+  - app/internal/benchmarks/page.tsx
+  - AGENTS.md
+  - db/client.ts
+  - scripts/benchmark-checkout-postgres.ts
+  - scripts/seed-dev-catalog.ts
+  - src/application/checkout/create-checkout-intent.ts
+  - .github/prompts/spectra-ask.prompt.md
+  - app/products/page.tsx
+  - components/admin/admin-dashboard.tsx
+  - db/migrations/meta/_journal.json
+  - src/infrastructure/admin/index.ts
+  - .github/prompts/spectra-ingest.prompt.md
+  - .opencode/skills/spectra-propose/SKILL.md
+  - app/globals.css
+  - .github/skills/spectra-debug/SKILL.md
+  - src/application/checkout/complete-demo-checkout.ts
+  - next.config.ts
+  - src/presentation/api/checkout-intent-contracts.ts
+  - frontend/checkout-preview.html
+  - src/application/checkout-saga/checkout-reservation-saga.ts
+  - src/domain/inventory/sku-inventory-aggregate.ts
+  - src/ports/admin-dashboard-repository.ts
+  - src/domain/checkout/commands.ts
+  - src/domain/catalog/product.ts
+  - .github/skills/spectra-ingest/SKILL.md
+  - .github/prompts/spectra-archive.prompt.md
+  - .opencode/commands/spectra-audit.md
+  - .github/skills/spectra-apply/SKILL.md
+  - CLAUDE.md
+  - components/products/products-page-content.tsx
+  - dependency-cruiser.config.cjs
+  - .opencode/skills/spectra-discuss/SKILL.md
+  - drizzle.config.ts
+  - package.json
+  - scripts/run-checkout-postgres-benchmark.ts
+  - src/domain/events/event-type.ts
+  - .opencode/commands/spectra-apply.md
+  - app/api/internal/admin/dashboard/route.ts
+  - db/migrations/0000_kind_galactus.sql
+  - components/products/product-card.tsx
+  - src/domain/order/status.ts
+  - .opencode/skills/spectra-debug/SKILL.md
+  - app/internal/admin/page.tsx
+  - src/infrastructure/projections/postgres-projection-repository.ts
+  - tsconfig.json
+  - GEMINI.md
+  - .github/skills/spectra-ask/SKILL.md
+  - db/migrations/meta/0000_snapshot.json
+  - docker-compose.yml
+  - .opencode/commands/spectra-propose.md
+  - app/products/[slug]/page.tsx
+  - app/checkout-complete/[checkoutIntentId]/page.tsx
+  - .spectra.yaml
+  - src/ports/event-store.ts
+  - scripts/run-checkout-postgres-sweep.ts
+  - .github/prompts/spectra-discuss.prompt.md
+  - src/infrastructure/projections/index.ts
+  - app/api/checkout-intents/[checkoutIntentId]/route.ts
+  - .opencode/skills/spectra-ask/SKILL.md
+  - src/presentation/api/request-context.ts
+  - app/api/checkout-intents/route.ts
+  - vitest.config.ts
+  - profiles/fixed/CPU.20260419.063326.71427.0.001.cpuprofile
+  - src/infrastructure/catalog/index.ts
+  - src/application/inventory/reserve-inventory.ts
+  - biome.json
+  - .npmrc
+  - .env.example
+  - src/infrastructure/admin/postgres-admin-dashboard.ts
+  - src/infrastructure/checkout-demo/index.ts
+  - src/infrastructure/checkout-demo/postgres-checkout-demo-repository.ts
+  - src/infrastructure/event-store/index.ts
+  - .github/prompts/spectra-propose.prompt.md
+  - src/ports/projection-repository.ts
+  - .opencode/commands/spectra-archive.md
+  - .github/skills/spectra-archive/SKILL.md
+  - src/presentation/view-models/product.ts
+  - .github/skills/spectra-discuss/SKILL.md
+  - next-env.d.ts
+  - test/setup.ts
+  - profiles/fixed/CPU.20260419.063326.71970.0.001.cpuprofile
+  - .nvmrc
+  - components/products/product-grid.tsx
+  - src/domain/payment/status.ts
+  - .github/prompts/spectra-apply.prompt.md
+  - .opencode/commands/spectra-ask.md
+  - profiles/CPU.20260419.062500.60544.0.001.cpuprofile
+  - .github/skills/spectra-audit/SKILL.md
+  - src/domain/order/commands.ts
+  - src/infrastructure/event-store/postgres-event-store.ts
+  - .opencode/commands/spectra-discuss.md
+  - components/checkout/checkout-action.tsx
+  - src/domain/inventory/commands.ts
+  - src/infrastructure/catalog/postgres-catalog-repository.ts
+  - src/application/payment/payment-compensation.ts
+  - .opencode/commands/spectra-ingest.md
+  - app/api/internal/checkout-intents/[checkoutIntentId]/complete-demo/route.ts
+  - scripts/reset-dev-db.ts
+  - src/ports/checkout-demo-repository.ts
+  - frontend/design-pattern.html
+  - src/domain/events/event-metadata.ts
+  - .github/skills/spectra-propose/SKILL.md
+  - .github/prompts/spectra-debug.prompt.md
+  - components/checkout/product-detail-page.tsx
+  - src/application/projections/process-projections.ts
+  - src/infrastructure/catalog/static-catalog-repository.ts
+  - src/infrastructure/catalog/catalog-row-mapper.ts
+  - src/domain/events/domain-event.ts
+  - src/ports/id-generator.ts
+  - src/ports/clock.ts
+  - src/ports/catalog-repository.ts
+  - .opencode/skills/spectra-audit/SKILL.md
+tests:
+  - src/domain/schema-rules.test.ts
+  - src/application/checkout/create-checkout-intent.test.ts
+  - src/domain/inventory/sku-inventory-aggregate.test.ts
+  - src/application/payment/payment-compensation.test.ts
+  - src/application/projections/process-projections.test.ts
+  - src/application/inventory/reserve-inventory.test.ts
+  - app/page.test.tsx
+  - src/infrastructure/catalog/postgres-catalog-repository.test.ts
+  - src/application/checkout-saga/checkout-reservation-saga.test.ts
+-->

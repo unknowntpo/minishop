@@ -4,9 +4,17 @@ import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
+import { BuyerDevMenu } from "@/components/buyer/buyer-dev-menu";
+import { BuyerLocaleProvider, useBuyerLocale } from "@/components/buyer/buyer-locale-provider";
+import { BuyerProfileMenu } from "@/components/buyer/buyer-profile-menu";
 import { CheckoutAction, type CheckoutActionItem } from "@/components/checkout/checkout-action";
 import type { Product } from "@/src/domain/catalog/product";
-import { formatProductPrice } from "@/src/presentation/view-models/product";
+import {
+  type BuyerLocale,
+  formatBuyerMoney,
+  getLocalizedProduct,
+  normalizeBuyerLocale,
+} from "@/src/presentation/i18n/buyer-localization";
 
 const cartStorageKey = "minishop-cart-v1";
 const cartUpdatedEvent = "minishop:cart-updated";
@@ -24,10 +32,22 @@ type CartProduct = Product & {
 export function ProductDetailPage({
   product,
   products,
+  initialLocale,
 }: {
   product: Product;
   products: Product[];
+  initialLocale?: BuyerLocale;
 }) {
+  return (
+    <BuyerLocaleProvider initialLocale={normalizeBuyerLocale(initialLocale)}>
+      <ProductDetailPageBody product={product} products={products} />
+    </BuyerLocaleProvider>
+  );
+}
+
+function ProductDetailPageBody({ product, products }: { product: Product; products: Product[] }) {
+  const { locale, messages } = useBuyerLocale();
+  const localizedProduct = getLocalizedProduct(product, locale);
   const productBySlug = useMemo(
     () => new Map(products.map((catalogProduct) => [catalogProduct.slug, catalogProduct])),
     [products],
@@ -36,6 +56,7 @@ export function ProductDetailPage({
   const [directQuantity, setDirectQuantity] = useState(1);
   const [cartOpen, setCartOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [toastVisible, setToastVisible] = useState(false);
   const maxDirectQuantity = maxQuantityFor(product);
   const isOutOfStock = maxDirectQuantity <= 0;
   const cartProducts = useMemo(
@@ -53,6 +74,7 @@ export function ProductDetailPage({
     [cartProducts],
   );
   const totalUnits = cartProducts.reduce((sum, cartProduct) => sum + cartProduct.quantity, 0);
+  const distinctSkuCount = cartProducts.length;
   const totalAmountMinor = cartProducts.reduce(
     (sum, cartProduct) => sum + cartProduct.subtotalAmountMinor,
     0,
@@ -90,14 +112,25 @@ export function ProductDetailPage({
 
   useEffect(() => {
     if (!toastMessage) {
+      setToastVisible(false);
       return;
     }
 
-    const timeout = window.setTimeout(() => {
+    const frame = window.requestAnimationFrame(() => {
+      setToastVisible(true);
+    });
+    const hideTimeout = window.setTimeout(() => {
+      setToastVisible(false);
+    }, 2800);
+    const removeTimeout = window.setTimeout(() => {
       setToastMessage(null);
-    }, 2600);
+    }, 3200);
 
-    return () => window.clearTimeout(timeout);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.clearTimeout(hideTimeout);
+      window.clearTimeout(removeTimeout);
+    };
   }, [toastMessage]);
 
   function syncCart(nextEntries: CartEntry[]) {
@@ -117,9 +150,7 @@ export function ProductDetailPage({
         slug: product.slug,
       }),
     );
-    setToastMessage(
-      `${product.name} · ${formatNumber(directQuantity)} unit${directQuantity > 1 ? "s" : ""} added to cart.`,
-    );
+    setToastMessage(messages.cart.toastMessage(localizedProduct.name, directQuantity));
   }
 
   function updateCartQuantity(slug: string, quantity: number) {
@@ -146,15 +177,168 @@ export function ProductDetailPage({
 
   return (
     <main className="page-shell">
-      <Link className="text-link" href="/products">
-        Products
-      </Link>
+      <div className="buyer-toolbar">
+        <Link className="text-link" href="/products">
+          {messages.navProducts}
+        </Link>
+        <div className="buyer-toolbar-actions">
+          <BuyerDevMenu />
+          <div className={`floating-cart header-cart${cartOpen ? " is-open" : ""}`}>
+            <button
+              aria-expanded={cartOpen}
+              aria-label={messages.cart.drawerEyebrow}
+              className="header-cart-trigger"
+              onClick={() => setCartOpen((current) => !current)}
+              type="button"
+            >
+              <svg className="cart-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M6.2 6.8h14.1l-1.5 7.3a2 2 0 0 1-2 1.6H9.1a2 2 0 0 1-2-1.7L5.7 4.9H3.5"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth="2"
+                />
+                <circle cx="9.5" cy="19" r="1.3" fill="currentColor" />
+                <circle cx="17" cy="19" r="1.3" fill="currentColor" />
+              </svg>
+              {totalUnits > 0 ? (
+                <span className="cart-count" aria-hidden="true">
+                  {distinctSkuCount}
+                </span>
+              ) : null}
+              <span className="cart-summary">
+                <strong>{totalUnits > 0 ? messages.cart.summary : messages.cart.emptyTitle}</strong>
+                <span className="muted">
+                  {cartProducts.length > 0
+                    ? messages.cart.populatedBody(totalUnits, distinctSkuCount)
+                    : messages.cart.emptyBody}
+                </span>
+              </span>
+              {cartProducts.length > 0 ? (
+                <strong className="cart-summary-total">
+                  {formatBuyerMoney(
+                    totalAmountMinor,
+                    cartProducts[0]?.currency ?? product.currency,
+                    locale,
+                  )}
+                </strong>
+              ) : null}
+              <span className="cart-toggle-hint" aria-hidden="true">
+                {cartOpen ? messages.actions.hide : messages.actions.open}
+              </span>
+            </button>
+
+            <div className={`cart-drawer${cartOpen ? " visible" : ""}`}>
+              <div className="cart-drawer-header">
+                <div className="cart-drawer-heading">
+                  <p className="eyebrow">{messages.cart.drawerEyebrow}</p>
+                  <h2>
+                    {cartProducts.length > 0 ? messages.cart.reviewTitle : messages.cart.emptyTitle}
+                  </h2>
+                </div>
+              </div>
+
+              {cartProducts.length > 0 ? (
+                <>
+                  <div className="cart-list">
+                    {cartProducts.map((cartProduct) => (
+                      <article className="cart-item" key={cartProduct.slug}>
+                        <div className="cart-thumb" aria-hidden="true" />
+                        <div className="cart-item-body">
+                          <div className="cart-item-copy">
+                            <strong>{getLocalizedProduct(cartProduct, locale).name}</strong>
+                            <p className="muted">
+                              {messages.cart.itemMeta(
+                                cartProduct.skuCode,
+                                formatBuyerMoney(
+                                  cartProduct.subtotalAmountMinor,
+                                  cartProduct.currency,
+                                  locale,
+                                ),
+                              )}
+                            </p>
+                          </div>
+                          <div className="cart-item-actions">
+                            <div className="quantity-stepper compact">
+                              <button
+                                className="quantity-button"
+                                type="button"
+                                disabled={cartProduct.quantity <= 1}
+                                onClick={() =>
+                                  updateCartQuantity(
+                                    cartProduct.slug,
+                                    clampQuantity(
+                                      cartProduct.quantity - 1,
+                                      maxQuantityFor(cartProduct),
+                                    ),
+                                  )
+                                }
+                              >
+                                −
+                              </button>
+                              <strong className="quantity-value">{cartProduct.quantity}</strong>
+                              <button
+                                className="quantity-button"
+                                type="button"
+                                disabled={cartProduct.quantity >= maxQuantityFor(cartProduct)}
+                                onClick={() =>
+                                  updateCartQuantity(
+                                    cartProduct.slug,
+                                    clampQuantity(
+                                      cartProduct.quantity + 1,
+                                      maxQuantityFor(cartProduct),
+                                    ),
+                                  )
+                                }
+                              >
+                                +
+                              </button>
+                            </div>
+                            <button
+                              className="text-button"
+                              type="button"
+                              onClick={() => removeFromCart(cartProduct.slug)}
+                            >
+                              {messages.actions.remove}
+                            </button>
+                          </div>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+
+                  <div className="cart-checkout">
+                    <CheckoutAction
+                      disabled={cartCheckoutItems.length === 0}
+                      locale={locale}
+                      onCompleted={clearCart}
+                      product={product}
+                      items={cartCheckoutItems}
+                      buttonLabel={messages.actions.checkoutCart(
+                        formatBuyerMoney(totalAmountMinor, cartProducts[0].currency, locale),
+                      )}
+                    />
+                  </div>
+                </>
+              ) : (
+                <div className="cart-empty">
+                  <strong>{messages.cart.emptyDrawerTitle}</strong>
+                  <p className="muted">{messages.cart.emptyDrawerBody}</p>
+                </div>
+              )}
+            </div>
+          </div>
+          <BuyerProfileMenu />
+        </div>
+      </div>
 
       <section className="product-layout" aria-labelledby="product-title">
         <div className="product-media">
           <Image
-            src={product.image.src}
-            alt={product.image.alt}
+            src={localizedProduct.image.src}
+            alt={localizedProduct.image.alt}
             width={1400}
             height={930}
             sizes="(max-width: 900px) 100vw, 58vw"
@@ -164,27 +348,29 @@ export function ProductDetailPage({
 
         <div className="purchase-stack">
           <section className="panel purchase-panel">
-            <p className="eyebrow">Direct buy</p>
-            <h1 id="product-title">{product.name}</h1>
+            <p className="eyebrow">{messages.productEyebrow}</p>
+            <h1 id="product-title">{localizedProduct.name}</h1>
             <p className="muted">
-              SKU {product.skuCode} · {product.checkoutNote}
+              SKU {product.skuCode} · {localizedProduct.checkoutNote}
             </p>
-            <div className="price">{formatProductPrice(product)}</div>
+            <div className="price">
+              {formatBuyerMoney(product.priceAmountMinor, product.currency, locale)}
+            </div>
             <div className="inventory-row">
               <div>
-                <strong>Available now: {product.available}</strong>
+                <strong>{messages.productInventoryAvailable(product.available)}</strong>
                 <p className="muted">
                   {isOutOfStock
-                    ? "This SKU is sold out in the current projection."
-                    : "Reservation is confirmed after checkout processing."}
+                    ? messages.productInventoryState.soldOut
+                    : messages.productInventoryState.inStock}
                 </p>
               </div>
-              <span className="badge neutral">projection</span>
+              <span className="badge neutral">{messages.productInventoryState.projection}</span>
             </div>
 
             <div className="purchase-controls">
               <div className="quantity-panel">
-                <span className="quantity-label">Quantity</span>
+                <span className="quantity-label">{messages.quantityLabel}</span>
                 <div className="quantity-stepper">
                   <button
                     className="quantity-button"
@@ -210,8 +396,8 @@ export function ProductDetailPage({
                 </div>
                 <span className="muted quantity-hint">
                   {isOutOfStock
-                    ? "No units available in the current projection."
-                    : `Max ${formatNumber(maxDirectQuantity)} units`}
+                    ? messages.quantityHint.none
+                    : messages.quantityHint.max(maxDirectQuantity)}
                 </span>
               </div>
 
@@ -222,12 +408,11 @@ export function ProductDetailPage({
                   disabled={isOutOfStock}
                   onClick={addCurrentProductToCart}
                 >
-                  {directQuantity > 1
-                    ? `Add ${formatNumber(directQuantity)} to cart`
-                    : "Add to cart"}
+                  {messages.actions.addToCart}
                 </button>
                 <CheckoutAction
                   disabled={isOutOfStock}
+                  locale={locale}
                   product={product}
                   items={[
                     {
@@ -237,181 +422,33 @@ export function ProductDetailPage({
                       unitPriceAmountMinor: product.priceAmountMinor,
                     },
                   ]}
-                  buttonLabel={
-                    isOutOfStock
-                      ? "Sold out"
-                      : `Buy ${directQuantity > 1 ? `${formatNumber(directQuantity)} units` : "now"}`
-                  }
+                  buttonLabel={isOutOfStock ? messages.actions.soldOut : messages.actions.buyNow}
                 />
               </div>
             </div>
 
-            <p className="fine-print">
-              Buy now creates a checkout intent immediately. Cart checkout combines multiple SKUs
-              and quantities into one intent.
-            </p>
+            <p className="fine-print">{messages.finePrint}</p>
             <OperatorStrip product={product} />
           </section>
         </div>
       </section>
 
-      <details
-        className="floating-cart"
-        open={cartOpen}
-        onToggle={(event) => setCartOpen(event.currentTarget.open)}
-      >
-        <summary aria-label="Cart checkout">
-          <svg className="cart-icon" viewBox="0 0 24 24" aria-hidden="true">
-            <path
-              d="M6.2 6.8h14.1l-1.5 7.3a2 2 0 0 1-2 1.6H9.1a2 2 0 0 1-2-1.7L5.7 4.9H3.5"
-              fill="none"
-              stroke="currentColor"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth="2"
-            />
-            <circle cx="9.5" cy="19" r="1.3" fill="currentColor" />
-            <circle cx="17" cy="19" r="1.3" fill="currentColor" />
-          </svg>
-          {totalUnits > 0 ? (
-            <span className="cart-count" aria-hidden="true">
-              {formatNumber(totalUnits)}
-            </span>
-          ) : null}
-          <span className="cart-summary">
-            <strong>
-              {totalUnits > 0 ? `Cart · ${formatNumber(totalUnits)} items` : "Cart is empty"}
-            </strong>
-            <span className="muted">
-              {cartProducts.length > 0
-                ? `${formatNumber(cartProducts.length)} SKUs · ${formatMoney(
-                    totalAmountMinor,
-                    cartProducts[0]?.currency ?? product.currency,
-                  )}`
-                : "Add products here before checkout."}
-            </span>
-          </span>
-          {cartProducts.length > 0 ? (
-            <span className="badge neutral cart-status">ready</span>
-          ) : null}
-          <span className="cart-toggle-hint" aria-hidden="true">
-            {cartOpen ? "Hide" : "Open"}
-          </span>
-        </summary>
+      <button
+        aria-hidden={!cartOpen}
+        className={`cart-backdrop${cartOpen ? " visible" : ""}`}
+        onClick={() => setCartOpen(false)}
+        tabIndex={cartOpen ? 0 : -1}
+        type="button"
+      />
 
-        <div className="cart-drawer">
-          <div className="cart-drawer-header">
-            <div>
-              <p className="eyebrow">Cart checkout</p>
-              <h2>Checkout {formatNumber(totalUnits)} items</h2>
-            </div>
-            <div className="cart-drawer-controls">
-              {cartProducts.length > 0 ? (
-                <span className="badge neutral">
-                  {formatMoney(totalAmountMinor, cartProducts[0].currency)}
-                </span>
-              ) : null}
-              <button
-                className="text-button subtle"
-                type="button"
-                onClick={() => setCartOpen(false)}
-              >
-                Collapse
-              </button>
-            </div>
-          </div>
-
-          {cartProducts.length > 0 ? (
-            <>
-              <div className="cart-list">
-                {cartProducts.map((cartProduct) => (
-                  <article className="cart-item" key={cartProduct.slug}>
-                    <div className="cart-thumb" aria-hidden="true" />
-                    <div className="cart-item-body">
-                      <div className="cart-item-copy">
-                        <strong>{cartProduct.name}</strong>
-                        <p className="muted">
-                          SKU {cartProduct.skuCode} ·{" "}
-                          {formatMoney(cartProduct.subtotalAmountMinor, cartProduct.currency)}
-                        </p>
-                      </div>
-                      <div className="cart-item-actions">
-                        <div className="quantity-stepper compact">
-                          <button
-                            className="quantity-button"
-                            type="button"
-                            disabled={cartProduct.quantity <= 1}
-                            onClick={() =>
-                              updateCartQuantity(
-                                cartProduct.slug,
-                                clampQuantity(
-                                  cartProduct.quantity - 1,
-                                  maxQuantityFor(cartProduct),
-                                ),
-                              )
-                            }
-                          >
-                            −
-                          </button>
-                          <strong className="quantity-value">{cartProduct.quantity}</strong>
-                          <button
-                            className="quantity-button"
-                            type="button"
-                            disabled={cartProduct.quantity >= maxQuantityFor(cartProduct)}
-                            onClick={() =>
-                              updateCartQuantity(
-                                cartProduct.slug,
-                                clampQuantity(
-                                  cartProduct.quantity + 1,
-                                  maxQuantityFor(cartProduct),
-                                ),
-                              )
-                            }
-                          >
-                            +
-                          </button>
-                        </div>
-                        <button
-                          className="text-button"
-                          type="button"
-                          onClick={() => removeFromCart(cartProduct.slug)}
-                        >
-                          Remove
-                        </button>
-                      </div>
-                    </div>
-                  </article>
-                ))}
-              </div>
-
-              <div className="cart-checkout">
-                <CheckoutAction
-                  disabled={cartCheckoutItems.length === 0}
-                  onCompleted={clearCart}
-                  product={product}
-                  items={cartCheckoutItems}
-                  buttonLabel={`Checkout cart · ${formatMoney(
-                    totalAmountMinor,
-                    cartProducts[0].currency,
-                  )}`}
-                />
-              </div>
-            </>
-          ) : (
-            <div className="cart-empty">
-              <strong>No products in cart yet.</strong>
-              <p className="muted">
-                Use Add to cart on any product page, then return here to submit one checkout intent
-                with multiple SKUs.
-              </p>
-            </div>
-          )}
-        </div>
-      </details>
       {toastMessage ? (
-        <div className="cart-toast" role="status" aria-live="polite">
+        <div
+          className={`cart-toast${toastVisible ? " visible" : ""}`}
+          role="status"
+          aria-live="polite"
+        >
           <div className="cart-toast-body">
-            <strong>Added to cart</strong>
+            <strong>{messages.cart.toastTitle}</strong>
             <span>{toastMessage}</span>
           </div>
           <button
@@ -419,10 +456,11 @@ export function ProductDetailPage({
             type="button"
             onClick={() => {
               setCartOpen(true);
+              setToastVisible(false);
               setToastMessage(null);
             }}
           >
-            View cart
+            {messages.actions.viewCart}
           </button>
         </div>
       ) : null}
@@ -603,12 +641,6 @@ function clampQuantity(quantity: number, maxQuantity: number) {
   return Math.max(1, Math.min(Math.round(quantity), maxQuantity));
 }
 
-function formatMoney(amountMinor: number, currency: string) {
-  return `${currency} ${new Intl.NumberFormat("en-US", {
-    maximumFractionDigits: 0,
-  }).format(amountMinor / 100)}`;
-}
-
 function formatProjectionLag(lagMs: number) {
   const safeLag = Math.max(0, lagMs);
 
@@ -623,8 +655,4 @@ function formatProjectionLag(lagMs: number) {
   }
 
   return `${Math.round(seconds / 60)}m`;
-}
-
-function formatNumber(value: number) {
-  return new Intl.NumberFormat("en-US").format(value);
 }

@@ -308,6 +308,9 @@ export default async function InternalBenchmarksPage({
         <Link className="text-link" href="/internal/admin">
           Projection admin
         </Link>
+        <Link className="text-link" href="/internal/design-system">
+          Design system
+        </Link>
         <Link className="text-link" href="/products">
           Products
         </Link>

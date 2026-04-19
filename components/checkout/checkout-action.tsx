@@ -4,6 +4,11 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import type { Product } from "@/src/domain/catalog/product";
+import {
+  type BuyerLocale,
+  getBuyerMessages,
+  normalizeBuyerLocale,
+} from "@/src/presentation/i18n/buyer-localization";
 
 export type CheckoutActionItem = {
   skuId: string;
@@ -46,14 +51,18 @@ export function CheckoutAction({
   product,
   items,
   buttonLabel = "Buy",
+  locale = "zh-TW",
 }: {
   disabled?: boolean;
   onCompleted?: () => void;
   product: Product;
   items?: CheckoutActionItem[];
   buttonLabel?: string;
+  locale?: BuyerLocale;
 }) {
   const router = useRouter();
+  const normalizedLocale = normalizeBuyerLocale(locale);
+  const messages = getBuyerMessages(normalizedLocale);
   const [state, setState] = useState<CheckoutActionState>({ phase: "idle" });
   const [checkoutIntentId, setCheckoutIntentId] = useState<string | null>(null);
 
@@ -80,7 +89,7 @@ export function CheckoutAction({
             phase: "ready",
             checkoutIntentId,
             status: body.status,
-            message: statusMessage(body),
+            message: statusMessage(body, normalizedLocale),
           });
         }
       } catch {
@@ -92,12 +101,12 @@ export function CheckoutAction({
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [checkoutIntentId]);
+  }, [checkoutIntentId, normalizedLocale]);
 
   async function buy() {
     setState({
       phase: "submitting",
-      message: "Submitting checkout intent.",
+      message: messages.checkout.submitting,
     });
 
     try {
@@ -131,7 +140,7 @@ export function CheckoutAction({
       setState({
         phase: "projecting",
         checkoutIntentId: body.checkoutIntentId,
-        message: "Checkout accepted. Refreshing projections.",
+        message: messages.checkout.accepted,
       });
 
       await processProjections();
@@ -139,7 +148,7 @@ export function CheckoutAction({
       setState({
         phase: "projecting",
         checkoutIntentId: body.checkoutIntentId,
-        message: "Completing checkout.",
+        message: messages.checkout.completing,
       });
 
       const completeResponse = await fetch(
@@ -163,7 +172,7 @@ export function CheckoutAction({
         phase: "completed",
         checkoutIntentId: body.checkoutIntentId,
         status: completedStatus.status,
-        message: statusMessage(completedStatus),
+        message: statusMessage(completedStatus, normalizedLocale),
       });
       onCompleted?.();
       router.refresh();
@@ -172,7 +181,7 @@ export function CheckoutAction({
       console.error("checkout_action_failed", error);
       setState({
         phase: "error",
-        message: "Checkout request could not be accepted. Please try again.",
+        message: messages.checkout.failed,
       });
     }
   }
@@ -183,7 +192,7 @@ export function CheckoutAction({
   return (
     <div className="checkout-demo">
       <button className="button primary" type="button" disabled={disabled} onClick={buy}>
-        {busy ? "Working" : buttonLabel}
+        {busy ? messages.actions.working : buttonLabel}
       </button>
       {state.phase !== "idle" ? (
         <div className={`checkout-demo-status ${state.phase}`}>
@@ -242,20 +251,22 @@ async function waitForCheckoutStatus(checkoutIntentId: string) {
   return (await response.json()) as CheckoutStatusResponse;
 }
 
-function statusMessage(body: CheckoutStatusResponse) {
+function statusMessage(body: CheckoutStatusResponse, locale: BuyerLocale) {
+  const messages = getBuyerMessages(locale);
+
   if (body.status === "queued") {
-    return `Checkout ${body.checkoutIntentId} is queued. Reservation processing is next.`;
+    return messages.checkout.queued(body.checkoutIntentId);
   }
 
   if (body.status === "rejected") {
-    return body.rejectionReason ?? "Checkout was rejected.";
+    return body.rejectionReason ?? messages.checkout.rejected;
   }
 
   if (body.status === "cancelled") {
-    return body.cancellationReason ?? "Checkout was cancelled.";
+    return body.cancellationReason ?? messages.checkout.cancelled;
   }
 
-  return `Checkout ${body.checkoutIntentId} status: ${body.status}.`;
+  return messages.checkout.status(body.checkoutIntentId, body.status);
 }
 
 async function readError(response: Response) {

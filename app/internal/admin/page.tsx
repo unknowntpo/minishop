@@ -17,6 +17,9 @@ export default async function InternalAdminPage() {
         <Link className="text-link" href="/products">
           Products
         </Link>
+        <Link className="text-link" href="/internal/design-system">
+          Design system
+        </Link>
         <Link className="text-link" href="/internal/benchmarks">
           Benchmark results
         </Link>
