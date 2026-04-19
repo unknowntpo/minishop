@@ -142,6 +142,13 @@ For comparable benchmark evidence, use a production-like app process such as
 evidence because development mode adds reload, diagnostics, and other behavior
 that can dominate ingress latency and throughput.
 
+Before drawing framework conclusions from benchmark failures, verify runtime
+resource lifecycle assumptions. A broken PostgreSQL pool singleton can look like
+an ingress or Next.js bottleneck even when the actual issue is per-request pool
+construction and connection exhaustion. Benchmark notes should call out when an
+observed throughput drop was caused by pool lifecycle bugs rather than by the
+architecture under test.
+
 For a clean local run, use:
 
 ```text

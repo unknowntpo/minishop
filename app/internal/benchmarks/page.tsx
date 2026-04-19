@@ -141,6 +141,7 @@ type CapacityPoint = {
   lag: number;
   p95LatencyMs: number;
   pass: boolean;
+  requestsPerSecond: number;
 };
 
 type ArchitectureLane = {
@@ -169,6 +170,7 @@ const previewArchitectureLanes: Record<string, ArchitectureLane[]> = {
           lag: 0,
           p95LatencyMs: 120,
           pass: true,
+          requestsPerSecond: 225,
         },
         {
           acceptedRate: 1,
@@ -178,6 +180,7 @@ const previewArchitectureLanes: Record<string, ArchitectureLane[]> = {
           lag: 0,
           p95LatencyMs: 180,
           pass: true,
+          requestsPerSecond: 420,
         },
         {
           acceptedRate: 1,
@@ -187,6 +190,7 @@ const previewArchitectureLanes: Record<string, ArchitectureLane[]> = {
           lag: 0,
           p95LatencyMs: 310,
           pass: true,
+          requestsPerSecond: 875,
         },
         {
           acceptedRate: 0.998,
@@ -196,6 +200,7 @@ const previewArchitectureLanes: Record<string, ArchitectureLane[]> = {
           lag: 0,
           p95LatencyMs: 520,
           pass: true,
+          requestsPerSecond: 1510,
         },
         {
           acceptedRate: 0.992,
@@ -205,6 +210,7 @@ const previewArchitectureLanes: Record<string, ArchitectureLane[]> = {
           lag: 14,
           p95LatencyMs: 980,
           pass: true,
+          requestsPerSecond: 2125,
         },
       ],
       safeConcurrency: 500,
@@ -224,6 +230,7 @@ const previewArchitectureLanes: Record<string, ArchitectureLane[]> = {
           lag: 0,
           p95LatencyMs: 90,
           pass: true,
+          requestsPerSecond: 252,
         },
         {
           acceptedRate: 1,
@@ -233,6 +240,7 @@ const previewArchitectureLanes: Record<string, ArchitectureLane[]> = {
           lag: 0,
           p95LatencyMs: 130,
           pass: true,
+          requestsPerSecond: 490,
         },
         {
           acceptedRate: 1,
@@ -242,6 +250,7 @@ const previewArchitectureLanes: Record<string, ArchitectureLane[]> = {
           lag: 0,
           p95LatencyMs: 220,
           pass: true,
+          requestsPerSecond: 1180,
         },
         {
           acceptedRate: 1,
@@ -251,6 +260,7 @@ const previewArchitectureLanes: Record<string, ArchitectureLane[]> = {
           lag: 0,
           p95LatencyMs: 340,
           pass: true,
+          requestsPerSecond: 2235,
         },
         {
           acceptedRate: 0.998,
@@ -260,6 +270,7 @@ const previewArchitectureLanes: Record<string, ArchitectureLane[]> = {
           lag: 0,
           p95LatencyMs: 620,
           pass: true,
+          requestsPerSecond: 3390,
         },
       ],
       safeConcurrency: 1000,
@@ -471,11 +482,25 @@ export default async function InternalBenchmarksPage({
                   valueFor={(point) => point.acceptedRate * 100}
                 />
                 <LaneMetricChart
+                  description="Ingress throughput by concurrency step inside the same architecture lane."
+                  label="request/sec"
+                  lanes={architectureLanes}
+                  unit="/s"
+                  valueFor={(point) => point.requestsPerSecond}
+                />
+                <LaneMetricChart
                   description="Tail latency at the checkout intent API boundary."
                   label="p95 latency"
                   lanes={architectureLanes}
                   unit="ms"
                   valueFor={(point) => point.p95LatencyMs}
+                />
+                <LaneMetricChart
+                  description="Durable append throughput across concurrency steps in the same architecture lane."
+                  label="append/sec"
+                  lanes={architectureLanes}
+                  unit="/s"
+                  valueFor={(point) => point.appendPerSecond}
                 />
                 <LaneMetricChart
                   description="Projection distance from durable events after processing completes."
@@ -883,11 +908,12 @@ function LaneMetricChart({
           const color = colors[laneIndex % colors.length];
           const points = lane.points
             .sort((left, right) => left.concurrency - right.concurrency)
-            .map((point, pointIndex, orderedPoints) => {
+            .map((point) => {
+              const stepIndex = allSteps.indexOf(point.concurrency);
               const x =
-                orderedPoints.length === 1
+                allSteps.length === 1 || stepIndex === -1
                   ? 192
-                  : 40 + (pointIndex / (orderedPoints.length - 1)) * 304;
+                  : 40 + (stepIndex / (allSteps.length - 1)) * 304;
               const y = 164 - (valueFor(point) / maxValue) * 132;
 
               return { point, x, y };
@@ -991,12 +1017,28 @@ function scenarioNameFor(run: BenchmarkRun) {
   return run.scenarioName ?? run.conditions?.workload?.scenarioName ?? "unknown";
 }
 
+function defaultArchitectureLaneForScenario(scenarioName: string) {
+  if (scenarioName === "checkout-postgres-baseline") {
+    return "postgres-baseline";
+  }
+
+  return scenarioName;
+}
+
 function architectureLaneFor(run: BenchmarkRun) {
-  return run.conditions?.workload?.architectureLane ?? scenarioNameFor(run);
+  return (
+    run.conditions?.workload?.architectureLane ??
+    defaultArchitectureLaneForScenario(scenarioNameFor(run))
+  );
 }
 
 function concurrencyFor(run: BenchmarkRun) {
-  return run.conditions?.workload?.httpConcurrency ?? run.scenario?.requestedBuyClicks ?? 0;
+  return (
+    run.conditions?.workload?.httpConcurrency ??
+    run.conditions?.workload?.requestedBuyClicks ??
+    run.scenario?.requestedBuyClicks ??
+    0
+  );
 }
 
 function buildArchitectureLanes(runs: BenchmarkRun[], scenarioName: string): ArchitectureLane[] {
@@ -1033,6 +1075,7 @@ function buildArchitectureLanes(runs: BenchmarkRun[], scenarioName: string): Arc
       lag: readProjectionLagEvents(run) ?? 0,
       p95LatencyMs: run.requestPath?.p95LatencyMs ?? 0,
       pass: run.pass ?? false,
+      requestsPerSecond: run.requestPath?.requestsPerSecond ?? 0,
     }));
 
     return {
