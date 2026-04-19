@@ -36,16 +36,18 @@ describe("Products", () => {
   });
 
   it("renders product detail without static checkout status preview", async () => {
+    window.localStorage.clear();
+    const products = await staticCatalogRepository.listProducts();
     const product = await staticCatalogRepository.findProductBySlug("everyday-tee");
 
     if (!product) {
       throw new Error("Missing everyday tee fixture");
     }
 
-    render(<ProductDetailPage product={product} />);
+    render(<ProductDetailPage product={product} products={products} />);
 
     expect(screen.getByRole("heading", { name: "Everyday Tee" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Buy" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Buy now" })).toBeInTheDocument();
     expect(screen.queryByText("Accepted does not mean reserved.")).not.toBeInTheDocument();
     expect(screen.queryByText("Request received")).not.toBeInTheDocument();
   });

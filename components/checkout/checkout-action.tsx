@@ -41,10 +41,14 @@ type CheckoutActionState =
     };
 
 export function CheckoutAction({
+  disabled: disabledProp = false,
+  onCompleted,
   product,
   items,
   buttonLabel = "Buy",
 }: {
+  disabled?: boolean;
+  onCompleted?: () => void;
   product: Product;
   items?: CheckoutActionItem[];
   buttonLabel?: string;
@@ -161,6 +165,7 @@ export function CheckoutAction({
         status: completedStatus.status,
         message: statusMessage(completedStatus),
       });
+      onCompleted?.();
       router.refresh();
       router.push(`/checkout-complete/${body.checkoutIntentId}`);
     } catch (error) {
@@ -172,7 +177,7 @@ export function CheckoutAction({
     }
   }
 
-  const disabled = state.phase === "submitting" || state.phase === "projecting";
+  const disabled = disabledProp || state.phase === "submitting" || state.phase === "projecting";
 
   return (
     <div className="checkout-demo">

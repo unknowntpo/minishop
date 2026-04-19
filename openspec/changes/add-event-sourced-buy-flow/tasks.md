@@ -51,6 +51,7 @@
 - [x] 5.7 Implement product catalog browsing preview for Limited Runner, Everyday Tee, and Travel Cap SKU pages
 - [x] 5.8 Implement Use request and trace IDs without exposing internals in API error responses and frontend error display
 - [x] 5.9 Implement Use internal admin projection verification page for products, SKUs, inventory projections, checkout projections, and checkpoints
+- [x] 5.10 Implement product page quantity selection plus local cart checkout flow for multi-SKU and multi-quantity demo usage
 
 ## 6. Deferred Kafka Path
 
