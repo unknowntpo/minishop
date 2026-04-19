@@ -9,7 +9,12 @@ if (!databaseUrl) {
 }
 
 const parsedDatabaseUrl = new URL(databaseUrl);
-const allowedHosts = new Set(["localhost", "127.0.0.1", "::1"]);
+const allowedHosts = new Set([
+  "localhost",
+  "127.0.0.1",
+  "::1",
+  ...readCsvEnv("MINISHOP_ALLOWED_RESET_HOSTS"),
+]);
 const databaseName = parsedDatabaseUrl.pathname.replace(/^\//, "");
 
 if (process.env.MINISHOP_ALLOW_DB_RESET !== "1") {
@@ -24,6 +29,19 @@ const pool = new Pool({
   connectionString: databaseUrl,
   max: 1,
 });
+
+function readCsvEnv(name: string) {
+  const value = process.env[name]?.trim();
+
+  if (!value) {
+    return [];
+  }
+
+  return value
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+}
 
 async function main() {
   // Reset app tables and Drizzle's migration journal together so migrate never reports a false clean state.

@@ -77,8 +77,16 @@ type BenchmarkReport = {
   scenario?: {
     requestedBuyClicks?: number;
     skuId?: string;
+    skuIds?: string[];
     workloadType?: string;
     cartSkuCount?: number;
+    quantityPerIntent?: number;
+    items?: Array<{
+      skuId: string;
+      quantity: number;
+      unitPriceAmountMinor: number;
+      currency: string;
+    }>;
   };
   requestPath?: {
     accepted?: number;
@@ -111,12 +119,25 @@ type BenchmarkReport = {
     checkoutProjectionCount?: number;
     checkoutStatusDistribution?: Record<string, number>;
     skuInventory?: {
+      skuId?: string;
       noOversell?: boolean;
+      matchesAccounting?: boolean;
+      unchangedFromSeed?: boolean;
       onHand?: number;
       available?: number;
       reserved?: number;
       sold?: number;
     } | null;
+    skuInventories?: Array<{
+      skuId?: string;
+      noOversell?: boolean;
+      matchesAccounting?: boolean;
+      unchangedFromSeed?: boolean;
+      onHand?: number;
+      available?: number;
+      reserved?: number;
+      sold?: number;
+    }> | null;
   };
 };
 
@@ -1124,6 +1145,10 @@ function scenarioDescription(name: string) {
     return "Single hot SKU checkout intent ingress benchmark. It measures API acceptance, durable event append, projection catch-up, idempotency, and no synchronous inventory decrement.";
   }
 
+  if (name === "checkout-postgres-multi-sku-cart") {
+    return "Multi-SKU cart checkout ingress benchmark. It measures mixed-cart acceptance, durable event append, projection catch-up, idempotency, and per-SKU inventory invariants without reservation processing.";
+  }
+
   return "Benchmark scenario. Compare only with runs from the same scenario and compatible run conditions.";
 }
 
@@ -1148,6 +1173,18 @@ function formatDistribution(values: Record<string, number> | undefined) {
 }
 
 function formatInventorySummary(run: BenchmarkRun) {
+  const inventories = run.projections?.skuInventories;
+
+  if (inventories && inventories.length > 0) {
+    const failed = inventories.filter(
+      (inventory) =>
+        !inventory.noOversell || !inventory.matchesAccounting || !inventory.unchangedFromSeed,
+    ).length;
+    const skuList = inventories.map((inventory) => inventory.skuId ?? "unknown").join(", ");
+
+    return `${inventories.length} sku · ${failed === 0 ? "all invariants ok" : `${failed} invariant failures`} · ${skuList}`;
+  }
+
   const inventory = run.projections?.skuInventory;
 
   if (!inventory) {
@@ -1156,7 +1193,11 @@ function formatInventorySummary(run: BenchmarkRun) {
 
   return `available ${formatNumber(inventory.available)} · reserved ${formatNumber(
     inventory.reserved,
-  )} · sold ${formatNumber(inventory.sold)} · ${inventory.noOversell ? "no oversell" : "risk"}`;
+  )} · sold ${formatNumber(inventory.sold)} · ${
+    inventory.noOversell && inventory.matchesAccounting && inventory.unchangedFromSeed
+      ? "all invariants ok"
+      : "risk"
+  }`;
 }
 
 function formatIdempotencySummary(run: BenchmarkRun) {

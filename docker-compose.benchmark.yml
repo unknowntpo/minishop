@@ -1,0 +1,62 @@
+services:
+  benchmark-postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: minishop
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "${MINISHOP_BENCHMARK_POSTGRES_PORT:-5543}:5432"
+    volumes:
+      - minishop_benchmark_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d minishop"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  benchmark-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@benchmark-postgres:5432/minishop
+      HOSTNAME: 0.0.0.0
+      PORT: 3000
+    ports:
+      - "${MINISHOP_BENCHMARK_APP_PORT:-3300}:3000"
+    depends_on:
+      benchmark-postgres:
+        condition: service_healthy
+    command: >
+      sh -lc "pnpm db:migrate && pnpm db:seed:dev && pnpm start"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"fetch('http://127.0.0.1:3000/products').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))\"",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+  benchmark-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@benchmark-postgres:5432/minishop
+      BENCHMARK_APP_URL: http://benchmark-app:3000
+      BENCHMARK_NEXT_MODE: next start
+      MINISHOP_ALLOWED_RESET_HOSTS: benchmark-postgres
+    depends_on:
+      benchmark-app:
+        condition: service_healthy
+    profiles: ["runner"]
+    command: ["pnpm", "benchmark:checkout:postgres:cart:reset"]
+
+volumes:
+  minishop_benchmark_postgres_data:

@@ -18,6 +18,13 @@ or realtime transports are introduced.
 - **WHEN** the benchmark runs with its default configuration
 - **THEN** it SHALL submit 1,000 checkout intent requests for `sku_hot_001` with quantity `1` and one unique idempotency key per simulated buyer
 
+#### Scenario: Multi-SKU cart ingress benchmark is a separate scenario family
+
+- **WHEN** operators run the cart-ingress benchmark variant
+- **THEN** it SHALL write artifacts under a separate scenario family such as `checkout-postgres-multi-sku-cart`
+- **AND** it SHALL keep the same PostgreSQL-only boundary, idempotency replay check, projection catch-up verification, and inventory invariant checks as the single hot SKU benchmark
+- **AND** it SHALL report the exact cart SKU count, quantity per intent, and per-SKU inventory verification results so mixed-cart ingress can be compared without polluting single-SKU baseline history
+
 #### Scenario: Benchmark excludes reservation processing
 
 - **WHEN** `checkout-postgres-baseline` completes
@@ -74,6 +81,13 @@ or realtime transports are introduced.
 
 - **WHEN** the system measures cart checkout pressure across multiple SKUs
 - **THEN** it SHALL use a separate benchmark phase so single hot SKU ingress metrics are not mixed with multi-SKU saga and all-or-nothing reservation metrics
+
+#### Scenario: Inventory invariants are checked for every benchmarked SKU
+
+- **WHEN** the benchmark workload contains more than one SKU
+- **THEN** the benchmark report SHALL verify each SKU projection row independently
+- **AND** each row SHALL prove `available = on_hand - reserved - sold`
+- **AND** each row SHALL prove the ingress-only benchmark did not change seed inventory counters before reservation workers are introduced
 
 ### Requirement: Benchmark Result Dashboard
 

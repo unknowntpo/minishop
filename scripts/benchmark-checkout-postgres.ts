@@ -8,6 +8,15 @@ import { Pool } from "pg";
 
 const scenarioName = "checkout-postgres-baseline";
 
+type WorkloadType = "single_sku_direct_buy" | "multi_sku_cart_checkout";
+
+type BenchmarkItem = {
+  skuId: string;
+  quantity: number;
+  unitPriceAmountMinor: number;
+  currency: string;
+};
+
 type BenchmarkConfig = {
   appUrl: string;
   architectureLane: string;
@@ -19,7 +28,9 @@ type BenchmarkConfig = {
   postgresInstanceCount: number;
   postgresPoolMax: number;
   projectionBatchSize: number;
-  skuId: string;
+  scenarioName: string;
+  workloadType: WorkloadType;
+  items: BenchmarkItem[];
   buyerPrefix: string;
   runId: string;
   resultsDir: string;
@@ -62,6 +73,18 @@ type EventTypeDistributionRow = {
   count: string | number;
 };
 
+type InventorySnapshot = {
+  skuId: string;
+  onHand: number;
+  reserved: number;
+  sold: number;
+  available: number;
+  lastEventId: number;
+  aggregateVersion: number;
+  noOversell: boolean;
+  matchesAccounting: boolean;
+};
+
 const config = readConfig();
 
 async function main() {
@@ -73,6 +96,7 @@ async function main() {
 
   try {
     const beforeEventCount = await readEventCount(pool);
+    const beforeInventory = await readInventory(pool, benchmarkSkuIds(config.items));
     const startedAt = performance.now();
     // Keep the load shape explicit: the benchmark may submit many requests, but
     // only up to BENCHMARK_HTTP_CONCURRENCY should be in flight at once.
@@ -89,7 +113,7 @@ async function main() {
         readEventCount(pool),
         readEventTypeDistribution(pool),
         readStatusDistribution(pool),
-        readInventory(pool, config.skuId),
+        readInventory(pool, benchmarkSkuIds(config.items)),
         readCheckpoint(pool),
       ]);
 
@@ -98,15 +122,31 @@ async function main() {
     const latencies = results.map((result) => result.latencyMs);
     const appendedEvents = afterEventCount - beforeEventCount;
     const finishedAtIso = new Date().toISOString();
+    const inventoryChecks = inventory.map((item) => {
+      const baseline = beforeInventory.find((entry) => entry.skuId === item.skuId);
+
+      return {
+        ...item,
+        unchangedFromSeed:
+          baseline !== undefined &&
+          baseline.onHand === item.onHand &&
+          baseline.reserved === item.reserved &&
+          baseline.sold === item.sold &&
+          baseline.available === item.available,
+      };
+    });
     const pass =
       errors === 0 &&
       appendedEvents === accepted &&
-      Math.max(0, afterEventCount - checkpoint) === 0;
+      Math.max(0, afterEventCount - checkpoint) === 0 &&
+      inventoryChecks.every(
+        (item) => item.noOversell && item.matchesAccounting && item.unchangedFromSeed,
+      );
 
     const report = {
       schemaVersion: 1,
       runId: config.runId,
-      scenarioName,
+      scenarioName: config.scenarioName,
       startedAt: startedAtIso,
       finishedAt: finishedAtIso,
       environment: {
@@ -124,12 +164,13 @@ async function main() {
       conditions: buildRunConditions(),
       pass,
       scenario: {
-        skuId: config.skuId,
-        workloadType: "single_sku_direct_buy",
+        skuIds: benchmarkSkuIds(config.items),
+        workloadType: config.workloadType,
         requestedBuyClicks: config.requests,
         httpConcurrency: config.httpConcurrency,
-        cartSkuCount: 1,
-        quantityPerIntent: 1,
+        cartSkuCount: config.items.length,
+        quantityPerIntent: totalQuantityPerIntent(config.items),
+        items: config.items,
       },
       requestPath: {
         accepted,
@@ -176,7 +217,8 @@ async function main() {
           0,
         ),
         checkoutStatusDistribution: statusDistribution,
-        skuInventory: inventory,
+        skuInventory: inventoryChecks[0] ?? null,
+        skuInventories: inventoryChecks,
       },
       notes: [
         "Kafka, Redis, SSE, WebSocket, and real payment providers are intentionally excluded.",
@@ -220,14 +262,7 @@ async function postCheckoutIntent(index: number, idempotencyKey: string): Promis
       },
       body: JSON.stringify({
         buyerId: `${config.buyerPrefix}_${index}`,
-        items: [
-          {
-            skuId: config.skuId,
-            quantity: 1,
-            unitPriceAmountMinor: 100000,
-            currency: "TWD",
-          },
-        ],
+        items: config.items,
       }),
     });
     const latencyMs = Math.round(performance.now() - startedAt);
@@ -340,22 +375,18 @@ async function readStatusDistribution(pool: Pool) {
   return Object.fromEntries(result.rows.map((row) => [row.status, Number(row.count)]));
 }
 
-async function readInventory(pool: Pool, skuId: string) {
+async function readInventory(pool: Pool, skuIds: string[]) {
   const result = await pool.query<InventoryRow>(
     `
       select sku_id, on_hand, reserved, sold, available, last_event_id, aggregate_version
       from sku_inventory_projection
-      where sku_id = $1
+      where sku_id = any($1::text[])
+      order by sku_id
     `,
-    [skuId],
+    [skuIds],
   );
-  const row = result.rows[0];
 
-  if (!row) {
-    return null;
-  }
-
-  return {
+  return result.rows.map((row) => ({
     skuId: row.sku_id,
     onHand: row.on_hand,
     reserved: row.reserved,
@@ -364,7 +395,8 @@ async function readInventory(pool: Pool, skuId: string) {
     lastEventId: Number(row.last_event_id),
     aggregateVersion: Number(row.aggregate_version),
     noOversell: row.available >= 0 && row.reserved >= 0 && row.sold >= 0,
-  };
+    matchesAccounting: row.available === row.on_hand - row.reserved - row.sold,
+  }));
 }
 
 function buildRunConditions() {
@@ -408,14 +440,14 @@ function buildRunConditions() {
       },
     },
     workload: {
-      scenarioName,
-      workloadType: "single_sku_direct_buy",
+      scenarioName: config.scenarioName,
+      workloadType: config.workloadType,
       architectureLane: config.architectureLane,
       requestedBuyClicks: config.requests,
       httpConcurrency: config.httpConcurrency,
-      skuId: config.skuId,
-      cartSkuCount: 1,
-      quantityPerIntent: 1,
+      skuId: config.items[0]?.skuId,
+      cartSkuCount: config.items.length,
+      quantityPerIntent: totalQuantityPerIntent(config.items),
       projectionBatchSize: config.projectionBatchSize,
     },
   };
@@ -481,7 +513,7 @@ async function runWithConcurrency<T>(
 }
 
 async function writeBenchmarkArtifact(report: object) {
-  const directory = path.join(config.resultsDir, scenarioName);
+  const directory = path.join(config.resultsDir, config.scenarioName);
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
   const filePath = path.join(directory, `${timestamp}_${config.runId}.json`);
 
@@ -509,11 +541,132 @@ function readConfig(): BenchmarkConfig {
     postgresInstanceCount: readPositiveIntegerEnv("BENCHMARK_POSTGRES_INSTANCES", 1),
     postgresPoolMax: readPositiveIntegerEnv("BENCHMARK_POSTGRES_POOL_MAX", 5),
     projectionBatchSize: readPositiveIntegerEnv("BENCHMARK_PROJECTION_BATCH_SIZE", 1000),
-    skuId: process.env.BENCHMARK_SKU_ID ?? "sku_hot_001",
+    workloadType: readWorkloadType(),
+    scenarioName: readScenarioName(),
+    items: readBenchmarkItems(),
     buyerPrefix: process.env.BENCHMARK_BUYER_PREFIX ?? "benchmark_buyer",
     runId: process.env.BENCHMARK_RUN_ID ?? `bench_${Date.now()}`,
     resultsDir: process.env.BENCHMARK_RESULTS_DIR ?? "benchmark-results",
   };
+}
+
+function readWorkloadType(): WorkloadType {
+  const raw = process.env.BENCHMARK_WORKLOAD_TYPE?.trim();
+
+  if (!raw || raw === "single_sku_direct_buy") {
+    return "single_sku_direct_buy";
+  }
+
+  if (raw === "multi_sku_cart_checkout") {
+    return "multi_sku_cart_checkout";
+  }
+
+  throw new Error(
+    "BENCHMARK_WORKLOAD_TYPE must be single_sku_direct_buy or multi_sku_cart_checkout.",
+  );
+}
+
+function readScenarioName() {
+  return process.env.BENCHMARK_SCENARIO_NAME?.trim() || scenarioNameForWorkload(readWorkloadType());
+}
+
+function readBenchmarkItems(): BenchmarkItem[] {
+  const raw = process.env.BENCHMARK_ITEMS?.trim();
+
+  if (!raw) {
+    return defaultItemsForWorkload(readWorkloadType());
+  }
+
+  const items = raw.split(",").map(parseBenchmarkItem);
+
+  if (items.length === 0) {
+    throw new Error("BENCHMARK_ITEMS must define at least one benchmark item.");
+  }
+
+  return items;
+}
+
+function parseBenchmarkItem(rawItem: string): BenchmarkItem {
+  const [skuId, quantityRaw, unitPriceRaw, currency] = rawItem
+    .split(":")
+    .map((part) => part.trim());
+  const quantity = Number(quantityRaw);
+  const unitPriceAmountMinor = Number(unitPriceRaw);
+
+  if (!skuId) {
+    throw new Error(`Invalid BENCHMARK_ITEMS entry "${rawItem}": skuId is required.`);
+  }
+
+  if (!Number.isInteger(quantity) || quantity <= 0) {
+    throw new Error(`Invalid BENCHMARK_ITEMS entry "${rawItem}": quantity must be positive.`);
+  }
+
+  if (!Number.isInteger(unitPriceAmountMinor) || unitPriceAmountMinor <= 0) {
+    throw new Error(
+      `Invalid BENCHMARK_ITEMS entry "${rawItem}": unit price must be a positive integer.`,
+    );
+  }
+
+  if (!currency) {
+    throw new Error(`Invalid BENCHMARK_ITEMS entry "${rawItem}": currency is required.`);
+  }
+
+  return {
+    skuId,
+    quantity,
+    unitPriceAmountMinor,
+    currency,
+  };
+}
+
+function defaultItemsForWorkload(workloadType: WorkloadType): BenchmarkItem[] {
+  if (workloadType === "multi_sku_cart_checkout") {
+    return [
+      {
+        skuId: "sku_hot_001",
+        quantity: 1,
+        unitPriceAmountMinor: 100000,
+        currency: "TWD",
+      },
+      {
+        skuId: "sku_tee_001",
+        quantity: 2,
+        unitPriceAmountMinor: 68000,
+        currency: "TWD",
+      },
+      {
+        skuId: "sku_cap_001",
+        quantity: 1,
+        unitPriceAmountMinor: 42000,
+        currency: "TWD",
+      },
+    ];
+  }
+
+  return [
+    {
+      skuId: process.env.BENCHMARK_SKU_ID ?? "sku_hot_001",
+      quantity: 1,
+      unitPriceAmountMinor: 100000,
+      currency: "TWD",
+    },
+  ];
+}
+
+function scenarioNameForWorkload(workloadType: WorkloadType) {
+  if (workloadType === "multi_sku_cart_checkout") {
+    return "checkout-postgres-multi-sku-cart";
+  }
+
+  return scenarioName;
+}
+
+function benchmarkSkuIds(items: BenchmarkItem[]) {
+  return [...new Set(items.map((item) => item.skuId))];
+}
+
+function totalQuantityPerIntent(items: BenchmarkItem[]) {
+  return items.reduce((total, item) => total + item.quantity, 0);
 }
 
 function readPositiveIntegerEnv(name: string, fallback: number) {
