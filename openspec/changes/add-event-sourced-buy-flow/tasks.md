@@ -68,3 +68,5 @@
 - [x] 7.7 Add Benchmark Result Dashboard for local checkout-postgres-baseline artifacts and bottleneck trends
 - [x] 7.8 Add dev-only isolated benchmark reset path for local PostgreSQL before clean checkout-postgres-baseline runs
 - [x] 7.9 Add benchmark runner orchestration with app preflight, optional reset, raw benchmark execution, and latest artifact summary
+- [x] 7.10 Add architecture lane and concurrency curve benchmark dashboard view with explicit preview/mock future lanes
+- [x] 7.11 Add production-only concurrency sweep runner for architecture lane capacity curves

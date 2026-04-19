@@ -27,7 +27,8 @@
     "db:studio": "drizzle-kit studio",
     "benchmark:checkout:postgres:raw": "tsx scripts/benchmark-checkout-postgres.ts",
     "benchmark:checkout:postgres": "tsx scripts/run-checkout-postgres-benchmark.ts",
-    "benchmark:checkout:postgres:reset": "BENCHMARK_RESET=1 tsx scripts/run-checkout-postgres-benchmark.ts"
+    "benchmark:checkout:postgres:reset": "BENCHMARK_RESET=1 tsx scripts/run-checkout-postgres-benchmark.ts",
+    "benchmark:checkout:postgres:sweep": "tsx scripts/run-checkout-postgres-sweep.ts"
   },
   "dependencies": {
     "drizzle-orm": "^0.45.2",

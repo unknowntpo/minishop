@@ -285,6 +285,96 @@ button {
   animation: benchmark-expand 180ms ease-out;
 }
 
+.capacity-lane-grid,
+.capacity-chart-grid {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.capacity-lane-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.capacity-lane-card,
+.capacity-chart-card {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  border: 1px solid var(--ms-line-soft);
+  border-radius: var(--ms-radius);
+  padding: 14px;
+  background: var(--ms-surface);
+}
+
+.capacity-lane-header,
+.capacity-chart-header {
+  display: grid;
+  gap: 8px;
+}
+
+.capacity-lane-header strong,
+.capacity-chart-header strong {
+  overflow-wrap: anywhere;
+}
+
+.capacity-chart-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.capacity-chart {
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.capacity-axis,
+.capacity-line {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+}
+
+.capacity-axis {
+  stroke: var(--ms-line);
+}
+
+.capacity-line.preview,
+.capacity-point.preview,
+.capacity-legend-swatch.preview {
+  opacity: 0.72;
+}
+
+.capacity-axis-label {
+  fill: var(--ms-muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-anchor: middle;
+}
+
+.capacity-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+.capacity-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--ms-muted);
+  font-size: 13px;
+}
+
+.capacity-legend-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  flex: 0 0 auto;
+}
+
 .benchmark-run-comparison h3 {
   margin: 0;
   font-size: 28px;
@@ -348,9 +438,15 @@ button {
 }
 
 .benchmark-comparison-card > strong {
-  display: inline-flex;
-  align-items: center;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
   gap: 8px;
+  min-width: 0;
+}
+
+.benchmark-comparison-card > strong > span {
+  min-width: 0;
 }
 
 .benchmark-info {
@@ -374,11 +470,12 @@ button {
 .benchmark-info-card {
   position: absolute;
   top: calc(100% + 8px);
-  left: 50%;
+  left: auto;
+  right: 0;
   z-index: 20;
   display: grid;
-  gap: 6px;
-  width: 260px;
+  gap: 8px;
+  width: min(320px, calc(100vw - 32px));
   padding: 10px 12px;
   border: 1px solid var(--ms-line);
   border-radius: var(--ms-radius);
@@ -390,7 +487,9 @@ button {
   line-height: 1.45;
   opacity: 0;
   pointer-events: none;
-  transform: translate(-50%, 4px);
+  text-align: left;
+  white-space: normal;
+  transform: translateY(4px);
   transition:
     opacity 120ms ease,
     transform 120ms ease;
@@ -401,10 +500,29 @@ button {
   font-weight: 850;
 }
 
+.benchmark-info-row {
+  display: grid;
+  gap: 4px;
+}
+
+.benchmark-info-row em {
+  color: var(--ms-muted);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.benchmark-info-row code {
+  overflow-wrap: anywhere;
+  color: var(--ms-ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+}
+
 .benchmark-info:hover .benchmark-info-card,
 .benchmark-info:focus-visible .benchmark-info-card {
   opacity: 1;
-  transform: translate(-50%, 0);
+  transform: translateY(0);
 }
 
 .benchmark-kv-list {
@@ -1033,7 +1151,9 @@ h2 {
 
   .benchmark-comparison-grid,
   .benchmark-flow,
-  .benchmark-scenario-grid {
+  .benchmark-scenario-grid,
+  .capacity-chart-grid,
+  .capacity-lane-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -1078,7 +1198,9 @@ h2 {
 
   .benchmark-comparison-grid,
   .benchmark-flow,
-  .benchmark-scenario-grid {
+  .benchmark-scenario-grid,
+  .capacity-chart-grid,
+  .capacity-lane-grid {
     grid-template-columns: 1fr;
   }
 
@@ -1092,6 +1214,21 @@ h2 {
 
   .benchmark-run-comparison h3 {
     font-size: 24px;
+  }
+
+  .benchmark-comparison-card > strong {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .benchmark-info-card {
+    position: fixed;
+    top: auto;
+    right: 12px;
+    bottom: 12px;
+    left: 12px;
+    width: auto;
+    max-height: min(60vh, 420px);
+    overflow: auto;
   }
 
   .floating-cart {

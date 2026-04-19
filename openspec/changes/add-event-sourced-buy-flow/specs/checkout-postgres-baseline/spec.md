@@ -32,6 +32,13 @@ or realtime transports are introduced.
 
 - **WHEN** the benchmark writes a result artifact
 - **THEN** it SHALL include hardware, software, service topology, and workload conditions including Node/runtime, Next.js mode and instance count, PostgreSQL host/port/database/instance count/pool size, Redis and Kafka enabled state, CPU count/model, memory, request count, concurrency, SKU count, and projection batch size
+- **AND** the benchmark SHALL record an architecture lane identifier and concurrency step so future dashboards can compare both system eras and load curves
+
+#### Scenario: Production-like app mode is used for architecture evidence
+
+- **WHEN** operators use benchmark results to compare architecture capacity or bottlenecks
+- **THEN** they SHALL use a production-like app process such as `next start`
+- **AND** `next dev` SHALL NOT be treated as comparable architecture evidence because development diagnostics distort throughput and latency
 
 #### Scenario: Benchmark records event store metrics
 
@@ -92,6 +99,13 @@ results without storing benchmark observations in the domain event store.
 - **AND** the reset variant SHALL run the local database reset path before the raw benchmark
 - **AND** the runner SHALL print a concise summary from the latest benchmark artifact after completion
 
+#### Scenario: Production concurrency sweep generates one architecture lane
+
+- **WHEN** an operator runs `pnpm benchmark:checkout:postgres:sweep`
+- **THEN** the system SHALL execute a production-like concurrency sweep for one architecture lane across multiple configured concurrency steps
+- **AND** each step SHALL reset local database state before measuring the next point
+- **AND** each artifact SHALL preserve the same scenario and architecture lane while recording a distinct concurrency step
+
 #### Scenario: Dashboard reads benchmark artifacts
 
 - **WHEN** an operator opens `/internal/benchmarks`
@@ -121,6 +135,18 @@ results without storing benchmark observations in the domain event store.
 - **AND** choosing the already selected scenario SHALL collapse the run comparison so operators can return to the scenario overview
 - **AND** the run comparison SHALL render inside the scenario family section to preserve the parent-child hierarchy
 - **AND** scenario selection SHALL preserve the operator's local reading position instead of jumping back to the top of the page
+
+#### Scenario: Dashboard compares architecture lanes and concurrency curves
+
+- **WHEN** benchmark artifacts contain runs from multiple architecture lanes or concurrency steps
+- **THEN** the dashboard SHALL compare those runs as capacity curves rather than as isolated latest values
+- **AND** operators SHALL be able to see safe concurrency, bottleneck shift, and metric movement across architecture lanes for the same workload
+
+#### Scenario: Dashboard supports preview future lanes with explicit mock data
+
+- **WHEN** future architecture eras do not yet have measured runs
+- **THEN** the dashboard SHALL render clearly labeled preview lanes with mock data when operators intentionally supply preview data so UI behavior and information hierarchy can be tuned before the real systems exist
+- **AND** preview lanes SHALL be visually distinct from artifact-backed measured runs
 
 #### Scenario: Dashboard explains evidence matrix purpose
 

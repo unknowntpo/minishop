@@ -10,6 +10,7 @@ const scenarioName = "checkout-postgres-baseline";
 
 type BenchmarkConfig = {
   appUrl: string;
+  architectureLane: string;
   databaseUrl: string;
   requests: number;
   httpConcurrency: number;
@@ -409,6 +410,7 @@ function buildRunConditions() {
     workload: {
       scenarioName,
       workloadType: "single_sku_direct_buy",
+      architectureLane: config.architectureLane,
       requestedBuyClicks: config.requests,
       httpConcurrency: config.httpConcurrency,
       skuId: config.skuId,
@@ -498,6 +500,7 @@ function readConfig(): BenchmarkConfig {
 
   return {
     appUrl: process.env.BENCHMARK_APP_URL ?? "http://localhost:3000",
+    architectureLane: process.env.BENCHMARK_ARCHITECTURE_LANE ?? "postgres-baseline",
     databaseUrl,
     requests: readPositiveIntegerEnv("BENCHMARK_REQUESTS", 1000),
     httpConcurrency: readPositiveIntegerEnv("BENCHMARK_HTTP_CONCURRENCY", 1000),

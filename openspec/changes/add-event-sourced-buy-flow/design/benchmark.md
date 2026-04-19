@@ -92,6 +92,26 @@ The script command is:
 pnpm benchmark:checkout:postgres
 ```
 
+For a production-like concurrency sweep, use:
+
+```text
+pnpm benchmark:checkout:postgres:sweep
+```
+
+That command should keep the same architecture lane and workload shape while
+varying only concurrency steps such as:
+
+```text
+50
+100
+250
+500
+1000
+```
+
+The sweep should reset local database state before each step so checkout counts,
+projection counts, and inventory verification stay isolated per point.
+
 The operator-facing benchmark command should behave like a runner:
 
 ```text
@@ -116,6 +136,11 @@ applied migrations
 seeded catalog/inventory projections
 running Next.js app
 ```
+
+For comparable benchmark evidence, use a production-like app process such as
+`next start`. Do not treat `next dev` numbers as architecture capacity
+evidence because development mode adds reload, diagnostics, and other behavior
+that can dominate ingress latency and throughput.
 
 For a clean local run, use:
 
@@ -152,6 +177,25 @@ artifacts, not product data, migration fixtures, or domain events.
 to record a configured concurrency value in the artifact while still launching
 all requests in an unbounded `Promise.all`, because that misstates the load
 shape under test.
+
+Future benchmark artifacts should also record:
+
+```text
+architecture_lane
+concurrency_step
+```
+
+`architecture_lane` groups runs by system era, for example:
+
+```text
+postgres-baseline
+postgres-worker
+postgres-outbox-kafka
+postgres-kafka-redis
+```
+
+This keeps "same workload, different architecture" comparisons separate from
+"same architecture, different concurrency" comparisons.
 
 ## Metrics
 
@@ -245,6 +289,23 @@ checkout_projection_count == accepted_count
 
 For `checkout-postgres-baseline`, `queued` is an acceptable final projection
 status because reservation processing is out of scope.
+
+## Dashboard Evolution
+
+The benchmark dashboard should support two complementary views:
+
+```text
+within one architecture lane:
+  compare concurrency steps to find the safe operating range
+
+across architecture lanes:
+  compare how much each system era improves accepted rate, p95 latency,
+  projection lag, and append throughput for the same workload
+```
+
+For early UI work, preview lanes may be shown with explicit mock data while
+future architectures such as Kafka or worker split do not exist yet. Preview
+lanes must be clearly labeled so they are never confused with measured runs.
 
 ### Inventory Correctness
 
