@@ -6,11 +6,16 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 
 const defaultConcurrencySteps = [50, 100, 250, 500, 1000];
+const cartScenarioName = "checkout-postgres-multi-sku-cart";
 
 async function main() {
   const appUrl = process.env.BENCHMARK_APP_URL ?? "http://localhost:3000";
   const lane = process.env.BENCHMARK_ARCHITECTURE_LANE ?? "postgres-baseline";
   const concurrencySteps = readConcurrencySteps();
+  const workloadType = readWorkloadType();
+  const resolvedScenarioName =
+    process.env.BENCHMARK_SCENARIO_NAME ??
+    (workloadType === "multi_sku_cart_checkout" ? cartScenarioName : "checkout-postgres-baseline");
 
   await assertAppReachable(appUrl);
 
@@ -20,6 +25,8 @@ async function main() {
       {
         appUrl,
         architectureLane: lane,
+        scenarioName: resolvedScenarioName,
+        workloadType,
         requests: process.env.BENCHMARK_REQUESTS ?? 1000,
         concurrencySteps,
       },
@@ -35,6 +42,8 @@ async function main() {
       ...process.env,
       BENCHMARK_APP_URL: appUrl,
       BENCHMARK_ARCHITECTURE_LANE: lane,
+      BENCHMARK_SCENARIO_NAME: resolvedScenarioName,
+      BENCHMARK_WORKLOAD_TYPE: workloadType,
       BENCHMARK_HTTP_CONCURRENCY: String(concurrency),
       BENCHMARK_NEXT_MODE: "next start",
     });
@@ -83,6 +92,14 @@ function readConcurrencySteps() {
   }
 
   return [...new Set(parsed)];
+}
+
+function readWorkloadType() {
+  if (process.env.BENCHMARK_WORKLOAD_TYPE === "multi_sku_cart_checkout") {
+    return "multi_sku_cart_checkout";
+  }
+
+  return "single_sku_direct_buy";
 }
 
 main().catch((error) => {

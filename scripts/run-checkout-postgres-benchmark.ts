@@ -7,10 +7,12 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const scenarioName = "checkout-postgres-baseline";
+const cartScenarioName = "checkout-postgres-multi-sku-cart";
 
 async function main() {
   const appUrl = process.env.BENCHMARK_APP_URL ?? "http://localhost:3000";
   const shouldReset = process.env.BENCHMARK_RESET === "1";
+  const resolvedScenarioName = readScenarioName();
   let benchmarkFailed = false;
 
   await assertAppReachable(appUrl);
@@ -18,6 +20,7 @@ async function main() {
   if (shouldReset) {
     console.log("[benchmark] resetting local benchmark database");
     await runPnpm(["db:reset:dev"]);
+    await assertAppReachable(appUrl);
   }
 
   console.log("[benchmark] running checkout-postgres-baseline");
@@ -33,7 +36,7 @@ async function main() {
 
   const artifact = await readLatestArtifact(
     process.env.BENCHMARK_RESULTS_DIR ?? "benchmark-results",
-    scenarioName,
+    resolvedScenarioName,
   );
 
   if (!artifact) {
@@ -49,6 +52,7 @@ async function main() {
         runId: report.runId,
         pass: report.pass,
         scenario: report.scenarioName,
+        workloadType: report.scenario?.workloadType,
         requests: report.requestPath?.accepted + report.requestPath?.errors,
         accepted: report.requestPath?.accepted,
         errors: report.requestPath?.errors,
@@ -102,10 +106,25 @@ async function readLatestArtifact(resultsRoot: string, scenario: string) {
   return files[0] ? path.join(directory, files[0]) : null;
 }
 
+function readScenarioName() {
+  return process.env.BENCHMARK_SCENARIO_NAME?.trim() || scenarioNameForWorkload();
+}
+
+function scenarioNameForWorkload() {
+  if (process.env.BENCHMARK_WORKLOAD_TYPE === "multi_sku_cart_checkout") {
+    return cartScenarioName;
+  }
+
+  return scenarioName;
+}
+
 type BenchmarkArtifact = {
   runId: string;
   scenarioName: string;
   pass: boolean;
+  scenario?: {
+    workloadType?: string;
+  };
   requestPath: {
     accepted: number;
     errors: number;

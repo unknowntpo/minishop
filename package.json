@@ -28,7 +28,13 @@
     "benchmark:checkout:postgres:raw": "tsx scripts/benchmark-checkout-postgres.ts",
     "benchmark:checkout:postgres": "tsx scripts/run-checkout-postgres-benchmark.ts",
     "benchmark:checkout:postgres:reset": "BENCHMARK_RESET=1 tsx scripts/run-checkout-postgres-benchmark.ts",
-    "benchmark:checkout:postgres:sweep": "tsx scripts/run-checkout-postgres-sweep.ts"
+    "benchmark:checkout:postgres:cart": "BENCHMARK_WORKLOAD_TYPE=multi_sku_cart_checkout tsx scripts/run-checkout-postgres-benchmark.ts",
+    "benchmark:checkout:postgres:cart:reset": "BENCHMARK_RESET=1 BENCHMARK_WORKLOAD_TYPE=multi_sku_cart_checkout tsx scripts/run-checkout-postgres-benchmark.ts",
+    "benchmark:checkout:postgres:sweep": "tsx scripts/run-checkout-postgres-sweep.ts",
+    "benchmark:compose:up": "docker compose -p minishop-benchmark -f docker-compose.yml -f docker-compose.benchmark.yml up -d --build benchmark-postgres benchmark-app",
+    "benchmark:compose:down": "docker compose -p minishop-benchmark -f docker-compose.yml -f docker-compose.benchmark.yml down -v --remove-orphans",
+    "benchmark:compose:baseline": "docker compose -p minishop-benchmark -f docker-compose.yml -f docker-compose.benchmark.yml run --build --rm benchmark-runner pnpm benchmark:checkout:postgres:reset",
+    "benchmark:compose:cart": "docker compose -p minishop-benchmark -f docker-compose.yml -f docker-compose.benchmark.yml run --build --rm benchmark-runner pnpm benchmark:checkout:postgres:cart:reset"
   },
   "dependencies": {
     "drizzle-orm": "^0.45.2",
