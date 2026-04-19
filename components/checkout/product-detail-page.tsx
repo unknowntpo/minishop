@@ -9,6 +9,7 @@ import type { Product } from "@/src/domain/catalog/product";
 import { formatProductPrice } from "@/src/presentation/view-models/product";
 
 const cartStorageKey = "minishop-cart-v1";
+const cartUpdatedEvent = "minishop:cart-updated";
 
 type CartEntry = {
   quantity: number;
@@ -36,6 +37,7 @@ export function ProductDetailPage({
   const [cartOpen, setCartOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const maxDirectQuantity = maxQuantityFor(product);
+  const isOutOfStock = maxDirectQuantity <= 0;
   const cartProducts = useMemo(
     () => hydrateCartProducts(cartEntries, productBySlug),
     [cartEntries, productBySlug],
@@ -61,6 +63,28 @@ export function ProductDetailPage({
   }, [productBySlug]);
 
   useEffect(() => {
+    function syncStoredCart() {
+      setCartEntries(readCart(productBySlug));
+    }
+
+    function handleStorage(event: StorageEvent) {
+      if (event.key && event.key !== cartStorageKey) {
+        return;
+      }
+
+      syncStoredCart();
+    }
+
+    window.addEventListener("storage", handleStorage);
+    window.addEventListener(cartUpdatedEvent, syncStoredCart);
+
+    return () => {
+      window.removeEventListener("storage", handleStorage);
+      window.removeEventListener(cartUpdatedEvent, syncStoredCart);
+    };
+  }, [productBySlug]);
+
+  useEffect(() => {
     setDirectQuantity((current) => clampQuantity(current, maxDirectQuantity));
   }, [maxDirectQuantity]);
 
@@ -80,6 +104,10 @@ export function ProductDetailPage({
     const normalized = normalizeCart(nextEntries, productBySlug);
     setCartEntries(normalized);
     persistCart(normalized);
+
+    if (normalized.length === 0) {
+      setCartOpen(false);
+    }
   }
 
   function addCurrentProductToCart() {
@@ -145,7 +173,11 @@ export function ProductDetailPage({
             <div className="inventory-row">
               <div>
                 <strong>Available now: {product.available}</strong>
-                <p className="muted">Reservation is confirmed after checkout processing.</p>
+                <p className="muted">
+                  {isOutOfStock
+                    ? "This SKU is sold out in the current projection."
+                    : "Reservation is confirmed after checkout processing."}
+                </p>
               </div>
               <span className="badge neutral">projection</span>
             </div>
@@ -177,7 +209,9 @@ export function ProductDetailPage({
                   </button>
                 </div>
                 <span className="muted quantity-hint">
-                  Max {formatNumber(maxDirectQuantity)} units
+                  {isOutOfStock
+                    ? "No units available in the current projection."
+                    : `Max ${formatNumber(maxDirectQuantity)} units`}
                 </span>
               </div>
 
@@ -185,12 +219,15 @@ export function ProductDetailPage({
                 <button
                   className="button secondary"
                   type="button"
-                  disabled={maxDirectQuantity <= 0}
+                  disabled={isOutOfStock}
                   onClick={addCurrentProductToCart}
                 >
-                  Add to cart
+                  {directQuantity > 1
+                    ? `Add ${formatNumber(directQuantity)} to cart`
+                    : "Add to cart"}
                 </button>
                 <CheckoutAction
+                  disabled={isOutOfStock}
                   product={product}
                   items={[
                     {
@@ -200,7 +237,11 @@ export function ProductDetailPage({
                       unitPriceAmountMinor: product.priceAmountMinor,
                     },
                   ]}
-                  buttonLabel={`Buy ${directQuantity > 1 ? `${formatNumber(directQuantity)} units` : "now"}`}
+                  buttonLabel={
+                    isOutOfStock
+                      ? "Sold out"
+                      : `Buy ${directQuantity > 1 ? `${formatNumber(directQuantity)} units` : "now"}`
+                  }
                 />
               </div>
             </div>
@@ -543,13 +584,18 @@ function readCart(productBySlug: Map<string, Product>) {
 
 function persistCart(entries: CartEntry[]) {
   window.localStorage.setItem(cartStorageKey, JSON.stringify(entries));
+  window.dispatchEvent(new Event(cartUpdatedEvent));
 }
 
 function maxQuantityFor(product: Product) {
-  return Math.max(1, Math.min(product.available, 99));
+  return Math.max(0, Math.min(product.available, 99));
 }
 
 function clampQuantity(quantity: number, maxQuantity: number) {
+  if (maxQuantity <= 0) {
+    return 0;
+  }
+
   if (!Number.isFinite(quantity)) {
     return 1;
   }

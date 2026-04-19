@@ -178,11 +178,12 @@ export function CheckoutAction({
   }
 
   const disabled = disabledProp || state.phase === "submitting" || state.phase === "projecting";
+  const busy = state.phase === "submitting" || state.phase === "projecting";
 
   return (
     <div className="checkout-demo">
       <button className="button primary" type="button" disabled={disabled} onClick={buy}>
-        {disabled ? "Working" : buttonLabel}
+        {busy ? "Working" : buttonLabel}
       </button>
       {state.phase !== "idle" ? (
         <div className={`checkout-demo-status ${state.phase}`}>

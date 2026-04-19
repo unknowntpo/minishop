@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { ProductDetailPage } from "@/components/checkout/product-detail-page";
@@ -50,5 +50,45 @@ describe("Products", () => {
     expect(screen.getByRole("button", { name: "Buy now" })).toBeInTheDocument();
     expect(screen.queryByText("Accepted does not mean reserved.")).not.toBeInTheDocument();
     expect(screen.queryByText("Request received")).not.toBeInTheDocument();
+  });
+
+  it("shows add-to-cart feedback after adding quantity to the cart", async () => {
+    window.localStorage.clear();
+    const products = await staticCatalogRepository.listProducts();
+    const product = await staticCatalogRepository.findProductBySlug("travel-cap");
+
+    if (!product) {
+      throw new Error("Missing travel cap fixture");
+    }
+
+    render(<ProductDetailPage product={product} products={products} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Add to cart" }));
+
+    expect(screen.getByText("Added to cart")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "View cart" })).toBeInTheDocument();
+  });
+
+  it("disables purchase actions when a sku is out of stock", async () => {
+    window.localStorage.clear();
+    const products = await staticCatalogRepository.listProducts();
+    const product = await staticCatalogRepository.findProductBySlug("limited-runner");
+
+    if (!product) {
+      throw new Error("Missing limited runner fixture");
+    }
+
+    render(
+      <ProductDetailPage
+        product={{ ...product, available: 0 }}
+        products={products.map((entry) =>
+          entry.slug === product.slug ? { ...entry, available: 0 } : entry,
+        )}
+      />,
+    );
+
+    expect(screen.getByText("This SKU is sold out in the current projection.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add to cart" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Sold out" })).toBeDisabled();
   });
 });
