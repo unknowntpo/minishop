@@ -29,6 +29,10 @@ type CheckoutRow = {
   updated_at: Date;
 };
 
+type CommandStatusLookupRow = {
+  command_id: string;
+};
+
 export const dynamic = "force-dynamic";
 
 export default async function CheckoutCompletePage({
@@ -38,7 +42,8 @@ export default async function CheckoutCompletePage({
   const { checkoutIntentId } = await params;
   const resolvedSearchParams = await searchParams;
   const initialLocale = normalizeBuyerLocale((await cookies()).get(buyerLocaleCookieName)?.value);
-  const result = await getPool().query<CheckoutRow>(
+  const pool = getPool();
+  const result = await pool.query<CheckoutRow>(
     `
       select
         checkout_intent_id,
@@ -62,12 +67,27 @@ export default async function CheckoutCompletePage({
     notFound();
   }
 
+  const commandStatusResult = await pool.query<CommandStatusLookupRow>(
+    `
+      select command_id
+      from command_status
+      where checkout_intent_id = $1
+      order by updated_at desc
+      limit 1
+    `,
+    [checkoutIntentId],
+  );
+
+  const commandId =
+    commandStatusResult.rows[0]?.command_id ??
+    readSingleSearchParam(resolvedSearchParams.commandId);
+
   return (
     <CheckoutCompleteContent
       checkout={{
         cancellationReason: checkout.cancellation_reason,
         checkoutIntentId: checkout.checkout_intent_id,
-        commandId: readSingleSearchParam(resolvedSearchParams.commandId),
+        commandId,
         orderId: checkout.order_id,
         paymentId: checkout.payment_id,
         rejectionReason: checkout.rejection_reason,
