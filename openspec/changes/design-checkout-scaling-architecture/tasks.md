@@ -23,9 +23,17 @@
 - [ ] 3.2 Define worker role boundaries for command ingest, staging merge, projection, and notification execution
 - [ ] 3.3 Define whether worker roles ship as one binary with role flags or as separate deployables while preserving clear responsibility boundaries
 - [ ] 3.4 Capture the Temporal versus plain workers trade-off in a form that can be reused in architecture communication
+- [ ] 3.5 Capture the decision to prefer a Go Temporal worker over a long-term TypeScript Temporal worker, including the runtime-complexity versus contract-discipline trade-off
+- [ ] 3.6 Define separate deployable/runtime boundaries for app, backend workers, and the Temporal orchestration worker
 
 ## 4. Rollout and Observability
 
 - [ ] 4.1 Define a first rollout phase that uses polling for client feedback and defers push/SSE notification
 - [ ] 4.2 Define the minimum metrics and topology views needed to understand queue depth, worker lag, merge throughput, and command outcome distribution
 - [ ] 4.3 Capture the cache acceleration versus correctness truth trade-off for future idempotency lookup optimization
+
+## 5. Go Worker Plan
+
+- [ ] 5.1 Define the cross-language command/workflow contract the Go Temporal worker will consume and produce
+- [ ] 5.2 Define how the Go worker will signal `created` and `failed` outcomes back into `command_status`
+- [ ] 5.3 Define how the existing TypeScript Temporal skeleton will be retired or kept only as a reference during migration

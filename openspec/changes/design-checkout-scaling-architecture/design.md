@@ -218,6 +218,33 @@ Temporal is introduced as workflow orchestration, not as durable fact storage. I
 
 The trade-off is conceptual and operational complexity. A plain worker model would be simpler to deploy, but harder to observe and reason about for long-running asynchronous command lifecycles. This design keeps Temporal only where orchestration adds value and avoids making it the system of record.
 
+### Temporal TypeScript worker versus Go worker
+
+The first implementation pass validated that Temporal belongs in the orchestration layer, but it also exposed that a TypeScript worker inside the current Next.js-oriented repository creates additional runtime coupling:
+
+- native bridge compatibility and package-manager build-script policy
+- workflow bundling constraints that do not automatically honor application import aliases
+- pressure to keep the app and the orchestration worker on the same Node runtime assumptions even though they are different operational roles
+
+For this reason, the design now prefers a Go Temporal worker for the long-term orchestration service, while keeping the TypeScript skeleton as a temporary exploration and contract reference.
+
+The trade-off is explicit:
+
+- a Go worker reduces worker-runtime complexity and avoids the Temporal TypeScript native/bundling integration surface
+- but it forces stricter contract design because command schema, workflow input/output, and error vocabulary can no longer rely on in-process TypeScript reuse
+
+This trade-off is acceptable and intentional. The worker is treated as a separate deployable service, not as an extension of the web application runtime.
+
+### Shared app/worker images versus separated deployables
+
+The design also prefers separate Dockerfiles and runtime images for:
+
+- the web application
+- backend command workers
+- the Temporal orchestration worker
+
+This avoids letting one runtime's constraints dictate another runtime's base image or Node version. It also matches the decision to treat the orchestration worker as an independent service boundary.
+
 ### Direct `COPY` into `event_store` versus staging plus merge
 
 The design rejects direct `COPY` into `event_store` even though it may look like the fastest write path. The reason is semantic, not just technical. Final event append requires validation, dedupe, result accounting, and business-fact establishment.
@@ -258,6 +285,9 @@ The design assumes that correctness comes from durable storage, not from cache o
 The trade-off is that the system may retain a durable lookup dependency in the hot path, but it avoids correctness regressions caused by cache loss or probabilistic false positives.
 
 ## Open Questions
+
+- Which serialization format should become the authoritative cross-language contract for the Go worker path: JSON-first, Protobuf, or another schema-governed format?
+- Which command-status updates should remain in the app database in phase one, and which orchestration details should stay internal to Temporal only?
 
 - Should command acceptance itself be written to PostgreSQL synchronously before publishing to NATS JetStream, or should Temporal own the initial durable status record?
 - Should merge workers process one command per transaction or support multi-command transaction batches when commands target disjoint aggregates?

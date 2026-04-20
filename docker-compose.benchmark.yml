@@ -19,7 +19,7 @@ services:
   benchmark-app:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.app
     restart: unless-stopped
     environment:
       DATABASE_URL: postgres://postgres:postgres@benchmark-postgres:5432/minishop
@@ -48,7 +48,7 @@ services:
   benchmark-runner:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.worker
     environment:
       DATABASE_URL: postgres://postgres:postgres@benchmark-postgres:5432/minishop
       BENCHMARK_APP_URL: http://benchmark-app:3000

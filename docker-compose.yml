@@ -59,7 +59,7 @@ services:
   app:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.app
     container_name: minishop-app
     restart: unless-stopped
     depends_on:
@@ -92,7 +92,7 @@ services:
   worker-buy-intents-ingest:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.worker
     container_name: minishop-worker-buy-intents-ingest
     restart: unless-stopped
     depends_on:
@@ -121,7 +121,7 @@ services:
   worker-buy-intents-process:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.worker
     container_name: minishop-worker-buy-intents-process
     restart: unless-stopped
     depends_on:
@@ -153,7 +153,7 @@ services:
       TEMPORAL_NAMESPACE: ${TEMPORAL_NAMESPACE:-default}
       TEMPORAL_BUY_INTENT_TASK_QUEUE: ${TEMPORAL_BUY_INTENT_TASK_QUEUE:-buy-intent-command-orchestration}
       NEXT_TELEMETRY_DISABLED: "1"
-    command: ["pnpm", "worker:buy-intents:temporal"]
+    command: ["pnpm", "--config.engine-strict=false", "worker:buy-intents:temporal"]
 
 volumes:
   minishop_postgres_data:
