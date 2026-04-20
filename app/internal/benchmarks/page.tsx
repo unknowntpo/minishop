@@ -967,15 +967,22 @@ function ComparisonChart({
         {runs.map((run, index) => {
           const value = valueFor(run);
           const height = Math.max(6, Math.round((value / max) * 120));
+          const hoverText = `r${index + 1} ${run.runId}: ${value}${unit ? ` ${unit}` : ""}\n${formatConditionSummary(
+            run,
+          )}\n${displayRunName(run)}\nHTTP ${formatDistribution(run.requestPath?.statusDistribution)}`;
 
           return (
-            <span className="benchmark-plot-column" key={run.artifactFile}>
+            <span
+              className="benchmark-plot-column"
+              key={run.artifactFile}
+              title={hoverText}
+              aria-label={hoverText}
+              tabIndex={0}
+            >
               <span
                 className={run.pass ? "benchmark-plot-bar" : "benchmark-plot-bar failed"}
                 style={{ height }}
-                title={`r${index + 1} ${run.runId}: ${value}${unit ? ` ${unit}` : ""}\n${formatConditionSummary(
-                  run,
-                )}\n${displayRunName(run)}\nHTTP ${formatDistribution(run.requestPath?.statusDistribution)}`}
+                title={hoverText}
               />
               <code>{displayRunShortName(run, index + 1)}</code>
             </span>

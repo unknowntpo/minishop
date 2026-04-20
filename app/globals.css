@@ -1595,6 +1595,7 @@ button.design-preview {
   width: 100%;
   min-width: 10px;
   gap: 6px;
+  cursor: help;
 }
 
 .benchmark-plot-column code {
