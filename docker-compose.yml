@@ -21,7 +21,7 @@ services:
     image: nats:2.11
     container_name: minishop-nats
     restart: unless-stopped
-    command: ["-js", "-sd", "/data"]
+    command: ["-js", "-sd", "/data", "-m", "8222"]
     ports:
       - "${MINISHOP_NATS_PORT:-4222}:4222"
       - "${MINISHOP_NATS_MONITOR_PORT:-8222}:8222"
