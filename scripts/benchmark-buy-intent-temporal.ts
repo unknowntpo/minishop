@@ -84,7 +84,8 @@ async function main() {
 
   try {
     const inventory = await readInventory(config.skuId);
-    const effectiveRequests = Math.min(config.requests, inventory.available);
+    const effectiveRequests =
+      config.mode === "bypass" ? config.requests : Math.min(config.requests, inventory.available);
 
     if (effectiveRequests < 1) {
       throw new Error(
@@ -129,24 +130,24 @@ async function main() {
         accepted.map((result) => [result.commandId, result.acceptedAtMs] as const),
       );
 
-      displayReadyResults = await Promise.all(
-        createdResults
-          .filter(
-            (result) =>
-              typeof result.checkoutIntentId === "string" && result.checkoutIntentId.length > 0,
-          )
-          .map((result) =>
-            waitForCheckoutStatus(
-              result.checkoutIntentId as string,
-              acceptedAtByCommandId.get(result.commandId) ?? performance.now(),
-              (status) =>
-                config.mode === "temporal"
-                  ? status === "pending_payment" || status === "rejected"
-                  : status === "queued",
-              config.mode === "temporal" ? "pending_payment or rejected" : "queued",
-            ),
-          ),
-      );
+      displayReadyResults =
+        config.mode === "temporal"
+          ? await Promise.all(
+              createdResults
+                .filter(
+                  (result) =>
+                    typeof result.checkoutIntentId === "string" && result.checkoutIntentId.length > 0,
+                )
+                .map((result) =>
+                  waitForCheckoutStatus(
+                    result.checkoutIntentId as string,
+                    acceptedAtByCommandId.get(result.commandId) ?? performance.now(),
+                    (status) => status === "pending_payment" || status === "rejected",
+                    "pending_payment or rejected",
+                  ),
+                ),
+            )
+          : [];
 
       const pendingPaymentCheckouts =
         config.mode === "temporal"
@@ -287,10 +288,10 @@ async function main() {
         notes: [
           config.mode === "temporal"
             ? "This benchmark measures the current async buy-intent + Temporal + pending_payment demo path."
-            : "This benchmark measures the async buy-intent path with Temporal orchestration bypassed and a Node merge loop instead.",
+            : "This benchmark measures the async buy-intent path with Temporal orchestration bypassed and stops at CheckoutIntentCreated.",
           config.mode === "temporal"
             ? "The benchmark intentionally uses payment failure signals so reserved inventory is released after each run."
-            : "Bypass mode stops at CheckoutIntentCreated and queued projection state, so no payment signal or reservation release work is included.",
+            : "Bypass mode does not wait for projection queued state, so inventory availability is not used to cap request volume.",
         ],
       };
 
@@ -410,6 +411,9 @@ async function main() {
         },
         notes: [
           "This artifact was written from a failed benchmark run so the dashboard can still show partial progress and profiling evidence.",
+          config.mode === "bypass"
+            ? "Bypass mode failure happened after intent creation; created-only throughput remains the primary signal."
+            : "Temporal mode failure happened after intent creation; checkout progression needs separate analysis.",
         ],
       });
       console.error(`Benchmark artifact written to ${artifactPath}`);
