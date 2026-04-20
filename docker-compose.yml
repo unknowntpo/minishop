@@ -138,6 +138,23 @@ services:
       BUY_INTENT_PROCESS_POLL_INTERVAL_MS: ${BUY_INTENT_PROCESS_POLL_INTERVAL_MS:-1000}
       LOG_LEVEL: ${LOG_LEVEL:-info}
 
+  worker-projections:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: minishop-worker-projections
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/minishop
+      PROJECTION_NAME: ${PROJECTION_NAME:-main}
+      PROJECTION_BATCH_SIZE: ${PROJECTION_BATCH_SIZE:-100}
+      PROJECTION_POLL_INTERVAL_MS: ${PROJECTION_POLL_INTERVAL_MS:-1000}
+      NEXT_TELEMETRY_DISABLED: "1"
+    command: ["pnpm", "worker:projections"]
+
 volumes:
   minishop_postgres_data:
   minishop_nats_data:
