@@ -1239,9 +1239,10 @@ button.design-preview {
   overflow-wrap: anywhere;
 }
 
-.capacity-chart-meta {
-  display: inline-flex;
-  margin-top: 4px;
+.capacity-chart-axis-notes {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
   color: var(--ms-muted);
   font-size: 12px;
   font-weight: 700;
@@ -1376,7 +1377,7 @@ button.design-preview {
 
 .benchmark-run-tag {
   display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr);
+  grid-template-columns: auto auto auto minmax(0, 1fr);
   gap: 8px;
   align-items: center;
   min-width: 0;
@@ -1384,6 +1385,22 @@ button.design-preview {
   border-radius: var(--ms-radius);
   padding: 8px 10px;
   background: var(--ms-subtle);
+  color: var(--ms-ink);
+  text-decoration: none;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    transform 160ms ease;
+}
+
+.benchmark-run-tag:hover,
+.benchmark-run-tag.selected {
+  border-color: var(--ms-accent);
+  background: #fffaf8;
+}
+
+.benchmark-run-tag:hover {
+  transform: translateY(-1px);
 }
 
 .benchmark-run-tag code {
@@ -1392,6 +1409,26 @@ button.design-preview {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.benchmark-run-id {
+  overflow: hidden;
+  max-width: 14ch;
+  color: var(--ms-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.benchmark-selected-run-card {
+  margin-top: 14px;
+}
+
+.benchmark-selected-run-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
 }
 
 .benchmark-comparison-grid {
@@ -1642,6 +1679,47 @@ button.design-preview {
 
 .benchmark-table {
   min-width: 1420px;
+}
+
+.benchmark-profiling-links {
+  display: grid;
+  gap: 6px;
+}
+
+.benchmark-flamegraph-wrap,
+.benchmark-speedscope-wrap {
+  margin-top: 14px;
+  border: 1px solid var(--ms-line-soft);
+  border-radius: var(--ms-radius-lg);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 247, 244, 0.98)), var(--ms-surface);
+  padding: 14px;
+}
+
+.benchmark-flamegraph-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.benchmark-speedscope-wrap {
+  overflow: hidden;
+  padding: 0;
+}
+
+.benchmark-speedscope-frame {
+  display: block;
+  width: 100%;
+  min-height: 820px;
+  border: 0;
+  background: #fff;
+}
+
+.benchmark-source-cell {
+  max-width: 420px;
+  overflow-wrap: anywhere;
 }
 
 .admin-product-footer {

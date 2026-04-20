@@ -27,6 +27,8 @@ services:
       PORT: 3000
     ports:
       - "${MINISHOP_BENCHMARK_APP_PORT:-3300}:3000"
+    volumes:
+      - ./benchmark-results:/app/benchmark-results
     depends_on:
       benchmark-postgres:
         condition: service_healthy
@@ -52,6 +54,8 @@ services:
       BENCHMARK_APP_URL: http://benchmark-app:3000
       BENCHMARK_NEXT_MODE: next start
       MINISHOP_ALLOWED_RESET_HOSTS: benchmark-postgres
+    volumes:
+      - ./benchmark-results:/app/benchmark-results
     depends_on:
       benchmark-app:
         condition: service_healthy

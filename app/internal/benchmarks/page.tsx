@@ -2,6 +2,8 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 
 import Link from "next/link";
+import { Fragment } from "react";
+import { profileStandaloneHref } from "./profiles/page";
 
 export const dynamic = "force-dynamic";
 
@@ -72,6 +74,7 @@ type BenchmarkReport = {
       cartSkuCount?: number;
       quantityPerIntent?: number;
       projectionBatchSize?: number;
+      profilingEnabled?: boolean;
     };
   };
   scenario?: {
@@ -138,6 +141,21 @@ type BenchmarkReport = {
       reserved?: number;
       sold?: number;
     }> | null;
+  };
+  profiling?: {
+    enabled?: boolean;
+    status?: "disabled" | "captured" | "failed";
+    target?: string;
+    scope?: string;
+    format?: string;
+    startedAt?: string;
+    stoppedAt?: string;
+    error?: string;
+    files?: Array<{
+      kind?: "cpu";
+      path?: string;
+      label?: string;
+    }>;
   };
 };
 
@@ -303,7 +321,7 @@ const previewArchitectureLanes: Record<string, ArchitectureLane[]> = {
 export default async function InternalBenchmarksPage({
   searchParams,
 }: {
-  searchParams?: Promise<{ scenario?: string }>;
+  searchParams?: Promise<{ scenario?: string; run?: string }>;
 }) {
   const params = await searchParams;
   const runs = await readBenchmarkRuns();
@@ -317,6 +335,7 @@ export default async function InternalBenchmarksPage({
     ? runs.filter((run) => scenarioNameFor(run) === selectedScenarioName)
     : [];
   const comparisonRuns = selectedScenarioRuns.slice(0, 10).reverse();
+  const selectedRunId = params?.run;
   const capacityScenarioName =
     selectedScenarioName ?? (latest ? scenarioNameFor(latest) : undefined);
   const architectureLanes = capacityScenarioName
@@ -442,7 +461,11 @@ export default async function InternalBenchmarksPage({
               })}
             </div>
             {selectedScenarioName ? (
-              <RunComparison scenarioName={selectedScenarioName} runs={comparisonRuns} />
+              <RunComparison
+                scenarioName={selectedScenarioName}
+                selectedRunId={selectedRunId}
+                runs={comparisonRuns}
+              />
             ) : null}
           </section>
 
@@ -559,6 +582,7 @@ export default async function InternalBenchmarksPage({
                     <th>p95</th>
                     <th>Append/sec</th>
                     <th>Lag</th>
+                    <th>Profiling</th>
                     <th>Status</th>
                   </tr>
                 </thead>
@@ -583,6 +607,7 @@ export default async function InternalBenchmarksPage({
                       <td>{formatNumber(run.requestPath?.p95LatencyMs)}ms</td>
                       <td>{formatNumber(run.eventStore?.appendThroughputPerSecond)}</td>
                       <td>{formatNumber(readProjectionLagEvents(run))}</td>
+                      <td>{renderProfilingEvidence(run)}</td>
                       <td>
                         <StatusSummary values={run.projections?.checkoutStatusDistribution} />
                       </td>
@@ -690,7 +715,17 @@ function summarizeScenarios(runs: BenchmarkRun[]): ScenarioSummary[] {
     .sort((left, right) => left.name.localeCompare(right.name));
 }
 
-function RunComparison({ scenarioName, runs }: { scenarioName: string; runs: BenchmarkRun[] }) {
+function RunComparison({
+  scenarioName,
+  selectedRunId,
+  runs,
+}: {
+  scenarioName: string;
+  selectedRunId?: string;
+  runs: BenchmarkRun[];
+}) {
+  const selectedRun = selectedRunId ? runs.find((run) => run.runId === selectedRunId) ?? null : null;
+
   return (
     <section className="benchmark-run-comparison" aria-labelledby="comparison-title">
       <p className="eyebrow">Run comparison</p>
@@ -703,13 +738,28 @@ function RunComparison({ scenarioName, runs }: { scenarioName: string; runs: Ben
 
       <div className="benchmark-run-tags">
         {runs.map((run, index) => (
-          <span className="benchmark-run-tag" key={run.artifactFile}>
-            <strong>r{index + 1}</strong>
-            <span className={`badge ${run.pass ? "success" : "danger"}`}>
-              {run.pass ? "pass" : "fail"}
-            </span>
-            <code>{formatConditionSummary(run)}</code>
-          </span>
+          <Fragment key={run.artifactFile}>
+            <Link
+              className={`benchmark-run-tag${selectedRun?.runId === run.runId ? " selected" : ""}`}
+              href={
+                selectedRun?.runId === run.runId
+                  ? `/internal/benchmarks?scenario=${encodeURIComponent(scenarioName)}`
+                  : `/internal/benchmarks?scenario=${encodeURIComponent(scenarioName)}&run=${encodeURIComponent(run.runId)}`
+              }
+              scroll={false}
+              aria-expanded={selectedRun?.runId === run.runId}
+            >
+              <strong>{displayRunName(run)}</strong>
+              <span className="benchmark-run-id mono">{shortRunId(run.runId)}</span>
+              <span className={`badge ${run.pass ? "success" : "danger"}`}>
+                {run.pass ? "pass" : "fail"}
+              </span>
+              <code>{formatConditionSummary(run)}</code>
+            </Link>
+            {selectedRun?.runId === run.runId ? (
+              <SelectedRunPanel run={selectedRun} scenarioName={scenarioName} />
+            ) : null}
+          </Fragment>
         ))}
       </div>
 
@@ -775,6 +825,58 @@ function RunComparison({ scenarioName, runs }: { scenarioName: string; runs: Ben
   );
 }
 
+function SelectedRunPanel({
+  run,
+  scenarioName,
+}: {
+  run: BenchmarkRun;
+  scenarioName: string;
+}) {
+  const profileFile = run.profiling?.files?.find((file) => Boolean(file.path))?.path;
+
+  return (
+    <article className="capacity-chart-card benchmark-selected-run-card">
+      <div className="capacity-chart-header">
+        <div>
+          <p className="eyebrow">Selected run</p>
+          <strong>{displayRunName(run)}</strong>
+          <p className="muted admin-panel-copy">
+            {formatDateTime(run.finishedAt)} · {formatConditionSummary(run)} · {run.runId}
+          </p>
+        </div>
+        <span className={`badge ${run.pass ? "success" : "danger"}`}>
+          {run.pass ? "pass" : "failed"}
+        </span>
+      </div>
+
+      <KeyValueList
+        values={{
+          requests: formatNumber(run.scenario?.requestedBuyClicks),
+          accepted: formatNumber(run.requestPath?.accepted),
+          errors: formatNumber(run.requestPath?.errors),
+          "p95 latency": `${formatNumber(run.requestPath?.p95LatencyMs)}ms`,
+          "append/sec": formatNumber(run.eventStore?.appendThroughputPerSecond),
+          "projection lag": formatNumber(readProjectionLagEvents(run)),
+          profiling: run.profiling?.status ?? "disabled",
+        }}
+      />
+
+      <div className="benchmark-selected-run-actions">
+        {profileFile ? (
+          <Link
+            className="text-link"
+            href={profileViewerHref(profileFile, scenarioName, run.runId)}
+          >
+            Open profiling viewer
+          </Link>
+        ) : (
+          <span className="muted">No profiling file attached to this run.</span>
+        )}
+      </div>
+    </article>
+  );
+}
+
 function ComparisonChart({
   calculation,
   definition,
@@ -835,9 +937,9 @@ function ComparisonChart({
                 style={{ height }}
                 title={`r${index + 1} ${run.runId}: ${value}${unit ? ` ${unit}` : ""}\n${formatConditionSummary(
                   run,
-                )}\nHTTP ${formatDistribution(run.requestPath?.statusDistribution)}`}
+                )}\n${displayRunName(run)}\nHTTP ${formatDistribution(run.requestPath?.statusDistribution)}`}
               />
-              <code>r{index + 1}</code>
+              <code>{displayRunShortName(run, index + 1)}</code>
             </span>
           );
         })}
@@ -876,7 +978,7 @@ function RunEvidenceComparison({ runs }: { runs: BenchmarkRun[] }) {
           {runs.map((run, index) => (
             <tr key={run.artifactFile}>
               <td>
-                <strong>r{index + 1}</strong>
+                <strong>{displayRunShortName(run, index + 1)}</strong>
                 <span className="muted mono">{shortRunId(run.runId)}</span>
               </td>
               <td>{formatDistribution(run.requestPath?.statusDistribution)}</td>
@@ -911,7 +1013,8 @@ function LaneMetricChart({
   );
   const maxValue = Math.max(1, ...lanes.flatMap((lane) => lane.points.map(valueFor)));
   const colors = ["#2e9462", "#b75f4b", "#2f6fd6", "#c48326"];
-  const unitLabel = unit === "/s" ? "requests or events per second" : unit || "count";
+  const yAxisLabel = axisLabelForUnit(unit);
+  const yAxisShortUnit = axisShortUnitForUnit(unit);
 
   return (
     <article className="capacity-chart-card">
@@ -919,17 +1022,30 @@ function LaneMetricChart({
         <div>
           <strong>{label}</strong>
           <p className="muted">{description}</p>
-          <span className="capacity-chart-meta">X-axis: concurrency · Y-axis: {unitLabel}</span>
         </div>
       </div>
       <svg
         className="capacity-chart"
-        viewBox="0 0 360 200"
+        viewBox="0 0 396 244"
         role="img"
         aria-label={`${label} by concurrency and architecture lane`}
       >
-        <line className="capacity-axis" x1="40" y1="12" x2="40" y2="164" />
-        <line className="capacity-axis" x1="40" y1="164" x2="344" y2="164" />
+        <text className="capacity-axis-unit" x="18" y="18">
+          ({yAxisShortUnit})
+        </text>
+        <text className="capacity-axis-title" transform="translate(18 156) rotate(-90)">
+          {yAxisLabel}
+        </text>
+        <text className="capacity-axis-title" x="198" y="232" textAnchor="middle">
+          concurrency
+        </text>
+        <text className="capacity-axis-unit" x="352" y="222">
+          (c)
+        </text>
+        <line className="capacity-axis" x1="52" y1="28" x2="52" y2="190" />
+        <line className="capacity-axis" x1="52" y1="190" x2="356" y2="190" />
+        <polyline className="capacity-axis-arrow" points="44,36 52,28 60,36" />
+        <polyline className="capacity-axis-arrow" points="348,182 356,190 348,198" />
         {lanes.map((lane, laneIndex) => {
           const color = colors[laneIndex % colors.length];
           const points = lane.points
@@ -938,9 +1054,9 @@ function LaneMetricChart({
               const stepIndex = allSteps.indexOf(point.concurrency);
               const x =
                 allSteps.length === 1 || stepIndex === -1
-                  ? 192
-                  : 40 + (stepIndex / (allSteps.length - 1)) * 304;
-              const y = 164 - (valueFor(point) / maxValue) * 132;
+                  ? 204
+                  : 52 + (stepIndex / (allSteps.length - 1)) * 304;
+              const y = 190 - (valueFor(point) / maxValue) * 132;
 
               return { point, x, y };
             });
@@ -991,10 +1107,10 @@ function LaneMetricChart({
           );
         })}
         {allSteps.map((step, index) => {
-          const x = allSteps.length === 1 ? 192 : 40 + (index / (allSteps.length - 1)) * 304;
+          const x = allSteps.length === 1 ? 204 : 52 + (index / (allSteps.length - 1)) * 304;
 
           return (
-            <text className="capacity-axis-label" key={step} x={x} y="186">
+            <text className="capacity-axis-label" key={step} x={x} y="214">
               {step}
             </text>
           );
@@ -1017,6 +1133,34 @@ function LaneMetricChart({
       </div>
     </article>
   );
+}
+
+function axisLabelForUnit(unit: string) {
+  if (unit === "%") {
+    return "accepted rate";
+  }
+
+  if (unit === "ms") {
+    return "milliseconds";
+  }
+
+  if (unit === "events") {
+    return "events";
+  }
+
+  if (unit === "/s") {
+    return "per second";
+  }
+
+  return "count";
+}
+
+function axisShortUnitForUnit(unit: string) {
+  if (unit === "/s") {
+    return "1/s";
+  }
+
+  return unit || "count";
 }
 
 function KeyValueList({ values }: { values: Record<string, string> }) {
@@ -1208,6 +1352,85 @@ function formatIdempotencySummary(run: BenchmarkRun) {
   }
 
   return `${formatNumber(replay.status)} · replay ${replay.idempotentReplay ? "true" : "false"}`;
+}
+
+function renderProfilingEvidence(run: BenchmarkRun) {
+  const files = run.profiling?.files?.filter((file) => Boolean(file.path)) ?? [];
+
+  if (files.length > 0) {
+    return (
+      <span className="benchmark-profiling-links">
+        {files.map((file) => (
+          <Link
+            className="text-link"
+            href={profileViewerHref(file.path ?? "")}
+            key={`${run.artifactFile}-${file.path ?? file.label ?? "profile"}`}
+          >
+            {file.label ?? "CPU flamegraph"}
+          </Link>
+        ))}
+      </span>
+    );
+  }
+
+  if (run.profiling?.status === "failed") {
+    return <span className="badge warning">profile failed</span>;
+  }
+
+  if (run.profiling?.enabled || run.conditions?.workload?.profilingEnabled) {
+    return <span className="badge neutral">enabled</span>;
+  }
+
+  return <span className="muted">off</span>;
+}
+
+function profileViewerHref(filePath: string, scenarioName?: string, runId?: string) {
+  return profileStandaloneHref(filePath, scenarioName, runId);
+}
+
+function displayRunName(run: BenchmarkRun) {
+  const base = runNamePrefixForScenario(scenarioNameFor(run));
+  const stamp = compactTimestamp(run.finishedAt ?? run.startedAt);
+
+  return stamp ? `${base}-${stamp}` : `${base}-${shortRunId(run.runId)}`;
+}
+
+function displayRunShortName(run: BenchmarkRun, fallbackIndex: number) {
+  const name = displayRunName(run);
+
+  return name.length > 18 ? `r${fallbackIndex}` : name;
+}
+
+function compactTimestamp(value?: string) {
+  if (!value) {
+    return null;
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+
+  return `${year}-${month}-${day}-${hours}${minutes}`;
+}
+
+function runNamePrefixForScenario(scenarioName: string) {
+  if (scenarioName === "checkout-postgres-baseline") {
+    return "baseline";
+  }
+
+  if (scenarioName === "checkout-postgres-multi-sku-cart") {
+    return "multi-sku-cart";
+  }
+
+  return scenarioName.replace(/^checkout-/, "").replace(/^postgres-/, "").replace(/[^a-z0-9]+/gi, "-");
 }
 
 function shortRunId(runId: string) {

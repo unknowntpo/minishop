@@ -28,6 +28,7 @@ type BenchmarkConfig = {
   postgresInstanceCount: number;
   postgresPoolMax: number;
   projectionBatchSize: number;
+  profilingEnabled: boolean;
   scenarioName: string;
   workloadType: WorkloadType;
   items: BenchmarkItem[];
@@ -85,6 +86,22 @@ type InventorySnapshot = {
   matchesAccounting: boolean;
 };
 
+type BenchmarkProfilingMetadata = {
+  enabled: boolean;
+  status: "disabled" | "captured" | "failed";
+  target?: string;
+  scope?: string;
+  format?: string;
+  startedAt?: string;
+  stoppedAt?: string;
+  error?: string;
+  files?: Array<{
+    kind: "cpu";
+    path: string;
+    label: string;
+  }>;
+};
+
 const config = readConfig();
 
 async function main() {
@@ -95,6 +112,8 @@ async function main() {
   const startedAtIso = new Date().toISOString();
 
   try {
+    const profilingPlan = createProfilingPlan();
+    let profiling = await maybeStartProfiling();
     const beforeEventCount = await readEventCount(pool);
     const beforeInventory = await readInventory(pool, benchmarkSkuIds(config.items));
     const startedAt = performance.now();
@@ -107,6 +126,7 @@ async function main() {
     const duplicateReplay = await replayDuplicateIdempotencyKey();
 
     const projectionProcessing = await processProjectionUntilCaughtUp(pool);
+    profiling = await maybeStopProfiling(profilingPlan, profiling);
 
     const [afterEventCount, eventTypeDistribution, statusDistribution, inventory, checkpoint] =
       await Promise.all([
@@ -220,6 +240,7 @@ async function main() {
         skuInventory: inventoryChecks[0] ?? null,
         skuInventories: inventoryChecks,
       },
+      profiling,
       notes: [
         "Kafka, Redis, SSE, WebSocket, and real payment providers are intentionally excluded.",
         "Until reservation workers are wired end-to-end, accepted intents may remain queued.",
@@ -312,6 +333,121 @@ async function processProjectionBatch() {
     locked: boolean;
     processedEvents: number;
   };
+}
+
+async function maybeStartProfiling(): Promise<BenchmarkProfilingMetadata> {
+  if (!config.profilingEnabled) {
+    return {
+      enabled: false,
+      status: "disabled",
+    };
+  }
+
+  const response = await fetch(`${config.appUrl}/api/internal/benchmarks/profiling`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-request-id": `req_${config.runId}_profiling_start`,
+      "x-trace-id": `trace_${config.runId}`,
+    },
+    body: JSON.stringify({
+      action: "start",
+      runId: config.runId,
+      label: `${config.scenarioName} app cpu`,
+    }),
+  });
+
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { error?: string } | null;
+
+    return {
+      enabled: true,
+      status: "failed",
+      target: "nextjs-app-process",
+      scope: "request-and-projection",
+      error: body?.error ?? `HTTP ${response.status}`,
+    };
+  }
+
+  const body = (await response.json()) as {
+    startedAt: string;
+  };
+
+  return {
+    enabled: true,
+    status: "captured",
+    target: "nextjs-app-process",
+    scope: "request-and-projection",
+    startedAt: body.startedAt,
+    files: [],
+  };
+}
+
+async function maybeStopProfiling(
+  plan: ReturnType<typeof createProfilingPlan>,
+  current: BenchmarkProfilingMetadata,
+): Promise<BenchmarkProfilingMetadata> {
+  if (!config.profilingEnabled || current.status === "failed") {
+    return current;
+  }
+
+  try {
+    const response = await fetch(`${config.appUrl}/api/internal/benchmarks/profiling`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-request-id": `req_${config.runId}_profiling_stop`,
+        "x-trace-id": `trace_${config.runId}`,
+      },
+      body: JSON.stringify({
+        action: "stop",
+        runId: config.runId,
+      }),
+    });
+
+    if (!response.ok) {
+      const body = (await response.json().catch(() => null)) as { error?: string } | null;
+
+      return {
+        ...current,
+        status: "failed",
+        error: body?.error ?? `HTTP ${response.status}`,
+      };
+    }
+
+    const body = (await response.json()) as {
+      format: "cpuprofile";
+      profile: object;
+      startedAt: string;
+      stoppedAt: string;
+    };
+
+    await mkdir(plan.directory, { recursive: true });
+    await writeFile(plan.absolutePath, `${JSON.stringify(body.profile)}\n`, "utf8");
+
+    return {
+      enabled: true,
+      status: "captured",
+      target: "nextjs-app-process",
+      scope: "request-and-projection",
+      format: body.format,
+      startedAt: body.startedAt,
+      stoppedAt: body.stoppedAt,
+      files: [
+        {
+          kind: "cpu",
+          path: plan.relativePath,
+          label: "app CPU profile",
+        },
+      ],
+    };
+  } catch (error) {
+    return {
+      ...current,
+      status: "failed",
+      error: error instanceof Error ? error.message : "unknown profiling failure",
+    };
+  }
 }
 
 async function processProjectionUntilCaughtUp(pool: Pool) {
@@ -449,6 +585,7 @@ function buildRunConditions() {
       cartSkuCount: config.items.length,
       quantityPerIntent: totalQuantityPerIntent(config.items),
       projectionBatchSize: config.projectionBatchSize,
+      profilingEnabled: config.profilingEnabled,
     },
   };
 }
@@ -523,6 +660,17 @@ async function writeBenchmarkArtifact(report: object) {
   return filePath;
 }
 
+function createProfilingPlan() {
+  const directory = path.join(config.resultsDir, config.scenarioName, "profiles");
+  const fileName = `${config.runId}.app.cpuprofile`;
+
+  return {
+    directory,
+    absolutePath: path.join(directory, fileName),
+    relativePath: path.join(config.scenarioName, "profiles", fileName),
+  };
+}
+
 function readConfig(): BenchmarkConfig {
   const databaseUrl = process.env.DATABASE_URL;
 
@@ -541,6 +689,7 @@ function readConfig(): BenchmarkConfig {
     postgresInstanceCount: readPositiveIntegerEnv("BENCHMARK_POSTGRES_INSTANCES", 1),
     postgresPoolMax: readPositiveIntegerEnv("BENCHMARK_POSTGRES_POOL_MAX", 5),
     projectionBatchSize: readPositiveIntegerEnv("BENCHMARK_PROJECTION_BATCH_SIZE", 1000),
+    profilingEnabled: process.env.BENCHMARK_PROFILE === "1",
     workloadType: readWorkloadType(),
     scenarioName: readScenarioName(),
     items: readBenchmarkItems(),

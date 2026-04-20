@@ -59,6 +59,8 @@ async function main() {
         p95LatencyMs: report.requestPath?.p95LatencyMs,
         appendThroughputPerSecond: report.eventStore?.appendThroughputPerSecond,
         projectionLagEvents: report.projections?.checkpointLagEvents,
+        profilingStatus: report.profiling?.status ?? "disabled",
+        profilingFiles: report.profiling?.files?.map((file) => file.path) ?? [],
         artifact,
       },
       null,
@@ -135,6 +137,14 @@ type BenchmarkArtifact = {
   };
   projections: {
     checkpointLagEvents: number;
+  };
+  profiling?: {
+    enabled?: boolean;
+    status?: string;
+    files?: Array<{
+      path: string;
+      label: string;
+    }>;
   };
 };
 

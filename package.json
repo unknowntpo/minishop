@@ -41,7 +41,8 @@
     "next": "16.2.4",
     "pg": "^8.20.0",
     "react": "19.2.5",
-    "react-dom": "19.2.5"
+    "react-dom": "19.2.5",
+    "speedscope": "^1.25.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.12",
