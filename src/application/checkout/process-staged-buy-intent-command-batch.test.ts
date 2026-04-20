@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { processBuyIntentCommandBatch } from "@/src/application/checkout/process-buy-intent-command-batch";
+import { processStagedBuyIntentCommandBatch } from "@/src/application/checkout/process-staged-buy-intent-command-batch";
 import type { BuyIntentCommand } from "@/src/domain/checkout-command/buy-intent-command";
 import type { DomainEvent } from "@/src/domain/events/domain-event";
 import type { BuyIntentCommandGateway, BuyIntentCommandStatusView, StagedBuyIntentCommand } from "@/src/ports/buy-intent-command-gateway";
 import type { BuyIntentCommandOrchestrator } from "@/src/ports/buy-intent-command-orchestrator";
 import type { EventStore, EventStoreAppendInput, StoredEvent } from "@/src/ports/event-store";
 
-describe("processBuyIntentCommandBatch", () => {
+describe("processStagedBuyIntentCommandBatch", () => {
   it("marks created when a staged command is appended successfully", async () => {
     const gateway = new FakeGateway([
       {
@@ -39,7 +39,7 @@ describe("processBuyIntentCommandBatch", () => {
       },
     ]);
 
-    const result = await processBuyIntentCommandBatch(
+    const result = await processStagedBuyIntentCommandBatch(
       { batchSize: 10 },
       {
         gateway,
@@ -96,7 +96,7 @@ describe("processBuyIntentCommandBatch", () => {
       },
     ]);
 
-    await processBuyIntentCommandBatch(
+    await processStagedBuyIntentCommandBatch(
       { batchSize: 10 },
       {
         gateway,
@@ -142,6 +142,12 @@ class FakeGateway implements BuyIntentCommandGateway {
     };
   }
 
+  async readStatuses(commandIds: string[]) {
+    return Promise.all(commandIds.map((commandId) => this.readStatus(commandId))).then((rows) =>
+      rows.filter((row): row is BuyIntentCommandStatusView => row !== null),
+    );
+  }
+
   async stage() {}
 
   async claimPendingBatch() {
@@ -150,15 +156,25 @@ class FakeGateway implements BuyIntentCommandGateway {
 
   async markProcessing() {}
 
+  async markProcessingBatch() {}
+
   async markPublishFailed() {}
 
   async markCreated(input: Parameters<BuyIntentCommandGateway["markCreated"]>[0]) {
     this.created.push(input);
   }
 
+  async markCreatedBatch(inputs: Array<Parameters<BuyIntentCommandGateway["markCreated"]>[0]>) {
+    this.created.push(...inputs);
+  }
+
   async markFailed() {}
 
+  async markFailedBatch() {}
+
   async markMergedDuplicateCommand() {}
+
+  async markMergedDuplicateCommands() {}
 }
 
 class FakeEventStore implements EventStore {

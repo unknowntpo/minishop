@@ -87,6 +87,9 @@ export const postgresBuyIntentCommandGateway: BuyIntentCommandGateway = {
   readStatus(commandId): Promise<BuyIntentCommandStatusView | null> {
     return getPostgresGateway().readStatus(commandId);
   },
+  readStatuses(commandIds): Promise<BuyIntentCommandStatusView[]> {
+    return getPostgresGateway().readStatuses(commandIds);
+  },
   stage(command): Promise<void> {
     return getPostgresGateway().stage(command);
   },
@@ -96,17 +99,29 @@ export const postgresBuyIntentCommandGateway: BuyIntentCommandGateway = {
   markProcessing(commandId): Promise<void> {
     return getPostgresGateway().markProcessing(commandId);
   },
+  markProcessingBatch(commandIds): Promise<void> {
+    return getPostgresGateway().markProcessingBatch(commandIds);
+  },
   markPublishFailed(input): Promise<void> {
     return getPostgresGateway().markPublishFailed(input);
   },
   markCreated(input): Promise<void> {
     return getPostgresGateway().markCreated(input);
   },
+  markCreatedBatch(inputs): Promise<void> {
+    return getPostgresGateway().markCreatedBatch(inputs);
+  },
   markFailed(input): Promise<void> {
     return getPostgresGateway().markFailed(input);
   },
+  markFailedBatch(inputs): Promise<void> {
+    return getPostgresGateway().markFailedBatch(inputs);
+  },
   markMergedDuplicateCommand(input): Promise<void> {
     return getPostgresGateway().markMergedDuplicateCommand(input);
+  },
+  markMergedDuplicateCommands(inputs): Promise<void> {
+    return getPostgresGateway().markMergedDuplicateCommands(inputs);
   },
 };
 

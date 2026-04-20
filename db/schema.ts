@@ -199,7 +199,7 @@ export const commandStatus = pgTable(
 );
 
 export const stagingBuyIntentCommand = pgTable(
-  "staging_buy_intent_command",
+  "staged_buy_intent_command",
   {
     stagingId: bigserial("staging_id", { mode: "number" }).primaryKey(),
     commandId: uuid("command_id").notNull(),
@@ -218,10 +218,10 @@ export const stagingBuyIntentCommand = pgTable(
     lastErrorCode: text("last_error_code"),
   },
   (table) => [
-    index("staging_buy_intent_command_ingest_status_idx").on(table.ingestStatus, table.receivedAt),
-    index("staging_buy_intent_command_command_id_idx").on(table.commandId),
+    index("staged_buy_intent_command_ingest_status_idx").on(table.ingestStatus, table.receivedAt),
+    index("staged_buy_intent_command_command_id_idx").on(table.commandId),
     check(
-      "staging_buy_intent_command_ingest_status_check",
+      "staged_buy_intent_command_ingest_status_check",
       sql`${table.ingestStatus} in (${sqlStringList(stagingIngestStatuses)})`,
     ),
   ],

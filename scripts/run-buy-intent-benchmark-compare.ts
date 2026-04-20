@@ -24,13 +24,13 @@ async function main() {
     mode: "temporal",
     scenarioName: temporalScenario,
     services: ["app", "worker-buy-intents-ingest", "worker-buy-intents-temporal", "worker-projections"],
-    stopServices: ["worker-buy-intents-process"],
+    stopServices: ["worker-staged-buy-intents-process"],
   });
 
   const bypassArtifact = await runLane({
     mode: "bypass",
     scenarioName: bypassScenario,
-    services: ["app", "worker-buy-intents-ingest", "worker-buy-intents-process", "worker-projections"],
+    services: ["app", "worker-buy-intents-ingest", "worker-staged-buy-intents-process", "worker-projections"],
     stopServices: ["worker-buy-intents-temporal"],
   });
 

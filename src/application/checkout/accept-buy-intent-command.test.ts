@@ -148,6 +148,10 @@ class FakeGateway implements BuyIntentCommandGateway {
     return null;
   }
 
+  async readStatuses() {
+    return [];
+  }
+
   async stage() {}
 
   async claimPendingBatch() {
@@ -156,15 +160,23 @@ class FakeGateway implements BuyIntentCommandGateway {
 
   async markProcessing() {}
 
+  async markProcessingBatch() {}
+
   async markPublishFailed(
     _input: Parameters<BuyIntentCommandGateway["markPublishFailed"]>[0],
   ) {}
 
   async markCreated() {}
 
+  async markCreatedBatch() {}
+
   async markFailed() {}
 
+  async markFailedBatch() {}
+
   async markMergedDuplicateCommand() {}
+
+  async markMergedDuplicateCommands() {}
 }
 
 class FakeBus implements BuyIntentCommandBus {

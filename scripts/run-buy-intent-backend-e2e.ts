@@ -38,7 +38,7 @@ async function main() {
     await acquireExclusiveE2ELock(pool);
     await pool.query(`
       truncate table
-        staging_buy_intent_command,
+        staged_buy_intent_command,
         command_status,
         event_store,
         checkout_intent_projection,

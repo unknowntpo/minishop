@@ -31,9 +31,11 @@ export type StagedBuyIntentCommand = {
 export type BuyIntentCommandGateway = {
   createAccepted(command: BuyIntentCommand): Promise<AcceptedBuyIntentCommand>;
   readStatus(commandId: string): Promise<BuyIntentCommandStatusView | null>;
+  readStatuses(commandIds: string[]): Promise<BuyIntentCommandStatusView[]>;
   stage(command: BuyIntentCommand): Promise<void>;
   claimPendingBatch(input: { batchId: string; batchSize: number }): Promise<StagedBuyIntentCommand[]>;
   markProcessing(commandId: string): Promise<void>;
+  markProcessingBatch(commandIds: string[]): Promise<void>;
   markPublishFailed(input: {
     commandId: string;
     failureCode: string;
@@ -46,6 +48,15 @@ export type BuyIntentCommandGateway = {
     eventId: string;
     isDuplicate: boolean;
   }): Promise<void>;
+  markCreatedBatch(
+    inputs: Array<{
+      stagingId: number;
+      commandId: string;
+      checkoutIntentId: string;
+      eventId: string;
+      isDuplicate: boolean;
+    }>,
+  ): Promise<void>;
   markFailed(input: {
     stagingId: number;
     commandId: string;
@@ -53,5 +64,15 @@ export type BuyIntentCommandGateway = {
     failureMessage: string;
     dlq?: boolean;
   }): Promise<void>;
+  markFailedBatch(
+    inputs: Array<{
+      stagingId: number;
+      commandId: string;
+      failureCode: string;
+      failureMessage: string;
+      dlq?: boolean;
+    }>,
+  ): Promise<void>;
   markMergedDuplicateCommand(input: { stagingId: number; commandId: string }): Promise<void>;
+  markMergedDuplicateCommands(inputs: Array<{ stagingId: number; commandId: string }>): Promise<void>;
 };

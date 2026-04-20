@@ -13,4 +13,4 @@ RUN pnpm install --frozen-lockfile
 
 COPY . .
 
-CMD ["pnpm", "worker:buy-intents:process:loop"]
+CMD ["pnpm", "worker:staged-buy-intents:process:loop"]

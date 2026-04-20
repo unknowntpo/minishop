@@ -1,13 +1,13 @@
 -- name: ClaimPendingBatch :many
 with next_batch as (
   select staging_id
-  from staging_buy_intent_command
+  from staged_buy_intent_command
   where ingest_status = 'pending'
   order by received_at asc
   limit $2
   for update skip locked
 )
-update staging_buy_intent_command as staging
+update staged_buy_intent_command as staging
 set
   ingest_status = 'claimed',
   batch_id = $1,
@@ -69,7 +69,7 @@ where command_id = $1
   and status in ('accepted', 'processing');
 
 -- name: MarkStagingMerged :exec
-update staging_buy_intent_command
+update staged_buy_intent_command
 set
   ingest_status = 'merged',
   processed_at = now(),
@@ -77,7 +77,7 @@ set
 where staging_id = $1;
 
 -- name: MarkStagingFailed :exec
-update staging_buy_intent_command
+update staged_buy_intent_command
 set
   ingest_status = $2,
   processed_at = now(),

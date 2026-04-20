@@ -6,7 +6,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { Pool } from "pg";
 
 import { acceptBuyIntentCommand } from "@/src/application/checkout/accept-buy-intent-command";
-import { processBuyIntentCommandBatch } from "@/src/application/checkout/process-buy-intent-command-batch";
+import { processStagedBuyIntentCommandBatch } from "@/src/application/checkout/process-staged-buy-intent-command-batch";
 import type { BuyIntentCommand } from "@/src/domain/checkout-command/buy-intent-command";
 import { createPostgresBuyIntentCommandBus } from "@/src/infrastructure/checkout-command/postgres-buy-intent-command-bus";
 import { createPostgresBuyIntentCommandGateway } from "@/src/infrastructure/checkout-command/postgres-buy-intent-command-gateway";
@@ -53,7 +53,7 @@ describe("async buy-intent command flow integration", () => {
   beforeEach(async () => {
     await pool.query(`
       truncate table
-        staging_buy_intent_command,
+        staged_buy_intent_command,
         command_status,
         event_store,
         checkout_intent_projection,
@@ -76,7 +76,7 @@ describe("async buy-intent command flow integration", () => {
       clock: fixedClock(),
     });
 
-    const processed = await processBuyIntentCommandBatch(
+    const processed = await processStagedBuyIntentCommandBatch(
       {},
       {
         gateway,
@@ -121,7 +121,7 @@ describe("async buy-intent command flow integration", () => {
       clock: fixedClock(),
     });
 
-    await processBuyIntentCommandBatch(
+    await processStagedBuyIntentCommandBatch(
       {},
       {
         gateway,
@@ -144,7 +144,7 @@ describe("async buy-intent command flow integration", () => {
       clock: fixedClock(),
     });
 
-    const processed = await processBuyIntentCommandBatch(
+    const processed = await processStagedBuyIntentCommandBatch(
       {},
       {
         gateway,
@@ -190,7 +190,7 @@ describe("async buy-intent command flow integration", () => {
     await gateway.createAccepted(command);
     await gateway.stage(command);
 
-    await processBuyIntentCommandBatch(
+    await processStagedBuyIntentCommandBatch(
       {},
       {
         gateway,
@@ -207,7 +207,7 @@ describe("async buy-intent command flow integration", () => {
 
     await gateway.stage(command);
 
-    const processed = await processBuyIntentCommandBatch(
+    const processed = await processStagedBuyIntentCommandBatch(
       {},
       {
         gateway,

@@ -193,7 +193,7 @@ This favors effectively-once business outcomes over stricter and more expensive 
    |
    | batch + COPY
    v
-[staging_buy_intent_commands]
+[staged_buy_intent_commands]
    |
    v
 [Merge Worker]
@@ -305,9 +305,9 @@ This favors effectively-once business outcomes over stricter and more expensive 
 
 ```text
 worker-buy-intents-ingest
-  NATS -> staging_buy_intent_command
+  NATS -> staged_buy_intent_command
 
-worker-buy-intents-process
+worker-staged-buy-intents-process
   process staged buy intent commands
   -> command_status + event_store              (bypass lane)
 

@@ -1,0 +1,227 @@
+import { createCheckoutIntent } from "@/src/application/checkout/create-checkout-intent";
+import type { Clock } from "@/src/ports/clock";
+import type { BuyIntentCommandGateway } from "@/src/ports/buy-intent-command-gateway";
+import type { BuyIntentCommandOrchestrator } from "@/src/ports/buy-intent-command-orchestrator";
+import type { EventStore } from "@/src/ports/event-store";
+import type { IdGenerator } from "@/src/ports/id-generator";
+
+export type ProcessStagedBuyIntentCommandBatchDeps = {
+  gateway: BuyIntentCommandGateway;
+  orchestrator: BuyIntentCommandOrchestrator;
+  eventStore: EventStore;
+  idGenerator: IdGenerator;
+  clock: Clock;
+};
+
+export type ProcessStagedBuyIntentCommandBatchResult = {
+  batchId: string;
+  claimedCount: number;
+  createdCount: number;
+  failedCount: number;
+  duplicateCommandCount: number;
+};
+
+export async function processStagedBuyIntentCommandBatch(
+  input: { batchSize?: number; processConcurrency?: number },
+  deps: ProcessStagedBuyIntentCommandBatchDeps,
+): Promise<ProcessStagedBuyIntentCommandBatchResult> {
+  const batchSize = Math.max(1, input.batchSize ?? 100);
+  const processConcurrency = Math.max(1, input.processConcurrency ?? 1);
+  const batchId = deps.idGenerator.randomUuid();
+  const claimed = await deps.gateway.claimPendingBatch({ batchId, batchSize });
+  const existingByCommandId = new Map(
+    (await deps.gateway.readStatuses(claimed.map((row) => row.commandId))).map((status) => [
+      status.commandId,
+      status,
+    ]),
+  );
+
+  const missingStatuses = claimed.filter((row) => !existingByCommandId.has(row.commandId));
+  if (missingStatuses.length > 0) {
+    await deps.gateway.markFailedBatch(
+      missingStatuses.map((row) => ({
+        stagingId: row.stagingId,
+        commandId: row.commandId,
+        failureCode: "missing_command_status",
+        failureMessage: "Command status row was not found for claimed staging entry.",
+      })),
+    );
+  }
+
+  const duplicateCommands = claimed.filter((row) => {
+    const existing = existingByCommandId.get(row.commandId);
+    return existing?.status === "created" || existing?.status === "failed";
+  });
+  if (duplicateCommands.length > 0) {
+    await deps.gateway.markMergedDuplicateCommands(
+      duplicateCommands.map((row) => ({
+        stagingId: row.stagingId,
+        commandId: row.commandId,
+      })),
+    );
+  }
+
+  const readyToProcess = claimed.filter((row) => {
+    const existing = existingByCommandId.get(row.commandId);
+    return existing && existing.status !== "created" && existing.status !== "failed";
+  });
+
+  await deps.gateway.markProcessingBatch(readyToProcess.map((row) => row.commandId));
+  await Promise.all(readyToProcess.map((row) => notifyProcessing(deps.orchestrator, row.commandId)));
+
+  const outcomes = await runWithConcurrency(readyToProcess, processConcurrency, async (row) => {
+    try {
+      const result = await createCheckoutIntent(
+        {
+          buyer_id: row.payload.buyer_id,
+          items: row.payload.items,
+          ...(row.payload.idempotency_key ? { idempotency_key: row.payload.idempotency_key } : {}),
+          metadata: row.payload.metadata,
+        },
+        {
+          eventStore: deps.eventStore,
+          idGenerator: deps.idGenerator,
+          clock: deps.clock,
+        },
+      );
+
+      return {
+        type: "created" as const,
+        stagingId: row.stagingId,
+        commandId: row.commandId,
+        checkoutIntentId: result.checkoutIntentId,
+        eventId: result.eventId,
+        isDuplicate: result.idempotentReplay,
+      };
+    } catch (error) {
+      const failureMessage = error instanceof Error ? error.message : "Unknown merge failure.";
+      return {
+        type: "failed" as const,
+        stagingId: row.stagingId,
+        commandId: row.commandId,
+        failureCode: "merge_failed",
+        failureMessage,
+      };
+    }
+  });
+
+  const createdOutcomes = outcomes.filter(
+    (outcome): outcome is Extract<(typeof outcomes)[number], { type: "created" }> =>
+      outcome.type === "created",
+  );
+  const failedOutcomes = outcomes.filter(
+    (outcome): outcome is Extract<(typeof outcomes)[number], { type: "failed" }> =>
+      outcome.type === "failed",
+  );
+
+  await deps.gateway.markCreatedBatch(createdOutcomes);
+  await deps.gateway.markFailedBatch(failedOutcomes);
+  await Promise.all(
+    createdOutcomes.map((outcome) =>
+      notifyCreated(deps.orchestrator, {
+        commandId: outcome.commandId,
+        checkoutIntentId: outcome.checkoutIntentId,
+        eventId: outcome.eventId,
+        isDuplicate: outcome.isDuplicate,
+      }),
+    ),
+  );
+  await Promise.all(
+    failedOutcomes.map((outcome) =>
+      notifyFailed(deps.orchestrator, {
+        commandId: outcome.commandId,
+        failureCode: outcome.failureCode,
+        failureMessage: outcome.failureMessage,
+      }),
+    ),
+  );
+
+  const createdCount = createdOutcomes.length;
+  const failedCount = missingStatuses.length + failedOutcomes.length;
+  const duplicateCommandCount = duplicateCommands.length;
+
+  return {
+    batchId,
+    claimedCount: claimed.length,
+    createdCount,
+    failedCount,
+    duplicateCommandCount,
+  };
+}
+
+async function notifyProcessing(orchestrator: BuyIntentCommandOrchestrator, commandId: string) {
+  try {
+    await orchestrator.markProcessing(commandId);
+  } catch (error) {
+    console.error("buy_intent_command_orchestrator_mark_processing", {
+      commandId,
+      error,
+    });
+  }
+}
+
+async function runWithConcurrency<TInput, TOutput>(
+  values: TInput[],
+  concurrency: number,
+  taskFor: (value: TInput) => Promise<TOutput>,
+) {
+  const results = new Array<TOutput>(values.length);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (true) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+
+      if (currentIndex >= values.length) {
+        return;
+      }
+
+      results[currentIndex] = await taskFor(values[currentIndex] as TInput);
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: Math.max(1, Math.min(concurrency, values.length)) }, () => worker()),
+  );
+
+  return results;
+}
+
+async function notifyCreated(
+  orchestrator: BuyIntentCommandOrchestrator,
+  input: {
+    commandId: string;
+    checkoutIntentId: string;
+    eventId: string;
+    isDuplicate: boolean;
+  },
+) {
+  try {
+    await orchestrator.markCreated(input);
+  } catch (error) {
+    console.error("buy_intent_command_orchestrator_mark_created", {
+      commandId: input.commandId,
+      error,
+    });
+  }
+}
+
+async function notifyFailed(
+  orchestrator: BuyIntentCommandOrchestrator,
+  input: {
+    commandId: string;
+    failureCode: string;
+    failureMessage: string;
+  },
+) {
+  try {
+    await orchestrator.markFailed(input);
+  } catch (error) {
+    console.error("buy_intent_command_orchestrator_mark_failed", {
+      commandId: input.commandId,
+      failureCode: input.failureCode,
+      error,
+    });
+  }
+}

@@ -1,6 +1,6 @@
 import "dotenv/config";
 
-import { processBuyIntentCommandBatch } from "@/src/application/checkout/process-buy-intent-command-batch";
+import { processStagedBuyIntentCommandBatch } from "@/src/application/checkout/process-staged-buy-intent-command-batch";
 import {
   buyIntentCommandOrchestrator,
   postgresBuyIntentCommandGateway,
@@ -11,11 +11,12 @@ import { cryptoIdGenerator } from "@/src/ports/id-generator";
 
 async function main() {
   const batchSize = readPositiveIntegerEnv("BUY_INTENT_BATCH_SIZE", 100);
+  const processConcurrency = readPositiveIntegerEnv("BUY_INTENT_PROCESS_CONCURRENCY", 1);
   const pollIntervalMs = readPositiveIntegerEnv("BUY_INTENT_PROCESS_POLL_INTERVAL_MS", 1000);
 
   while (true) {
-    const result = await processBuyIntentCommandBatch(
-      { batchSize },
+    const result = await processStagedBuyIntentCommandBatch(
+      { batchSize, processConcurrency },
       {
         gateway: postgresBuyIntentCommandGateway,
         orchestrator: buyIntentCommandOrchestrator,

@@ -9,6 +9,7 @@ declare global {
 
 export function getPool() {
   const databaseUrl = process.env.DATABASE_URL;
+  const poolMax = readPositiveIntegerEnv("DATABASE_POOL_MAX", 10);
 
   if (!databaseUrl) {
     throw new Error("DATABASE_URL is required.");
@@ -18,7 +19,7 @@ export function getPool() {
     globalThis.minishopPool ??
     new Pool({
       connectionString: databaseUrl,
-      max: 10,
+      max: poolMax,
     });
 
   // Reuse one process-wide pool in both dev and production. In dev this avoids
@@ -30,4 +31,15 @@ export function getPool() {
 
 export function getDb() {
   return drizzle(getPool(), { schema });
+}
+
+function readPositiveIntegerEnv(name: string, fallback: number) {
+  const value = process.env[name];
+
+  if (!value) {
+    return fallback;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }

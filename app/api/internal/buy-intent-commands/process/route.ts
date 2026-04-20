@@ -1,6 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
 
-import { processBuyIntentCommandBatch } from "@/src/application/checkout/process-buy-intent-command-batch";
+import { processStagedBuyIntentCommandBatch } from "@/src/application/checkout/process-staged-buy-intent-command-batch";
 import {
   buyIntentCommandOrchestrator,
   postgresBuyIntentCommandGateway,
@@ -24,7 +24,7 @@ export async function POST(request: NextRequest) {
         ? Math.max(1, Math.trunc(body.batchSize))
         : undefined;
 
-    const result = await processBuyIntentCommandBatch(
+    const result = await processStagedBuyIntentCommandBatch(
       { batchSize },
       {
         gateway: postgresBuyIntentCommandGateway,
