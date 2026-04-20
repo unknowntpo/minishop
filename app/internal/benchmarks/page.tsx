@@ -372,7 +372,7 @@ export default async function InternalBenchmarksPage({
   const selectedScenarioRuns = selectedScenarioName
     ? runs.filter((run) => scenarioNameFor(run) === selectedScenarioName)
     : [];
-  const comparisonRuns = selectedScenarioRuns.slice(0, 10).reverse();
+  const comparisonRuns = selectedScenarioRuns.slice(0, 10);
   const selectedRunId = params?.run;
   const capacityScenarioName =
     selectedScenarioName ?? (latest ? scenarioNameFor(latest) : undefined);
