@@ -123,9 +123,15 @@ async function main() {
         throw new Error("No benchmark requests were accepted.");
       }
 
-      createdResults = await Promise.all(
-        accepted.map((result) => waitForCreatedStatus(result.commandId, result.acceptedAtMs)),
-      );
+      const createdBatch = await waitForCreatedStatuses(pool, accepted);
+      createdResults = createdBatch.results;
+
+      if (createdBatch.pendingCommandIds.length > 0) {
+        throw new Error(
+          `Commands did not reach terminal status in time: ${createdBatch.pendingCommandIds.slice(0, 10).join(", ")}${createdBatch.pendingCommandIds.length > 10 ? "..." : ""}`,
+        );
+      }
+
       const acceptedAtByCommandId = new Map(
         accepted.map((result) => [result.commandId, result.acceptedAtMs] as const),
       );
@@ -190,14 +196,18 @@ async function main() {
       const intentCreation = await readIntentCreationMetrics(
         pool,
         createdResults
-          .filter((result) => typeof result.checkoutIntentId === "string" && result.checkoutIntentId)
+          .filter(
+            (result) =>
+              result.status === "created" &&
+              typeof result.checkoutIntentId === "string" &&
+              result.checkoutIntentId,
+          )
           .map((result) => ({
             checkoutIntentId: result.checkoutIntentId as string,
             requestStartedAtMs:
               accepted.find((entry) => entry.commandId === result.commandId)?.requestStartedAtMs ??
               null,
-          })),
-        acceptDurationMs,
+          }))
       );
 
       const natsSnapshot = await readNatsSnapshot();
@@ -307,14 +317,18 @@ async function main() {
       const intentCreation = await readIntentCreationMetrics(
         pool,
         createdResults
-          .filter((result) => typeof result.checkoutIntentId === "string" && result.checkoutIntentId)
+          .filter(
+            (result) =>
+              result.status === "created" &&
+              typeof result.checkoutIntentId === "string" &&
+              result.checkoutIntentId,
+          )
           .map((result) => ({
             checkoutIntentId: result.checkoutIntentId as string,
             requestStartedAtMs:
               accepted.find((entry) => entry.commandId === result.commandId)?.requestStartedAtMs ??
               null,
-          })),
-        acceptDurationMs,
+          }))
       );
       const artifactPath = await writeBenchmarkArtifact({
         schemaVersion: 1,
@@ -397,17 +411,21 @@ async function main() {
         failure: {
           message: failureMessage,
           stage:
-            cancelledResults.length < paymentSignalResults.length
-              ? "resolution"
-              : paymentSignalResults.length <
-                    displayReadyResults.filter((result) => result.status === "pending_payment").length
-                ? "payment_signal"
-                : displayReadyResults.length <
-                      createdResults.filter((result) => result.checkoutIntentId).length
-                  ? "display_ready"
-                  : createdResults.length < accepted.length
-                    ? "created"
-                    : "accept",
+            config.mode === "bypass"
+              ? createdResults.length < accepted.length
+                ? "created"
+                : "accept"
+              : cancelledResults.length < paymentSignalResults.length
+                ? "resolution"
+                : paymentSignalResults.length <
+                      displayReadyResults.filter((result) => result.status === "pending_payment").length
+                  ? "payment_signal"
+                  : displayReadyResults.length <
+                        createdResults.filter((result) => result.checkoutIntentId).length
+                    ? "display_ready"
+                    : createdResults.length < accepted.length
+                      ? "created"
+                      : "accept",
         },
         notes: [
           "This artifact was written from a failed benchmark run so the dashboard can still show partial progress and profiling evidence.",
@@ -469,7 +487,7 @@ async function createBuyIntent(index: number): Promise<AcceptResult> {
       latencyMs,
       requestStartedAtMs,
       commandId: body.commandId,
-      acceptedAtMs: performance.now(),
+      acceptedAtMs: performance.timeOrigin + performance.now(),
     };
   } catch (error) {
     return {
@@ -482,36 +500,54 @@ async function createBuyIntent(index: number): Promise<AcceptResult> {
   }
 }
 
-async function waitForCreatedStatus(commandId: string, startedAtMs: number): Promise<CreatedResult> {
+async function waitForCreatedStatuses(
+  pool: Pool,
+  accepted: Array<AcceptResult & { commandId: string; acceptedAtMs: number }>,
+) {
+  const acceptedAtByCommandId = new Map(
+    accepted.map((result) => [result.commandId, result.acceptedAtMs] as const),
+  );
+  const pendingCommandIds = new Set(accepted.map((result) => result.commandId));
+  const resultsByCommandId = new Map<string, CreatedResult>();
   const deadline = Date.now() + 30_000;
 
-  while (Date.now() < deadline) {
-    const response = await fetch(`${config.appUrl}/api/buy-intent-commands/${commandId}`);
+  while (Date.now() < deadline && pendingCommandIds.size > 0) {
+    const rows = await readCommandStatusBatch(pool, [...pendingCommandIds]);
 
-    if (response.ok) {
-      const body = (await response.json()) as {
-        status: string;
-        checkoutIntentId: string | null;
-        eventId: string | null;
-        isDuplicate: boolean;
-      };
-
-      if (body.status === "created") {
-        return {
-          commandId,
-          status: body.status,
-          checkoutIntentId: body.checkoutIntentId,
-          eventId: body.eventId,
-          isDuplicate: body.isDuplicate,
-          latencyMs: performance.now() - startedAtMs,
-        };
+    for (const row of rows) {
+      if (row.status !== "created" && row.status !== "failed") {
+        continue;
       }
+
+      const acceptedAtMs = acceptedAtByCommandId.get(row.commandId);
+      if (typeof acceptedAtMs !== "number") {
+        continue;
+      }
+
+      resultsByCommandId.set(row.commandId, {
+        commandId: row.commandId,
+        status: row.status,
+        checkoutIntentId: row.checkoutIntentId,
+        eventId: row.eventId,
+        isDuplicate: row.isDuplicate,
+        latencyMs: Math.max(0, row.updatedAtMs - acceptedAtMs),
+      });
+      pendingCommandIds.delete(row.commandId);
+    }
+
+    if (pendingCommandIds.size === 0) {
+      break;
     }
 
     await sleep(100);
   }
 
-  throw new Error(`Command ${commandId} did not reach created status in time.`);
+  return {
+    results: accepted
+      .map((result) => resultsByCommandId.get(result.commandId))
+      .filter((result): result is CreatedResult => typeof result !== "undefined"),
+    pendingCommandIds: [...pendingCommandIds],
+  };
 }
 
 async function waitForCheckoutStatus(
@@ -694,7 +730,6 @@ async function readNatsSnapshot() {
 async function readIntentCreationMetrics(
   pool: Pool,
   intents: Array<{ checkoutIntentId: string; requestStartedAtMs: number | null }>,
-  fallbackDurationMs: number,
 ) {
   if (intents.length === 0) {
     return {
@@ -742,11 +777,61 @@ async function readIntentCreationMetrics(
     createdThroughputPerSecond:
       Number.isFinite(minRequestStartedAtMs) && maxOccurredAtMs >= minRequestStartedAtMs
         ? ratePerSecond(result.rows.length, Math.max(maxOccurredAtMs - minRequestStartedAtMs, 1))
-        : fallbackDurationMs > 0
-          ? ratePerSecond(result.rows.length, fallbackDurationMs)
         : 0,
     requestToCreatedLatencyMs: summarizeLatencies(latencies),
   };
+}
+
+async function readCommandStatusBatch(pool: Pool, commandIds: string[]) {
+  if (commandIds.length === 0) {
+    return [];
+  }
+
+  const rows: Array<{
+    commandId: string;
+    status: string;
+    checkoutIntentId: string | null;
+    eventId: string | null;
+    isDuplicate: boolean;
+    updatedAtMs: number;
+  }> = [];
+
+  for (const chunk of chunked(commandIds, 1_000)) {
+    const result = await pool.query<{
+      command_id: string;
+      status: string;
+      checkout_intent_id: string | null;
+      event_id: string | null;
+      is_duplicate: boolean;
+      updated_at: string;
+    }>(
+      `
+        select
+          command_id::text,
+          status,
+          checkout_intent_id::text,
+          event_id::text,
+          is_duplicate,
+          updated_at
+        from command_status
+        where command_id = any($1::uuid[])
+      `,
+      [chunk],
+    );
+
+    rows.push(
+      ...result.rows.map((row) => ({
+        commandId: row.command_id,
+        status: row.status,
+        checkoutIntentId: row.checkout_intent_id,
+        eventId: row.event_id,
+        isDuplicate: row.is_duplicate,
+        updatedAtMs: Date.parse(row.updated_at),
+      })),
+    );
+  }
+
+  return rows;
 }
 
 async function assertAppReachable(appUrl: string) {
@@ -789,6 +874,16 @@ function countBy<T>(values: T[], keyFor: (value: T) => string) {
   }
 
   return Object.fromEntries([...counts.entries()].sort(([left], [right]) => left.localeCompare(right)));
+}
+
+function chunked<T>(values: T[], size: number) {
+  const chunks: T[][] = [];
+
+  for (let index = 0; index < values.length; index += size) {
+    chunks.push(values.slice(index, index + size));
+  }
+
+  return chunks;
 }
 
 async function runWithConcurrency<T>(
