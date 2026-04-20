@@ -1,0 +1,575 @@
+import "dotenv/config";
+
+import { mkdir, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
+type BenchmarkConfig = {
+  appUrl: string;
+  requests: number;
+  httpConcurrency: number;
+  skuId: string;
+  unitPriceAmountMinor: number;
+  currency: string;
+  buyerPrefix: string;
+  runId: string;
+  resultsDir: string;
+  scenarioName: string;
+};
+
+type AcceptResult = {
+  ok: boolean;
+  status: number;
+  latencyMs: number;
+  commandId?: string;
+  error?: string;
+  acceptedAtMs?: number;
+};
+
+type CreatedResult = {
+  commandId: string;
+  status: string;
+  checkoutIntentId: string | null;
+  eventId: string | null;
+  isDuplicate: boolean;
+  latencyMs: number;
+};
+
+type CheckoutResult = {
+  checkoutIntentId: string;
+  status: string;
+  paymentId: string | null;
+  orderId: string | null;
+  latencyMs: number;
+};
+
+type PaymentSignalResult = {
+  commandId: string;
+  status: number;
+  latencyMs: number;
+  signaledAtMs: number;
+};
+
+const config = readConfig();
+
+async function main() {
+  await assertAppReachable(config.appUrl);
+
+  const inventory = await readInventory(config.skuId);
+  const effectiveRequests = Math.min(config.requests, inventory.available);
+
+  if (effectiveRequests < 1) {
+    throw new Error(
+      `No available inventory for ${config.skuId}. Current available units: ${inventory.available}.`,
+    );
+  }
+
+  const acceptStartedAt = performance.now();
+  const acceptResults = await runWithConcurrency(
+    effectiveRequests,
+    config.httpConcurrency,
+    async (index) => createBuyIntent(index),
+  );
+  const acceptDurationMs = performance.now() - acceptStartedAt;
+
+  const accepted = acceptResults.filter(
+    (result): result is AcceptResult & { commandId: string; acceptedAtMs: number } =>
+      result.ok && typeof result.commandId === "string" && typeof result.acceptedAtMs === "number",
+  );
+
+  if (accepted.length === 0) {
+    throw new Error("No benchmark requests were accepted.");
+  }
+
+  const createdResults = await Promise.all(
+    accepted.map((result) => waitForCreatedStatus(result.commandId, result.acceptedAtMs)),
+  );
+  const acceptedAtByCommandId = new Map(
+    accepted.map((result) => [result.commandId, result.acceptedAtMs] as const),
+  );
+
+  const pendingPaymentResults = await Promise.all(
+    createdResults
+      .filter((result) => typeof result.checkoutIntentId === "string" && result.checkoutIntentId.length > 0)
+      .map((result) =>
+        waitForCheckoutStatus(
+          result.checkoutIntentId as string,
+          acceptedAtByCommandId.get(result.commandId) ?? performance.now(),
+          (status) => status === "pending_payment" || status === "rejected",
+          "pending_payment or rejected",
+        ),
+      ),
+  );
+
+  const pendingPaymentCheckouts = pendingPaymentResults.filter(
+    (result) => result.status === "pending_payment",
+  );
+  const signalStartedAt = performance.now();
+  const paymentSignalResults = await runWithConcurrency(
+    pendingPaymentCheckouts.length,
+    config.httpConcurrency,
+    async (index) => {
+      const checkout = pendingPaymentCheckouts[index];
+
+      if (!checkout) {
+        throw new Error(`Missing checkout for payment signal index ${index}.`);
+      }
+
+      const command = createdResults.find((result) => result.checkoutIntentId === checkout.checkoutIntentId);
+
+      if (!command) {
+        throw new Error(`Missing command for checkout ${checkout.checkoutIntentId}.`);
+      }
+
+      return failPayment(command.commandId);
+    },
+  );
+  const signalDurationMs = performance.now() - signalStartedAt;
+
+  const cancelledResults = await Promise.all(
+    paymentSignalResults.map((signalResult) => {
+      const checkout = pendingPaymentCheckouts.find((entry) => {
+        const command = createdResults.find((result) => result.checkoutIntentId === entry.checkoutIntentId);
+        return command?.commandId === signalResult.commandId;
+      });
+
+      if (!checkout) {
+        throw new Error(`Missing checkout for payment signal command ${signalResult.commandId}.`);
+      }
+
+      return waitForCheckoutStatus(
+        checkout.checkoutIntentId,
+        signalResult.signaledAtMs,
+        (status) => status === "cancelled" || status === "expired",
+        "cancelled or expired",
+      );
+    }),
+  );
+
+  const natsSnapshot = await readNatsSnapshot();
+  const finishedAtIso = new Date().toISOString();
+
+  const report = {
+    schemaVersion: 1,
+    scenarioName: config.scenarioName,
+    runId: config.runId,
+    startedAt: new Date(Date.now() - Math.round(acceptDurationMs)).toISOString(),
+    finishedAt: finishedAtIso,
+    environment: {
+      runtime: process.version,
+      platform: `${os.platform()} ${os.arch()}`,
+      cpuCount: os.cpus().length,
+      cpuModel: os.cpus()[0]?.model ?? "unknown",
+      totalMemoryBytes: os.totalmem(),
+      appUrl: config.appUrl,
+      skuId: config.skuId,
+    },
+    conditions: {
+      requestedBuyIntents: config.requests,
+      effectiveBuyIntents: effectiveRequests,
+      httpConcurrency: config.httpConcurrency,
+      buyerPrefix: config.buyerPrefix,
+      unitPriceAmountMinor: config.unitPriceAmountMinor,
+      currency: config.currency,
+      startingInventoryAvailable: inventory.available,
+    },
+    requestPath: {
+      accepted: accepted.length,
+      errors: acceptResults.length - accepted.length,
+      acceptDurationMs: Math.round(acceptDurationMs),
+      acceptRequestsPerSecond: ratePerSecond(accepted.length, acceptDurationMs),
+      acceptLatencyMs: summarizeLatencies(acceptResults.map((result) => result.latencyMs)),
+      errorDistribution: countBy(
+        acceptResults.filter((result) => !result.ok),
+        (result) => result.error ?? `HTTP ${result.status}`,
+      ),
+    },
+    commandLifecycle: {
+      created: createdResults.filter((result) => result.status === "created").length,
+      duplicates: createdResults.filter((result) => result.isDuplicate).length,
+      createdLatencyMs: summarizeLatencies(createdResults.map((result) => result.latencyMs)),
+      createdThroughputPerSecond: ratePerSecond(createdResults.length, Math.max(...createdResults.map((result) => result.latencyMs))),
+    },
+    checkoutLifecycle: {
+      pendingPayment: pendingPaymentResults.filter((result) => result.status === "pending_payment").length,
+      rejected: pendingPaymentResults.filter((result) => result.status === "rejected").length,
+      pendingPaymentLatencyMs: summarizeLatencies(
+        pendingPaymentResults.map((result) => result.latencyMs),
+      ),
+      paymentFailureSignals: paymentSignalResults.length,
+      paymentSignalDurationMs: Math.round(signalDurationMs),
+      paymentSignalRequestsPerSecond: ratePerSecond(paymentSignalResults.length, signalDurationMs),
+      paymentSignalLatencyMs: summarizeLatencies(paymentSignalResults.map((result) => result.latencyMs)),
+      resolved: cancelledResults.length,
+      resolvedStatusDistribution: countBy(cancelledResults, (result) => result.status),
+      resolutionLatencyMs: summarizeLatencies(cancelledResults.map((result) => result.latencyMs)),
+      resolutionThroughputPerSecond: ratePerSecond(
+        cancelledResults.length,
+        Math.max(...cancelledResults.map((result) => result.latencyMs), 1),
+      ),
+    },
+    nats: natsSnapshot,
+    notes: [
+      "This benchmark measures the current async buy-intent + Temporal + pending_payment demo path.",
+      "The benchmark intentionally uses payment failure signals so reserved inventory is released after each run.",
+    ],
+  };
+
+  const artifactPath = await writeBenchmarkArtifact(report);
+
+  console.log(JSON.stringify(report, null, 2));
+  console.log(`Benchmark artifact written to ${artifactPath}`);
+}
+
+async function createBuyIntent(index: number): Promise<AcceptResult> {
+  const startedAt = performance.now();
+
+  try {
+    const response = await fetch(`${config.appUrl}/api/buy-intents`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "idempotency-key": `${config.runId}-${index}`,
+        "x-request-id": crypto.randomUUID(),
+        "x-trace-id": crypto.randomUUID(),
+      },
+      body: JSON.stringify({
+        buyerId: `${config.buyerPrefix}_${index}`,
+        items: [
+          {
+            skuId: config.skuId,
+            quantity: 1,
+            unitPriceAmountMinor: config.unitPriceAmountMinor,
+            currency: config.currency,
+          },
+        ],
+      }),
+    });
+
+    const latencyMs = performance.now() - startedAt;
+
+    if (response.status !== 202) {
+      return {
+        ok: false,
+        status: response.status,
+        latencyMs,
+        error: `HTTP ${response.status}`,
+      };
+    }
+
+    const body = (await response.json()) as { commandId: string };
+
+    return {
+      ok: true,
+      status: response.status,
+      latencyMs,
+      commandId: body.commandId,
+      acceptedAtMs: performance.now(),
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      status: 0,
+      latencyMs: performance.now() - startedAt,
+      error: error instanceof Error ? error.message : "unknown_error",
+    };
+  }
+}
+
+async function waitForCreatedStatus(commandId: string, startedAtMs: number): Promise<CreatedResult> {
+  const deadline = Date.now() + 30_000;
+
+  while (Date.now() < deadline) {
+    const response = await fetch(`${config.appUrl}/api/buy-intent-commands/${commandId}`);
+
+    if (response.ok) {
+      const body = (await response.json()) as {
+        status: string;
+        checkoutIntentId: string | null;
+        eventId: string | null;
+        isDuplicate: boolean;
+      };
+
+      if (body.status === "created") {
+        return {
+          commandId,
+          status: body.status,
+          checkoutIntentId: body.checkoutIntentId,
+          eventId: body.eventId,
+          isDuplicate: body.isDuplicate,
+          latencyMs: performance.now() - startedAtMs,
+        };
+      }
+    }
+
+    await sleep(100);
+  }
+
+  throw new Error(`Command ${commandId} did not reach created status in time.`);
+}
+
+async function waitForCheckoutStatus(
+  checkoutIntentId: string,
+  startedAtMs: number,
+  predicate: (status: string) => boolean,
+  expectedDescription: string,
+): Promise<CheckoutResult> {
+  const deadline = Date.now() + 45_000;
+
+  while (Date.now() < deadline) {
+    await fetch(`${config.appUrl}/api/internal/projections/process`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        projectionName: "main",
+        batchSize: 200,
+      }),
+    }).catch(() => undefined);
+
+    const response = await fetch(`${config.appUrl}/api/checkout-intents/${checkoutIntentId}`, {
+      cache: "no-store",
+    });
+
+    if (response.ok) {
+      const body = (await response.json()) as {
+        status: string;
+        paymentId: string | null;
+        orderId: string | null;
+      };
+
+      if (predicate(body.status)) {
+        return {
+          checkoutIntentId,
+          status: body.status,
+          paymentId: body.paymentId,
+          orderId: body.orderId,
+          latencyMs: performance.now() - startedAtMs,
+        };
+      }
+    }
+
+    await sleep(100);
+  }
+
+  throw new Error(
+    `Checkout intent ${checkoutIntentId} did not reach ${expectedDescription} in time.`,
+  );
+}
+
+async function failPayment(commandId: string): Promise<PaymentSignalResult> {
+  const startedAt = performance.now();
+  const response = await fetch(`${config.appUrl}/api/internal/buy-intent-commands/${commandId}/payment-demo`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      outcome: "failed",
+    }),
+  });
+
+  return {
+    commandId,
+    status: response.status,
+    latencyMs: performance.now() - startedAt,
+    signaledAtMs: performance.now(),
+  };
+}
+
+async function readInventory(skuId: string) {
+  const response = await fetch(`${config.appUrl}/api/skus/${skuId}/inventory`);
+
+  if (!response.ok) {
+    throw new Error(`Inventory read failed with HTTP ${response.status} for ${skuId}.`);
+  }
+
+  return (await response.json()) as {
+    skuId: string;
+    available: number;
+    onHand: number;
+    reserved: number;
+    sold: number;
+  };
+}
+
+async function readNatsSnapshot() {
+  try {
+    const jszResponse = await fetch("http://localhost:8222/jsz?streams=true&consumers=true");
+
+    if (!jszResponse.ok) {
+      return {
+        available: false,
+        status: jszResponse.status,
+      };
+    }
+
+    const body = (await jszResponse.json()) as {
+      memory?: number;
+      storage?: number;
+      api?: { total?: number; errors?: number };
+      account_details?: Array<{
+        stream_detail?: Array<{
+          name?: string;
+          state?: {
+            messages?: number;
+            bytes?: number;
+          };
+          consumer_detail?: Array<{
+            name?: string;
+            ack_pending?: number | null;
+            num_pending?: number;
+          }>;
+        }>;
+      }>;
+    };
+
+    const streamDetail = body.account_details?.[0]?.stream_detail ?? [];
+
+    return {
+      available: true,
+      memory: body.memory ?? 0,
+      storage: body.storage ?? 0,
+      apiTotal: body.api?.total ?? 0,
+      apiErrors: body.api?.errors ?? 0,
+      streams: streamDetail.map((stream) => ({
+        name: stream.name ?? "unknown",
+        messages: stream.state?.messages ?? 0,
+        bytes: stream.state?.bytes ?? 0,
+        consumers:
+          stream.consumer_detail?.map((consumer) => ({
+            name: consumer.name ?? "unknown",
+            ackPending: consumer.ack_pending ?? 0,
+            numPending: consumer.num_pending ?? 0,
+          })) ?? [],
+      })),
+    };
+  } catch (error) {
+    return {
+      available: false,
+      error: error instanceof Error ? error.message : "unknown_error",
+    };
+  }
+}
+
+async function assertAppReachable(appUrl: string) {
+  const response = await fetch(`${appUrl}/products`);
+
+  if (!response.ok) {
+    throw new Error(`Benchmark app preflight failed: ${appUrl}/products returned ${response.status}.`);
+  }
+}
+
+function summarizeLatencies(values: number[]) {
+  return {
+    p50: percentile(values, 50),
+    p95: percentile(values, 95),
+    p99: percentile(values, 99),
+    max: Math.max(0, ...values),
+  };
+}
+
+function ratePerSecond(total: number, durationMs: number) {
+  return Number((total / Math.max(durationMs / 1000, 0.001)).toFixed(2));
+}
+
+function percentile(values: number[], percentileValue: number) {
+  if (values.length === 0) {
+    return 0;
+  }
+
+  const sorted = [...values].sort((left, right) => left - right);
+  const index = Math.ceil((percentileValue / 100) * sorted.length) - 1;
+  return Number((sorted[Math.max(0, Math.min(sorted.length - 1, index))] ?? 0).toFixed(2));
+}
+
+function countBy<T>(values: T[], keyFor: (value: T) => string) {
+  const counts = new Map<string, number>();
+
+  for (const value of values) {
+    const key = keyFor(value);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+
+  return Object.fromEntries([...counts.entries()].sort(([left], [right]) => left.localeCompare(right)));
+}
+
+async function runWithConcurrency<T>(
+  total: number,
+  concurrency: number,
+  taskFor: (index: number) => Promise<T>,
+) {
+  const results = new Array<T>(total);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (true) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+
+      if (currentIndex >= total) {
+        return;
+      }
+
+      results[currentIndex] = await taskFor(currentIndex);
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: Math.max(1, Math.min(concurrency, total)) }, () => worker()),
+  );
+
+  return results;
+}
+
+async function writeBenchmarkArtifact(report: object) {
+  const directory = path.join(config.resultsDir, config.scenarioName);
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const filePath = path.join(directory, `${timestamp}_${config.runId}.json`);
+
+  await mkdir(directory, { recursive: true });
+  await writeFile(filePath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+
+  return filePath;
+}
+
+function readConfig(): BenchmarkConfig {
+  return {
+    appUrl: process.env.BENCHMARK_APP_URL ?? "http://localhost:3000",
+    requests: readPositiveIntegerEnv("BENCHMARK_REQUESTS", 20),
+    httpConcurrency: readPositiveIntegerEnv("BENCHMARK_HTTP_CONCURRENCY", 10),
+    skuId: process.env.BENCHMARK_SKU_ID ?? "sku_hot_001",
+    unitPriceAmountMinor: readPositiveIntegerEnv("BENCHMARK_UNIT_PRICE_MINOR", 1200),
+    currency: process.env.BENCHMARK_CURRENCY ?? "TWD",
+    buyerPrefix: process.env.BENCHMARK_BUYER_PREFIX ?? "benchmark_buyer_temporal",
+    runId: process.env.BENCHMARK_RUN_ID ?? `bench_${Date.now()}`,
+    resultsDir: process.env.BENCHMARK_RESULTS_DIR ?? "benchmark-results",
+    scenarioName: process.env.BENCHMARK_SCENARIO_NAME ?? "buy-intent-temporal-payment-fail",
+  };
+}
+
+function readPositiveIntegerEnv(name: string, fallback: number) {
+  const raw = process.env[name]?.trim();
+
+  if (!raw) {
+    return fallback;
+  }
+
+  const parsed = Number.parseInt(raw, 10);
+
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`${name} must be a positive integer.`);
+  }
+
+  return parsed;
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

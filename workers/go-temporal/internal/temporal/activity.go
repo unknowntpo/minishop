@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/google/uuid"
@@ -444,10 +445,10 @@ func (a *CheckoutCompletionActivities) appendInventoryRelease(ctx context.Contex
 
 func (a *CheckoutCompletionActivities) loadReservedInventory(ctx context.Context, checkoutIntentID string) ([]inventoryReservedPayload, error) {
 	rows, err := a.pool.Query(ctx, `
-		select payload
+		select event_type, payload
 		from event_store
 		where aggregate_type = 'sku'
-		  and event_type = 'InventoryReserved'
+		  and event_type in ('InventoryReserved', 'InventoryReservationReleased')
 		  and payload ->> 'checkout_intent_id' = $1
 		order by id asc
 	`, checkoutIntentID)
@@ -456,20 +457,44 @@ func (a *CheckoutCompletionActivities) loadReservedInventory(ctx context.Context
 	}
 	defer rows.Close()
 
-	var reservations []inventoryReservedPayload
+	activeReservations := make(map[string]inventoryReservedPayload)
 	for rows.Next() {
+		var eventType string
 		var payload []byte
-		if err := rows.Scan(&payload); err != nil {
+		if err := rows.Scan(&eventType, &payload); err != nil {
 			return nil, err
 		}
-		var reservation inventoryReservedPayload
-		if err := json.Unmarshal(payload, &reservation); err != nil {
-			return nil, err
+
+		switch eventType {
+		case "InventoryReserved":
+			var reservation inventoryReservedPayload
+			if err := json.Unmarshal(payload, &reservation); err != nil {
+				return nil, err
+			}
+			activeReservations[reservation.ReservationID] = reservation
+		case "InventoryReservationReleased":
+			var release inventoryReservationReleasedPayload
+			if err := json.Unmarshal(payload, &release); err != nil {
+				return nil, err
+			}
+			delete(activeReservations, release.ReservationID)
 		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	reservations := make([]inventoryReservedPayload, 0, len(activeReservations))
+	for _, reservation := range activeReservations {
 		reservations = append(reservations, reservation)
 	}
 
-	return reservations, rows.Err()
+	sort.Slice(reservations, func(i, j int) bool {
+		return reservations[i].ReservationID < reservations[j].ReservationID
+	})
+
+	return reservations, nil
 }
 
 func (a *CheckoutCompletionActivities) loadAggregateEvents(ctx context.Context, aggregateType, aggregateID string) ([]eventRecord, error) {
