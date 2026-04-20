@@ -114,6 +114,16 @@ type BenchmarkReport = {
       checkoutIntentId?: string | null;
     };
   };
+  intentCreation?: {
+    created?: number;
+    createdThroughputPerSecond?: number;
+    requestToCreatedLatencyMs?: {
+      p50?: number;
+      p95?: number;
+      p99?: number;
+      max?: number;
+    };
+  };
   eventStore?: {
     beforeEventCount?: number;
     afterEventCount?: number;
@@ -1240,7 +1250,12 @@ function readRequestsPerSecond(run: BenchmarkRun) {
 }
 
 function readAppendThroughputPerSecond(run: BenchmarkRun) {
-  return run.eventStore?.appendThroughputPerSecond ?? run.commandLifecycle?.createdThroughputPerSecond ?? 0;
+  return (
+    run.intentCreation?.createdThroughputPerSecond ??
+    run.eventStore?.appendThroughputPerSecond ??
+    run.commandLifecycle?.createdThroughputPerSecond ??
+    0
+  );
 }
 
 function readCheckoutStatusDistribution(run: BenchmarkRun) {
@@ -1256,7 +1271,7 @@ function isBuyIntentScenarioName(scenarioName?: string) {
 }
 
 function throughputMetricLabel(scenarioName?: string) {
-  return isBuyIntentScenarioName(scenarioName) ? "buyIntent created/sec" : "append/sec";
+  return "intent created/sec";
 }
 
 function throughputMetricLabelForRun(run: BenchmarkRun) {
@@ -1300,35 +1315,27 @@ function ingressMetricInterpretation(scenarioName?: string) {
 }
 
 function throughputMetricDescription(scenarioName?: string) {
-  if (isBuyIntentScenarioName(scenarioName)) {
-    return "Buy-intent commands reaching created across concurrency steps in the same architecture lane.";
-  }
-
-  return "Durable append throughput across concurrency steps in the same architecture lane.";
+  return isBuyIntentScenarioName(scenarioName)
+    ? "Checkout intent creation facts across concurrency steps in the same architecture lane."
+    : "Checkout intent creation facts across concurrency steps in the same architecture lane.";
 }
 
 function throughputMetricDefinition(scenarioName?: string) {
-  if (isBuyIntentScenarioName(scenarioName)) {
-    return "Buy-intent command creation throughput. It tracks how quickly accepted work reached command status created.";
-  }
-
-  return "Durable event append throughput. It tracks how quickly accepted work became event_store facts.";
+  return isBuyIntentScenarioName(scenarioName)
+    ? "CheckoutIntentCreated throughput. It tracks how quickly accepted work became a durable checkout intent fact."
+    : "CheckoutIntentCreated throughput. It tracks how quickly accepted work became a durable checkout intent fact.";
 }
 
 function throughputMetricCalculation(scenarioName?: string) {
-  if (isBuyIntentScenarioName(scenarioName)) {
-    return "createdCommands / created latency window seconds";
-  }
-
-  return "appendedEvents / request burst duration seconds";
+  return isBuyIntentScenarioName(scenarioName)
+    ? "createdFacts / (max CheckoutIntentCreated occurred_at - min request started_at)"
+    : "createdFacts / (max CheckoutIntentCreated occurred_at - min request started_at)";
 }
 
 function throughputMetricInterpretation(scenarioName?: string) {
-  if (isBuyIntentScenarioName(scenarioName)) {
-    return "Compare this with request/sec. If buyIntent created/sec lags far behind ingress, orchestration or merge progress is the bottleneck.";
-  }
-
-  return "Compare this with request/sec. If append/sec lags far behind ingress, persistence is the bottleneck.";
+  return isBuyIntentScenarioName(scenarioName)
+    ? "Compare this with accept/sec. If intent created/sec lags far behind ingress, orchestration or merge progress is the bottleneck."
+    : "Compare this with request/sec. If intent created/sec lags far behind ingress, durable checkout creation is the bottleneck.";
 }
 
 function formatPrimaryThroughput(run: BenchmarkRun) {

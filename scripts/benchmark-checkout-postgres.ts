@@ -41,6 +41,7 @@ type RequestResult = {
   ok: boolean;
   status: number;
   latencyMs: number;
+  requestStartedAtMs?: number;
   checkoutIntentId?: string;
   idempotentReplay?: boolean;
   error?: string;
@@ -136,6 +137,7 @@ async function main() {
         readInventory(pool, benchmarkSkuIds(config.items)),
         readCheckpoint(pool),
       ]);
+    const intentCreation = await readIntentCreation(pool, results, totalMs);
 
     const accepted = results.filter((result) => result.ok).length;
     const errors = results.filter((result) => !result.ok).length;
@@ -212,6 +214,7 @@ async function main() {
         totalDurationMs: Math.round(totalMs),
         requestsPerSecond: Number((results.length / (totalMs / 1000)).toFixed(2)),
       },
+      intentCreation,
       eventStore: {
         beforeEventCount,
         afterEventCount,
@@ -270,6 +273,7 @@ async function replayDuplicateIdempotencyKey() {
 }
 
 async function postCheckoutIntent(index: number, idempotencyKey: string): Promise<RequestResult> {
+  const requestStartedAtMs = performance.timeOrigin + performance.now();
   const startedAt = performance.now();
 
   try {
@@ -297,6 +301,7 @@ async function postCheckoutIntent(index: number, idempotencyKey: string): Promis
       ok: response.ok,
       status: response.status,
       latencyMs,
+      requestStartedAtMs,
       checkoutIntentId: body?.checkoutIntentId,
       idempotentReplay: body?.idempotentReplay,
       error: body?.error,
@@ -306,9 +311,77 @@ async function postCheckoutIntent(index: number, idempotencyKey: string): Promis
       ok: false,
       status: 0,
       latencyMs: Math.round(performance.now() - startedAt),
+      requestStartedAtMs,
       error: error instanceof Error ? error.message : "unknown error",
     };
   }
+}
+
+async function readIntentCreation(pool: Pool, results: RequestResult[], fallbackDurationMs: number) {
+  const accepted = results.filter(
+    (result): result is RequestResult & { checkoutIntentId: string; requestStartedAtMs: number } =>
+      result.ok &&
+      typeof result.checkoutIntentId === "string" &&
+      typeof result.requestStartedAtMs === "number",
+  );
+
+  if (accepted.length === 0) {
+    return {
+      created: 0,
+      createdThroughputPerSecond: 0,
+      requestToCreatedLatencyMs: {
+        p50: 0,
+        p95: 0,
+        p99: 0,
+        max: 0,
+      },
+    };
+  }
+
+  const query = await pool.query<{ aggregate_id: string; occurred_at: string }>(
+    `
+      select aggregate_id, occurred_at
+      from event_store
+      where aggregate_type = 'checkout'
+        and event_type = 'CheckoutIntentCreated'
+        and aggregate_id = any($1::text[])
+      order by occurred_at asc
+    `,
+    [accepted.map((result) => result.checkoutIntentId)],
+  );
+  const occurredAtByCheckoutIntentId = new Map(
+    query.rows.map((row) => [row.aggregate_id, Date.parse(row.occurred_at)] as const),
+  );
+  const latencies = accepted
+    .map((result) => {
+      const occurredAtMs = occurredAtByCheckoutIntentId.get(result.checkoutIntentId);
+      if (!occurredAtMs) {
+        return null;
+      }
+
+      return Math.max(0, occurredAtMs - result.requestStartedAtMs);
+    })
+    .filter((value): value is number => value !== null);
+  const minRequestStartedAtMs = Math.min(...accepted.map((result) => result.requestStartedAtMs));
+  const maxOccurredAtMs = Math.max(...query.rows.map((row) => Date.parse(row.occurred_at)), 0);
+
+  return {
+    created: query.rows.length,
+    createdThroughputPerSecond:
+      maxOccurredAtMs >= minRequestStartedAtMs
+        ? Number(
+            (query.rows.length / (Math.max(maxOccurredAtMs - minRequestStartedAtMs, 1) / 1000)).toFixed(2),
+          )
+        : fallbackDurationMs > 0
+          ? Number((query.rows.length / (fallbackDurationMs / 1000)).toFixed(2))
+        : 0,
+    requestToCreatedLatencyMs: {
+      p50: percentile(latencies, 50),
+      p95: percentile(latencies, 95),
+      p99: percentile(latencies, 99),
+      max: Math.max(0, ...latencies),
+    },
+  };
 }
 
 async function processProjectionBatch() {

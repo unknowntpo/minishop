@@ -4,8 +4,11 @@ import { mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+import { Pool } from "pg";
+
 type BenchmarkConfig = {
   appUrl: string;
+  databaseUrl: string;
   requests: number;
   httpConcurrency: number;
   profilingEnabled: boolean;
@@ -23,6 +26,7 @@ type AcceptResult = {
   ok: boolean;
   status: number;
   latencyMs: number;
+  requestStartedAtMs?: number;
   commandId?: string;
   error?: string;
   acceptedAtMs?: number;
@@ -72,307 +76,352 @@ const config = readConfig();
 
 async function main() {
   const startedAtIso = new Date().toISOString();
+  const pool = new Pool({
+    connectionString: config.databaseUrl,
+    max: 4,
+  });
   await assertAppReachable(config.appUrl);
 
-  const inventory = await readInventory(config.skuId);
-  const effectiveRequests = Math.min(config.requests, inventory.available);
-
-  if (effectiveRequests < 1) {
-    throw new Error(
-      `No available inventory for ${config.skuId}. Current available units: ${inventory.available}.`,
-    );
-  }
-
-  const profilingPlan = createProfilingPlan();
-  let profiling = await maybeStartProfiling();
-  const acceptStartedAt = performance.now();
-  let acceptResults: AcceptResult[] = [];
-  let accepted: Array<AcceptResult & { commandId: string; acceptedAtMs: number }> = [];
-  let createdResults: CreatedResult[] = [];
-  let displayReadyResults: CheckoutResult[] = [];
-  let paymentSignalResults: PaymentSignalResult[] = [];
-  let cancelledResults: CheckoutResult[] = [];
-  let acceptDurationMs = 0;
   try {
-    acceptResults = await runWithConcurrency(
-      effectiveRequests,
-      config.httpConcurrency,
-      async (index) => createBuyIntent(index),
-    );
-    acceptDurationMs = performance.now() - acceptStartedAt;
+    const inventory = await readInventory(config.skuId);
+    const effectiveRequests = Math.min(config.requests, inventory.available);
 
-    accepted = acceptResults.filter(
-      (result): result is AcceptResult & { commandId: string; acceptedAtMs: number } =>
-        result.ok && typeof result.commandId === "string" && typeof result.acceptedAtMs === "number",
-    );
-
-    if (accepted.length === 0) {
-      throw new Error("No benchmark requests were accepted.");
+    if (effectiveRequests < 1) {
+      throw new Error(
+        `No available inventory for ${config.skuId}. Current available units: ${inventory.available}.`,
+      );
     }
 
-    createdResults = await Promise.all(
-      accepted.map((result) => waitForCreatedStatus(result.commandId, result.acceptedAtMs)),
-    );
-    const acceptedAtByCommandId = new Map(
-      accepted.map((result) => [result.commandId, result.acceptedAtMs] as const),
-    );
+    const profilingPlan = createProfilingPlan();
+    let profiling = await maybeStartProfiling();
+    const acceptStartedAt = performance.now();
+    let acceptResults: AcceptResult[] = [];
+    let accepted: Array<AcceptResult & { commandId: string; acceptedAtMs: number }> = [];
+    let createdResults: CreatedResult[] = [];
+    let displayReadyResults: CheckoutResult[] = [];
+    let paymentSignalResults: PaymentSignalResult[] = [];
+    let cancelledResults: CheckoutResult[] = [];
+    let acceptDurationMs = 0;
 
-    displayReadyResults = await Promise.all(
-      createdResults
-        .filter(
-          (result) => typeof result.checkoutIntentId === "string" && result.checkoutIntentId.length > 0,
-        )
-        .map((result) =>
-          waitForCheckoutStatus(
-            result.checkoutIntentId as string,
-            acceptedAtByCommandId.get(result.commandId) ?? performance.now(),
-            (status) =>
-              config.mode === "temporal"
-                ? status === "pending_payment" || status === "rejected"
-                : status === "queued",
-            config.mode === "temporal" ? "pending_payment or rejected" : "queued",
-          ),
-        ),
-    );
+    try {
+      acceptResults = await runWithConcurrency(
+        effectiveRequests,
+        config.httpConcurrency,
+        async (index) => createBuyIntent(index),
+      );
+      acceptDurationMs = performance.now() - acceptStartedAt;
 
-    const pendingPaymentCheckouts =
-      config.mode === "temporal"
-        ? displayReadyResults.filter((result) => result.status === "pending_payment")
-        : [];
-    const paymentSignalRun =
-      config.mode === "temporal"
-        ? await runPaymentFailureSignals(pendingPaymentCheckouts, createdResults)
-        : { results: [], durationMs: 0 };
-    paymentSignalResults = paymentSignalRun.results;
-    const signalDurationMs = paymentSignalRun.durationMs;
+      accepted = acceptResults.filter(
+        (result): result is AcceptResult & { commandId: string; acceptedAtMs: number } =>
+          result.ok &&
+          typeof result.commandId === "string" &&
+          typeof result.acceptedAtMs === "number",
+      );
 
-    cancelledResults =
-      config.mode === "temporal"
-        ? await Promise.all(
-            paymentSignalResults.map((signalResult) => {
-              const checkout = pendingPaymentCheckouts.find((entry) => {
-                const command = createdResults.find(
-                  (result) => result.checkoutIntentId === entry.checkoutIntentId,
-                );
-                return command?.commandId === signalResult.commandId;
-              });
+      if (accepted.length === 0) {
+        throw new Error("No benchmark requests were accepted.");
+      }
 
-              if (!checkout) {
-                throw new Error(
-                  `Missing checkout for payment signal command ${signalResult.commandId}.`,
-                );
-              }
+      createdResults = await Promise.all(
+        accepted.map((result) => waitForCreatedStatus(result.commandId, result.acceptedAtMs)),
+      );
+      const acceptedAtByCommandId = new Map(
+        accepted.map((result) => [result.commandId, result.acceptedAtMs] as const),
+      );
 
-              return waitForCheckoutStatus(
-                checkout.checkoutIntentId,
-                signalResult.signaledAtMs,
-                (status) => status === "cancelled" || status === "expired",
-                "cancelled or expired",
-              );
-            }),
+      displayReadyResults = await Promise.all(
+        createdResults
+          .filter(
+            (result) =>
+              typeof result.checkoutIntentId === "string" && result.checkoutIntentId.length > 0,
           )
-        : [];
+          .map((result) =>
+            waitForCheckoutStatus(
+              result.checkoutIntentId as string,
+              acceptedAtByCommandId.get(result.commandId) ?? performance.now(),
+              (status) =>
+                config.mode === "temporal"
+                  ? status === "pending_payment" || status === "rejected"
+                  : status === "queued",
+              config.mode === "temporal" ? "pending_payment or rejected" : "queued",
+            ),
+          ),
+      );
 
-    const natsSnapshot = await readNatsSnapshot();
-    profiling = await maybeStopProfiling(profilingPlan, profiling);
-    const finishedAtIso = new Date().toISOString();
-
-    const report = {
-      schemaVersion: 1,
-      scenarioName: config.scenarioName,
-      runId: config.runId,
-      startedAt: new Date(Date.now() - Math.round(acceptDurationMs)).toISOString(),
-      finishedAt: finishedAtIso,
-      environment: {
-        runtime: process.version,
-        platform: `${os.platform()} ${os.arch()}`,
-        cpuCount: os.cpus().length,
-        cpuModel: os.cpus()[0]?.model ?? "unknown",
-        totalMemoryBytes: os.totalmem(),
-        appUrl: config.appUrl,
-        skuId: config.skuId,
-      },
-      conditions: {
-        workload: {
-          scenarioName: config.scenarioName,
-          architectureLane: config.mode === "temporal" ? "temporal" : "bypass",
-          workloadType: "buy_intent_temporal_flow",
-          requestedBuyClicks: config.requests,
-          httpConcurrency: config.httpConcurrency,
-          skuId: config.skuId,
-          quantityPerIntent: 1,
-          profilingEnabled: config.profilingEnabled,
-        },
-        requestedBuyIntents: config.requests,
-        effectiveBuyIntents: effectiveRequests,
-        httpConcurrency: config.httpConcurrency,
-        buyerPrefix: config.buyerPrefix,
-        unitPriceAmountMinor: config.unitPriceAmountMinor,
-        currency: config.currency,
-        startingInventoryAvailable: inventory.available,
-        mode: config.mode,
-      },
-      requestPath: {
-        accepted: accepted.length,
-        errors: acceptResults.length - accepted.length,
-        acceptDurationMs: Math.round(acceptDurationMs),
-        acceptRequestsPerSecond: ratePerSecond(accepted.length, acceptDurationMs),
-        acceptLatencyMs: summarizeLatencies(acceptResults.map((result) => result.latencyMs)),
-        errorDistribution: countBy(
-          acceptResults.filter((result) => !result.ok),
-          (result) => result.error ?? `HTTP ${result.status}`,
-        ),
-      },
-      commandLifecycle: {
-        created: createdResults.filter((result) => result.status === "created").length,
-        duplicates: createdResults.filter((result) => result.isDuplicate).length,
-        createdLatencyMs: summarizeLatencies(createdResults.map((result) => result.latencyMs)),
-        createdThroughputPerSecond: ratePerSecond(
-          createdResults.length,
-          Math.max(...createdResults.map((result) => result.latencyMs)),
-        ),
-      },
-      checkoutLifecycle: {
-        displayReadyStatusDistribution: countBy(displayReadyResults, (result) => result.status),
-        displayReadyLatencyMs: summarizeLatencies(displayReadyResults.map((result) => result.latencyMs)),
-        pendingPayment: displayReadyResults.filter((result) => result.status === "pending_payment")
-          .length,
-        rejected: displayReadyResults.filter((result) => result.status === "rejected").length,
-        queued: displayReadyResults.filter((result) => result.status === "queued").length,
-        paymentFailureSignals: paymentSignalResults.length,
-        paymentSignalDurationMs: Math.round(signalDurationMs),
-        paymentSignalRequestsPerSecond: ratePerSecond(paymentSignalResults.length, signalDurationMs),
-        paymentSignalLatencyMs: summarizeLatencies(
-          paymentSignalResults.map((result) => result.latencyMs),
-        ),
-        resolved: cancelledResults.length,
-        resolvedStatusDistribution: countBy(cancelledResults, (result) => result.status),
-        resolutionLatencyMs: summarizeLatencies(cancelledResults.map((result) => result.latencyMs)),
-        resolutionThroughputPerSecond: ratePerSecond(
-          cancelledResults.length,
-          Math.max(...cancelledResults.map((result) => result.latencyMs), 1),
-        ),
-      },
-      profiling,
-      nats: natsSnapshot,
-      notes: [
+      const pendingPaymentCheckouts =
         config.mode === "temporal"
-          ? "This benchmark measures the current async buy-intent + Temporal + pending_payment demo path."
-          : "This benchmark measures the async buy-intent path with Temporal orchestration bypassed and a Node merge loop instead.",
+          ? displayReadyResults.filter((result) => result.status === "pending_payment")
+          : [];
+      const paymentSignalRun =
         config.mode === "temporal"
-          ? "The benchmark intentionally uses payment failure signals so reserved inventory is released after each run."
-          : "Bypass mode stops at CheckoutIntentCreated and queued projection state, so no payment signal or reservation release work is included.",
-      ],
-    };
+          ? await runPaymentFailureSignals(pendingPaymentCheckouts, createdResults)
+          : { results: [], durationMs: 0 };
+      paymentSignalResults = paymentSignalRun.results;
+      const signalDurationMs = paymentSignalRun.durationMs;
 
-    const artifactPath = await writeBenchmarkArtifact(report);
+      cancelledResults =
+        config.mode === "temporal"
+          ? await Promise.all(
+              paymentSignalResults.map((signalResult) => {
+                const checkout = pendingPaymentCheckouts.find((entry) => {
+                  const command = createdResults.find(
+                    (result) => result.checkoutIntentId === entry.checkoutIntentId,
+                  );
+                  return command?.commandId === signalResult.commandId;
+                });
 
-    console.log(JSON.stringify(report, null, 2));
-    console.log(`Benchmark artifact written to ${artifactPath}`);
-  } catch (error) {
-    profiling = await maybeStopProfiling(profilingPlan, profiling);
-    const natsSnapshot = await readNatsSnapshot().catch(() => ({ available: false }));
-    const finishedAtIso = new Date().toISOString();
-    const failureMessage = error instanceof Error ? error.message : "unknown benchmark failure";
-    const artifactPath = await writeBenchmarkArtifact({
-      schemaVersion: 1,
-      pass: false,
-      scenarioName: config.scenarioName,
-      runId: config.runId,
-      startedAt: startedAtIso,
-      finishedAt: finishedAtIso,
-      environment: {
-        runtime: process.version,
-        platform: `${os.platform()} ${os.arch()}`,
-        cpuCount: os.cpus().length,
-        cpuModel: os.cpus()[0]?.model ?? "unknown",
-        totalMemoryBytes: os.totalmem(),
-        appUrl: config.appUrl,
-        skuId: config.skuId,
-      },
-      conditions: {
-        workload: {
-          scenarioName: config.scenarioName,
-          architectureLane: config.mode === "temporal" ? "temporal" : "bypass",
-          workloadType: "buy_intent_temporal_flow",
-          requestedBuyClicks: config.requests,
-          httpConcurrency: config.httpConcurrency,
+                if (!checkout) {
+                  throw new Error(
+                    `Missing checkout for payment signal command ${signalResult.commandId}.`,
+                  );
+                }
+
+                return waitForCheckoutStatus(
+                  checkout.checkoutIntentId,
+                  signalResult.signaledAtMs,
+                  (status) => status === "cancelled" || status === "expired",
+                  "cancelled or expired",
+                );
+              }),
+            )
+          : [];
+
+      const intentCreation = await readIntentCreationMetrics(
+        pool,
+        createdResults
+          .filter((result) => typeof result.checkoutIntentId === "string" && result.checkoutIntentId)
+          .map((result) => ({
+            checkoutIntentId: result.checkoutIntentId as string,
+            requestStartedAtMs:
+              accepted.find((entry) => entry.commandId === result.commandId)?.requestStartedAtMs ??
+              null,
+          })),
+        acceptDurationMs,
+      );
+
+      const natsSnapshot = await readNatsSnapshot();
+      profiling = await maybeStopProfiling(profilingPlan, profiling);
+      const finishedAtIso = new Date().toISOString();
+
+      const report = {
+        schemaVersion: 1,
+        pass: true,
+        scenarioName: config.scenarioName,
+        runId: config.runId,
+        startedAt: startedAtIso,
+        finishedAt: finishedAtIso,
+        environment: {
+          runtime: process.version,
+          platform: `${os.platform()} ${os.arch()}`,
+          cpuCount: os.cpus().length,
+          cpuModel: os.cpus()[0]?.model ?? "unknown",
+          totalMemoryBytes: os.totalmem(),
+          appUrl: config.appUrl,
           skuId: config.skuId,
-          quantityPerIntent: 1,
-          profilingEnabled: config.profilingEnabled,
         },
-        requestedBuyIntents: config.requests,
-        effectiveBuyIntents: effectiveRequests,
-        httpConcurrency: config.httpConcurrency,
-        buyerPrefix: config.buyerPrefix,
-        unitPriceAmountMinor: config.unitPriceAmountMinor,
-        currency: config.currency,
-        startingInventoryAvailable: inventory.available,
-        mode: config.mode,
-      },
-      requestPath: {
-        accepted: accepted.length,
-        errors: Math.max(acceptResults.length - accepted.length, 0),
-        acceptDurationMs: Math.round(acceptDurationMs),
-        acceptRequestsPerSecond: ratePerSecond(accepted.length, acceptDurationMs),
-        acceptLatencyMs: summarizeLatencies(acceptResults.map((result) => result.latencyMs)),
-        errorDistribution: countBy(
-          acceptResults.filter((result) => !result.ok),
-          (result) => result.error ?? `HTTP ${result.status}`,
-        ),
-      },
-      commandLifecycle: {
-        created: createdResults.filter((result) => result.status === "created").length,
-        duplicates: createdResults.filter((result) => result.isDuplicate).length,
-        createdLatencyMs: summarizeLatencies(createdResults.map((result) => result.latencyMs)),
-        createdThroughputPerSecond: ratePerSecond(
-          createdResults.length,
-          Math.max(...createdResults.map((result) => result.latencyMs), 1),
-        ),
-      },
-      checkoutLifecycle: {
-        displayReadyStatusDistribution: countBy(displayReadyResults, (result) => result.status),
-        displayReadyLatencyMs: summarizeLatencies(displayReadyResults.map((result) => result.latencyMs)),
-        pendingPayment: displayReadyResults.filter((result) => result.status === "pending_payment")
-          .length,
-        rejected: displayReadyResults.filter((result) => result.status === "rejected").length,
-        queued: displayReadyResults.filter((result) => result.status === "queued").length,
-        paymentFailureSignals: paymentSignalResults.length,
-        paymentSignalDurationMs: 0,
-        paymentSignalRequestsPerSecond: 0,
-        paymentSignalLatencyMs: summarizeLatencies(
-          paymentSignalResults.map((result) => result.latencyMs),
-        ),
-        resolved: cancelledResults.length,
-        resolvedStatusDistribution: countBy(cancelledResults, (result) => result.status),
-        resolutionLatencyMs: summarizeLatencies(cancelledResults.map((result) => result.latencyMs)),
-        resolutionThroughputPerSecond: 0,
-      },
-      profiling,
-      nats: natsSnapshot,
-      failure: {
-        message: failureMessage,
-        stage:
-          cancelledResults.length < paymentSignalResults.length
-            ? "resolution"
-            : paymentSignalResults.length < displayReadyResults.filter((result) => result.status === "pending_payment").length
-              ? "payment_signal"
-              : displayReadyResults.length < createdResults.filter((result) => result.checkoutIntentId).length
-                ? "display_ready"
-                : createdResults.length < accepted.length
-                  ? "created"
-                  : "accept",
-      },
-      notes: [
-        "This artifact was written from a failed benchmark run so the dashboard can still show partial progress and profiling evidence.",
-      ],
-    });
-    console.error(`Benchmark artifact written to ${artifactPath}`);
-    throw error;
+        conditions: {
+          workload: {
+            scenarioName: config.scenarioName,
+            architectureLane: config.mode === "temporal" ? "temporal" : "bypass",
+            workloadType: "buy_intent_temporal_flow",
+            requestedBuyClicks: config.requests,
+            httpConcurrency: config.httpConcurrency,
+            skuId: config.skuId,
+            quantityPerIntent: 1,
+            profilingEnabled: config.profilingEnabled,
+          },
+          requestedBuyIntents: config.requests,
+          effectiveBuyIntents: effectiveRequests,
+          httpConcurrency: config.httpConcurrency,
+          buyerPrefix: config.buyerPrefix,
+          unitPriceAmountMinor: config.unitPriceAmountMinor,
+          currency: config.currency,
+          startingInventoryAvailable: inventory.available,
+          mode: config.mode,
+        },
+        requestPath: {
+          accepted: accepted.length,
+          errors: acceptResults.length - accepted.length,
+          acceptDurationMs: Math.round(acceptDurationMs),
+          acceptRequestsPerSecond: ratePerSecond(accepted.length, acceptDurationMs),
+          acceptLatencyMs: summarizeLatencies(acceptResults.map((result) => result.latencyMs)),
+          errorDistribution: countBy(
+            acceptResults.filter((result) => !result.ok),
+            (result) => result.error ?? `HTTP ${result.status}`,
+          ),
+        },
+        intentCreation,
+        commandLifecycle: {
+          created: createdResults.filter((result) => result.status === "created").length,
+          duplicates: createdResults.filter((result) => result.isDuplicate).length,
+          createdLatencyMs: summarizeLatencies(createdResults.map((result) => result.latencyMs)),
+          createdThroughputPerSecond: ratePerSecond(
+            createdResults.length,
+            Math.max(...createdResults.map((result) => result.latencyMs)),
+          ),
+        },
+        checkoutLifecycle: {
+          displayReadyStatusDistribution: countBy(displayReadyResults, (result) => result.status),
+          displayReadyLatencyMs: summarizeLatencies(displayReadyResults.map((result) => result.latencyMs)),
+          pendingPayment: displayReadyResults.filter(
+            (result) => result.status === "pending_payment",
+          ).length,
+          rejected: displayReadyResults.filter((result) => result.status === "rejected").length,
+          queued: displayReadyResults.filter((result) => result.status === "queued").length,
+          paymentFailureSignals: paymentSignalResults.length,
+          paymentSignalDurationMs: Math.round(signalDurationMs),
+          paymentSignalRequestsPerSecond: ratePerSecond(paymentSignalResults.length, signalDurationMs),
+          paymentSignalLatencyMs: summarizeLatencies(
+            paymentSignalResults.map((result) => result.latencyMs),
+          ),
+          resolved: cancelledResults.length,
+          resolvedStatusDistribution: countBy(cancelledResults, (result) => result.status),
+          resolutionLatencyMs: summarizeLatencies(cancelledResults.map((result) => result.latencyMs)),
+          resolutionThroughputPerSecond: ratePerSecond(
+            cancelledResults.length,
+            Math.max(...cancelledResults.map((result) => result.latencyMs), 1),
+          ),
+        },
+        profiling,
+        nats: natsSnapshot,
+        notes: [
+          config.mode === "temporal"
+            ? "This benchmark measures the current async buy-intent + Temporal + pending_payment demo path."
+            : "This benchmark measures the async buy-intent path with Temporal orchestration bypassed and a Node merge loop instead.",
+          config.mode === "temporal"
+            ? "The benchmark intentionally uses payment failure signals so reserved inventory is released after each run."
+            : "Bypass mode stops at CheckoutIntentCreated and queued projection state, so no payment signal or reservation release work is included.",
+        ],
+      };
+
+      const artifactPath = await writeBenchmarkArtifact(report);
+
+      console.log(JSON.stringify(report, null, 2));
+      console.log(`Benchmark artifact written to ${artifactPath}`);
+    } catch (error) {
+      profiling = await maybeStopProfiling(profilingPlan, profiling);
+      const natsSnapshot = await readNatsSnapshot().catch(() => ({ available: false }));
+      const finishedAtIso = new Date().toISOString();
+      const failureMessage = error instanceof Error ? error.message : "unknown benchmark failure";
+      const intentCreation = await readIntentCreationMetrics(
+        pool,
+        createdResults
+          .filter((result) => typeof result.checkoutIntentId === "string" && result.checkoutIntentId)
+          .map((result) => ({
+            checkoutIntentId: result.checkoutIntentId as string,
+            requestStartedAtMs:
+              accepted.find((entry) => entry.commandId === result.commandId)?.requestStartedAtMs ??
+              null,
+          })),
+        acceptDurationMs,
+      );
+      const artifactPath = await writeBenchmarkArtifact({
+        schemaVersion: 1,
+        pass: false,
+        scenarioName: config.scenarioName,
+        runId: config.runId,
+        startedAt: startedAtIso,
+        finishedAt: finishedAtIso,
+        environment: {
+          runtime: process.version,
+          platform: `${os.platform()} ${os.arch()}`,
+          cpuCount: os.cpus().length,
+          cpuModel: os.cpus()[0]?.model ?? "unknown",
+          totalMemoryBytes: os.totalmem(),
+          appUrl: config.appUrl,
+          skuId: config.skuId,
+        },
+        conditions: {
+          workload: {
+            scenarioName: config.scenarioName,
+            architectureLane: config.mode === "temporal" ? "temporal" : "bypass",
+            workloadType: "buy_intent_temporal_flow",
+            requestedBuyClicks: config.requests,
+            httpConcurrency: config.httpConcurrency,
+            skuId: config.skuId,
+            quantityPerIntent: 1,
+            profilingEnabled: config.profilingEnabled,
+          },
+          requestedBuyIntents: config.requests,
+          effectiveBuyIntents: effectiveRequests,
+          httpConcurrency: config.httpConcurrency,
+          buyerPrefix: config.buyerPrefix,
+          unitPriceAmountMinor: config.unitPriceAmountMinor,
+          currency: config.currency,
+          startingInventoryAvailable: inventory.available,
+          mode: config.mode,
+        },
+        requestPath: {
+          accepted: accepted.length,
+          errors: Math.max(acceptResults.length - accepted.length, 0),
+          acceptDurationMs: Math.round(acceptDurationMs),
+          acceptRequestsPerSecond: ratePerSecond(accepted.length, acceptDurationMs),
+          acceptLatencyMs: summarizeLatencies(acceptResults.map((result) => result.latencyMs)),
+          errorDistribution: countBy(
+            acceptResults.filter((result) => !result.ok),
+            (result) => result.error ?? `HTTP ${result.status}`,
+          ),
+        },
+        intentCreation,
+        commandLifecycle: {
+          created: createdResults.filter((result) => result.status === "created").length,
+          duplicates: createdResults.filter((result) => result.isDuplicate).length,
+          createdLatencyMs: summarizeLatencies(createdResults.map((result) => result.latencyMs)),
+          createdThroughputPerSecond: ratePerSecond(
+            createdResults.length,
+            Math.max(...createdResults.map((result) => result.latencyMs), 1),
+          ),
+        },
+        checkoutLifecycle: {
+          displayReadyStatusDistribution: countBy(displayReadyResults, (result) => result.status),
+          displayReadyLatencyMs: summarizeLatencies(displayReadyResults.map((result) => result.latencyMs)),
+          pendingPayment: displayReadyResults.filter(
+            (result) => result.status === "pending_payment",
+          ).length,
+          rejected: displayReadyResults.filter((result) => result.status === "rejected").length,
+          queued: displayReadyResults.filter((result) => result.status === "queued").length,
+          paymentFailureSignals: paymentSignalResults.length,
+          paymentSignalDurationMs: 0,
+          paymentSignalRequestsPerSecond: 0,
+          paymentSignalLatencyMs: summarizeLatencies(
+            paymentSignalResults.map((result) => result.latencyMs),
+          ),
+          resolved: cancelledResults.length,
+          resolvedStatusDistribution: countBy(cancelledResults, (result) => result.status),
+          resolutionLatencyMs: summarizeLatencies(cancelledResults.map((result) => result.latencyMs)),
+          resolutionThroughputPerSecond: 0,
+        },
+        profiling,
+        nats: natsSnapshot,
+        failure: {
+          message: failureMessage,
+          stage:
+            cancelledResults.length < paymentSignalResults.length
+              ? "resolution"
+              : paymentSignalResults.length <
+                    displayReadyResults.filter((result) => result.status === "pending_payment").length
+                ? "payment_signal"
+                : displayReadyResults.length <
+                      createdResults.filter((result) => result.checkoutIntentId).length
+                  ? "display_ready"
+                  : createdResults.length < accepted.length
+                    ? "created"
+                    : "accept",
+        },
+        notes: [
+          "This artifact was written from a failed benchmark run so the dashboard can still show partial progress and profiling evidence.",
+        ],
+      });
+      console.error(`Benchmark artifact written to ${artifactPath}`);
+      throw error;
+    }
+  } finally {
+    await pool.end();
   }
 }
 
 async function createBuyIntent(index: number): Promise<AcceptResult> {
+  const requestStartedAtMs = performance.timeOrigin + performance.now();
   const startedAt = performance.now();
 
   try {
@@ -414,6 +463,7 @@ async function createBuyIntent(index: number): Promise<AcceptResult> {
       ok: true,
       status: response.status,
       latencyMs,
+      requestStartedAtMs,
       commandId: body.commandId,
       acceptedAtMs: performance.now(),
     };
@@ -422,6 +472,7 @@ async function createBuyIntent(index: number): Promise<AcceptResult> {
       ok: false,
       status: 0,
       latencyMs: performance.now() - startedAt,
+      requestStartedAtMs,
       error: error instanceof Error ? error.message : "unknown_error",
     };
   }
@@ -636,6 +687,64 @@ async function readNatsSnapshot() {
   }
 }
 
+async function readIntentCreationMetrics(
+  pool: Pool,
+  intents: Array<{ checkoutIntentId: string; requestStartedAtMs: number | null }>,
+  fallbackDurationMs: number,
+) {
+  if (intents.length === 0) {
+    return {
+      created: 0,
+      createdThroughputPerSecond: 0,
+      requestToCreatedLatencyMs: summarizeLatencies([]),
+    };
+  }
+
+  const checkoutIntentIds = intents.map((entry) => entry.checkoutIntentId);
+  const result = await pool.query<{ aggregate_id: string; occurred_at: string }>(
+    `
+      select aggregate_id, occurred_at
+      from event_store
+      where aggregate_type = 'checkout'
+        and event_type = 'CheckoutIntentCreated'
+        and aggregate_id = any($1::text[])
+      order by occurred_at asc
+    `,
+    [checkoutIntentIds],
+  );
+
+  const occurredAtByCheckoutIntentId = new Map(
+    result.rows.map((row) => [row.aggregate_id, Date.parse(row.occurred_at)] as const),
+  );
+  const latencies = intents
+    .map((entry) => {
+      const occurredAtMs = occurredAtByCheckoutIntentId.get(entry.checkoutIntentId);
+      if (!occurredAtMs || entry.requestStartedAtMs === null) {
+        return null;
+      }
+
+      return Math.max(0, occurredAtMs - entry.requestStartedAtMs);
+    })
+    .filter((value): value is number => value !== null);
+  const minRequestStartedAtMs = Math.min(
+    ...intents
+      .map((entry) => entry.requestStartedAtMs)
+      .filter((value): value is number => typeof value === "number"),
+  );
+  const maxOccurredAtMs = Math.max(...result.rows.map((row) => Date.parse(row.occurred_at)), 0);
+
+  return {
+    created: result.rows.length,
+    createdThroughputPerSecond:
+      Number.isFinite(minRequestStartedAtMs) && maxOccurredAtMs >= minRequestStartedAtMs
+        ? ratePerSecond(result.rows.length, Math.max(maxOccurredAtMs - minRequestStartedAtMs, 1))
+        : fallbackDurationMs > 0
+          ? ratePerSecond(result.rows.length, fallbackDurationMs)
+        : 0,
+    requestToCreatedLatencyMs: summarizeLatencies(latencies),
+  };
+}
+
 async function assertAppReachable(appUrl: string) {
   const response = await fetch(`${appUrl}/products`);
 
@@ -846,6 +955,7 @@ async function maybeStopProfiling(
 function readConfig(): BenchmarkConfig {
   return {
     appUrl: process.env.BENCHMARK_APP_URL ?? "http://localhost:3000",
+    databaseUrl: requiredEnv("DATABASE_URL"),
     requests: readPositiveIntegerEnv("BENCHMARK_REQUESTS", 20),
     httpConcurrency: readPositiveIntegerEnv("BENCHMARK_HTTP_CONCURRENCY", 10),
     profilingEnabled: process.env.BENCHMARK_PROFILE === "1",
@@ -860,6 +970,16 @@ function readConfig(): BenchmarkConfig {
       (readMode() === "temporal" ? "buy-intent-temporal-payment-fail" : "buy-intent-bypass-created"),
     mode: readMode(),
   };
+}
+
+function requiredEnv(name: string) {
+  const raw = process.env[name]?.trim();
+
+  if (!raw) {
+    throw new Error(`${name} is required.`);
+  }
+
+  return raw;
 }
 
 function readMode(): "temporal" | "bypass" {
