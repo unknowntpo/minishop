@@ -29,10 +29,15 @@ export type StagedBuyIntentCommand = {
 };
 
 export type BuyIntentCommandGateway = {
-  accept(command: BuyIntentCommand): Promise<AcceptedBuyIntentCommand>;
+  createAccepted(command: BuyIntentCommand): Promise<AcceptedBuyIntentCommand>;
   readStatus(commandId: string): Promise<BuyIntentCommandStatusView | null>;
   claimPendingBatch(input: { batchId: string; batchSize: number }): Promise<StagedBuyIntentCommand[]>;
   markProcessing(commandId: string): Promise<void>;
+  markPublishFailed(input: {
+    commandId: string;
+    failureCode: string;
+    failureMessage: string;
+  }): Promise<void>;
   markCreated(input: {
     stagingId: number;
     commandId: string;

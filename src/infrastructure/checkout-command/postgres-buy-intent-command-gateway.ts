@@ -28,54 +28,19 @@ type StagingRow = {
 
 export function createPostgresBuyIntentCommandGateway(pool: Pool): BuyIntentCommandGateway {
   return {
-    async accept(command) {
-      const client = await pool.connect();
-
-      try {
-        await client.query("begin");
-        await client.query(
-          `
-            insert into command_status (
-              command_id,
-              correlation_id,
-              idempotency_key,
-              status
-            )
-            values ($1, $2, $3, 'accepted')
-          `,
-          [command.command_id, command.correlation_id, command.idempotency_key ?? null],
-        );
-
-        await client.query(
-          `
-            insert into staging_buy_intent_command (
-              command_id,
-              correlation_id,
-              idempotency_key,
-              aggregate_type,
-              aggregate_id,
-              payload_json,
-              metadata_json
-            )
-            values ($1, $2, $3, 'checkout', $4, $5::jsonb, $6::jsonb)
-          `,
-          [
-            command.command_id,
-            command.correlation_id,
-            command.idempotency_key ?? null,
-            command.command_id,
-            JSON.stringify(command),
-            JSON.stringify(command.metadata),
-          ],
-        );
-
-        await client.query("commit");
-      } catch (error) {
-        await safeRollback(client);
-        throw error;
-      } finally {
-        client.release();
-      }
+    async createAccepted(command) {
+      await pool.query(
+        `
+          insert into command_status (
+            command_id,
+            correlation_id,
+            idempotency_key,
+            status
+          )
+          values ($1, $2, $3, 'accepted')
+        `,
+        [command.command_id, command.correlation_id, command.idempotency_key ?? null],
+      );
 
       return {
         commandId: command.command_id,
@@ -173,6 +138,22 @@ export function createPostgresBuyIntentCommandGateway(pool: Pool): BuyIntentComm
             and status in ('accepted', 'processing')
         `,
         [commandId],
+      );
+    },
+
+    async markPublishFailed({ commandId, failureCode, failureMessage }) {
+      await pool.query(
+        `
+          update command_status
+          set
+            status = 'failed',
+            failure_code = $2,
+            failure_message = $3,
+            updated_at = now()
+          where command_id = $1
+            and status = 'accepted'
+        `,
+        [commandId, failureCode, failureMessage],
       );
     },
 

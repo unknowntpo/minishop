@@ -116,7 +116,7 @@ class FakeGateway implements BuyIntentCommandGateway {
 
   constructor(private readonly staged: StagedBuyIntentCommand[]) {}
 
-  async accept(command: BuyIntentCommand) {
+  async createAccepted(command: BuyIntentCommand) {
     return {
       commandId: command.command_id,
       correlationId: command.correlation_id,
@@ -144,6 +144,8 @@ class FakeGateway implements BuyIntentCommandGateway {
   }
 
   async markProcessing() {}
+
+  async markPublishFailed() {}
 
   async markCreated(input: Parameters<BuyIntentCommandGateway["markCreated"]>[0]) {
     this.created.push(input);
