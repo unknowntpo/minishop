@@ -55,7 +55,7 @@ async function main() {
   process.env.NATS_URL = natsUrl;
   process.env.NATS_BUY_INTENT_INGEST_CONTINUOUS = "1";
 
-  execSync("docker compose up -d --build --remove-orphans app worker-buy-intents-ingest worker-buy-intents-temporal", {
+  execSync("docker compose up -d --build --remove-orphans app worker-buy-intents-ingest worker-buy-intents-temporal worker-projections", {
     cwd: workdir,
     stdio: "inherit",
   });
@@ -78,6 +78,22 @@ async function main() {
 
   if (firstStatus.checkoutIntentId !== secondStatus.checkoutIntentId) {
     throw new Error("Replay command did not resolve to the original checkout intent.");
+  }
+
+  const completionPage = await fetch(
+    `${appBaseUrl}/checkout-complete/${firstStatus.checkoutIntentId}`,
+  ).then((response) => response.text());
+
+  if (!completionPage.includes(firstCommandId) && !completionPage.includes(secondCommandId)) {
+    throw new Error("Completion page did not include any command id for the checkout intent.");
+  }
+
+  if (!completionPage.includes("reservation")) {
+    throw new Error("Completion page did not include the queued checkout explanation.");
+  }
+
+  if (!completionPage.includes("created")) {
+    throw new Error("Completion page did not include the command lifecycle status.");
   }
 
   console.log(

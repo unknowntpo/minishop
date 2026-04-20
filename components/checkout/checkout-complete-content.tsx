@@ -16,6 +16,7 @@ type CheckoutCompleteContentProps = {
     cancellationReason: string | null;
     checkoutIntentId: string;
     commandId: string | null;
+    commandStatus: string | null;
     orderId: string | null;
     paymentId: string | null;
     rejectionReason: string | null;
@@ -58,6 +59,9 @@ function CheckoutCompleteBody({ checkout }: Omit<CheckoutCompleteContentProps, "
         <p className="muted">
           {messages.completion.subtitle(checkout.checkoutIntentId, checkout.status)}
         </p>
+        {checkout.status === "queued" ? (
+          <p className="muted">{messages.completion.queuedHelp(checkout.commandStatus)}</p>
+        ) : null}
 
         <div className="completion-grid">
           <span className="completion-metric">
@@ -67,6 +71,10 @@ function CheckoutCompleteBody({ checkout }: Omit<CheckoutCompleteContentProps, "
           <span className="completion-metric">
             <strong>{messages.completion.metrics.command}</strong>
             <code>{checkout.commandId ?? messages.completion.notAvailable}</code>
+          </span>
+          <span className="completion-metric">
+            <strong>{messages.completion.metrics.commandStatus}</strong>
+            <code>{checkout.commandStatus ?? messages.completion.notAvailable}</code>
           </span>
           <span className="completion-metric">
             <strong>{messages.completion.metrics.order}</strong>

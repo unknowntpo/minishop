@@ -73,19 +73,21 @@ type BuyerMessages = {
     cancelled: string;
     status: (checkoutIntentId: string, status: string) => string;
   };
-    completion: {
-      eyebrow: string;
-      completeTitle: string;
-      receivedTitle: string;
-      subtitle: (checkoutIntentId: string, status: string) => string;
-      metrics: {
-        status: string;
-        command: string;
-        order: string;
-        payment: string;
-        updated: string;
-      };
-      notAvailable: string;
+  completion: {
+    eyebrow: string;
+    completeTitle: string;
+    receivedTitle: string;
+    subtitle: (checkoutIntentId: string, status: string) => string;
+    queuedHelp: (commandStatus: string | null) => string;
+    metrics: {
+      status: string;
+      command: string;
+      commandStatus: string;
+      order: string;
+      payment: string;
+      updated: string;
+    };
+    notAvailable: string;
   };
 };
 
@@ -164,9 +166,12 @@ const buyerMessages: Record<BuyerLocale, BuyerMessages> = {
       completeTitle: "結帳完成",
       receivedTitle: "已收到結帳",
       subtitle: (checkoutIntentId, status) => `Intent ${checkoutIntentId} 目前為 ${status}。`,
+      queuedHelp: (commandStatus) =>
+        `這表示 checkout intent 已經建立，後續 reservation 或 payment 流程尚未啟動。指令狀態：${commandStatus ?? "無資料"}。`,
       metrics: {
         status: "狀態",
         command: "指令",
+        commandStatus: "指令狀態",
         order: "訂單",
         payment: "付款",
         updated: "更新時間",
@@ -248,9 +253,12 @@ const buyerMessages: Record<BuyerLocale, BuyerMessages> = {
       completeTitle: "Checkout complete",
       receivedTitle: "Checkout received",
       subtitle: (checkoutIntentId, status) => `Intent ${checkoutIntentId} is ${status}.`,
+      queuedHelp: (commandStatus) =>
+        `This means the checkout intent was created, but downstream reservation or payment work has not started yet. Command status: ${commandStatus ?? "n/a"}.`,
       metrics: {
         status: "Status",
         command: "Command",
+        commandStatus: "Command status",
         order: "Order",
         payment: "Payment",
         updated: "Updated",

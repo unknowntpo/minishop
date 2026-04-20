@@ -31,6 +31,7 @@ type CheckoutRow = {
 
 type CommandStatusLookupRow = {
   command_id: string;
+  status: string;
 };
 
 export const dynamic = "force-dynamic";
@@ -70,6 +71,7 @@ export default async function CheckoutCompletePage({
   const commandStatusResult = await pool.query<CommandStatusLookupRow>(
     `
       select command_id
+        , status
       from command_status
       where checkout_intent_id = $1
       order by updated_at desc
@@ -81,6 +83,7 @@ export default async function CheckoutCompletePage({
   const commandId =
     commandStatusResult.rows[0]?.command_id ??
     readSingleSearchParam(resolvedSearchParams.commandId);
+  const commandStatus = commandStatusResult.rows[0]?.status ?? null;
 
   return (
     <CheckoutCompleteContent
@@ -88,6 +91,7 @@ export default async function CheckoutCompletePage({
         cancellationReason: checkout.cancellation_reason,
         checkoutIntentId: checkout.checkout_intent_id,
         commandId,
+        commandStatus,
         orderId: checkout.order_id,
         paymentId: checkout.payment_id,
         rejectionReason: checkout.rejection_reason,
