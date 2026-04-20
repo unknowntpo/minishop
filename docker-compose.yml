@@ -69,14 +69,14 @@ services:
         condition: service_started
     environment:
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/minishop
-      DATABASE_POOL_MAX: ${APP_DATABASE_POOL_MAX:-30}
+      DATABASE_POOL_MAX: ${APP_DATABASE_POOL_MAX:-16}
       NATS_URL: nats://nats:4222
       NATS_BUY_INTENT_STREAM: ${NATS_BUY_INTENT_STREAM:-BUY_INTENT_COMMANDS}
       NATS_BUY_INTENT_SUBJECT: ${NATS_BUY_INTENT_SUBJECT:-buy-intent.command}
       NATS_BUY_INTENT_RETRY_SUBJECT: ${NATS_BUY_INTENT_RETRY_SUBJECT:-buy-intent.retry}
       NATS_BUY_INTENT_DLQ_SUBJECT: ${NATS_BUY_INTENT_DLQ_SUBJECT:-buy-intent.dlq}
       NATS_BUY_INTENT_DURABLE_CONSUMER: ${NATS_BUY_INTENT_DURABLE_CONSUMER:-buy-intent-ingest}
-      NATS_BUY_INTENT_INGEST_BATCH_SIZE: ${NATS_BUY_INTENT_INGEST_BATCH_SIZE:-100}
+      NATS_BUY_INTENT_INGEST_BATCH_SIZE: ${NATS_BUY_INTENT_INGEST_BATCH_SIZE:-500}
       NATS_BUY_INTENT_INGEST_EXPIRES_MS: ${NATS_BUY_INTENT_INGEST_EXPIRES_MS:-1000}
       NATS_BUY_INTENT_INGEST_RETRY_DELAY_MS: ${NATS_BUY_INTENT_INGEST_RETRY_DELAY_MS:-1000}
       NATS_BUY_INTENT_ACK_WAIT_MS: ${NATS_BUY_INTENT_ACK_WAIT_MS:-30000}
@@ -106,14 +106,14 @@ services:
         condition: service_started
     environment:
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/minishop
-      DATABASE_POOL_MAX: ${INGEST_DATABASE_POOL_MAX:-20}
+      DATABASE_POOL_MAX: ${INGEST_DATABASE_POOL_MAX:-8}
       NATS_URL: nats://nats:4222
       NATS_BUY_INTENT_STREAM: ${NATS_BUY_INTENT_STREAM:-BUY_INTENT_COMMANDS}
       NATS_BUY_INTENT_SUBJECT: ${NATS_BUY_INTENT_SUBJECT:-buy-intent.command}
       NATS_BUY_INTENT_RETRY_SUBJECT: ${NATS_BUY_INTENT_RETRY_SUBJECT:-buy-intent.retry}
       NATS_BUY_INTENT_DLQ_SUBJECT: ${NATS_BUY_INTENT_DLQ_SUBJECT:-buy-intent.dlq}
       NATS_BUY_INTENT_DURABLE_CONSUMER: ${NATS_BUY_INTENT_DURABLE_CONSUMER:-buy-intent-ingest}
-      NATS_BUY_INTENT_INGEST_BATCH_SIZE: ${NATS_BUY_INTENT_INGEST_BATCH_SIZE:-100}
+      NATS_BUY_INTENT_INGEST_BATCH_SIZE: ${NATS_BUY_INTENT_INGEST_BATCH_SIZE:-500}
       NATS_BUY_INTENT_INGEST_EXPIRES_MS: ${NATS_BUY_INTENT_INGEST_EXPIRES_MS:-1000}
       NATS_BUY_INTENT_INGEST_RETRY_DELAY_MS: ${NATS_BUY_INTENT_INGEST_RETRY_DELAY_MS:-1000}
       NATS_BUY_INTENT_ACK_WAIT_MS: ${NATS_BUY_INTENT_ACK_WAIT_MS:-30000}
@@ -152,11 +152,49 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/minishop
-      DATABASE_POOL_MAX: ${BUY_INTENT_PROCESS_DATABASE_POOL_MAX:-64}
+      DATABASE_POOL_MAX: ${BUY_INTENT_PROCESS_DATABASE_POOL_MAX:-32}
       BUY_INTENT_COMMAND_ORCHESTRATOR_MODE: ${BUY_INTENT_COMMAND_ORCHESTRATOR_MODE:-noop}
-      BUY_INTENT_BATCH_SIZE: ${BUY_INTENT_PROCESS_BATCH_SIZE:-500}
-      BUY_INTENT_PROCESS_CONCURRENCY: ${BUY_INTENT_PROCESS_CONCURRENCY:-16}
-      BUY_INTENT_PROCESS_POLL_INTERVAL_MS: ${BUY_INTENT_PROCESS_POLL_INTERVAL_MS:-50}
+      BUY_INTENT_BATCH_SIZE: ${BUY_INTENT_PROCESS_BATCH_SIZE:-1000}
+      BUY_INTENT_PROCESS_CONCURRENCY: ${BUY_INTENT_PROCESS_CONCURRENCY:-64}
+      BUY_INTENT_PROCESS_POLL_INTERVAL_MS: ${BUY_INTENT_PROCESS_POLL_INTERVAL_MS:-10}
+      NEXT_TELEMETRY_DISABLED: "1"
+    command: ["pnpm", "worker:staged-buy-intents:process:loop"]
+
+  worker-staged-buy-intents-process-2:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: minishop-worker-staged-buy-intents-process-2
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/minishop
+      DATABASE_POOL_MAX: ${BUY_INTENT_PROCESS_DATABASE_POOL_MAX:-32}
+      BUY_INTENT_COMMAND_ORCHESTRATOR_MODE: ${BUY_INTENT_COMMAND_ORCHESTRATOR_MODE:-noop}
+      BUY_INTENT_BATCH_SIZE: ${BUY_INTENT_PROCESS_BATCH_SIZE:-1000}
+      BUY_INTENT_PROCESS_CONCURRENCY: ${BUY_INTENT_PROCESS_CONCURRENCY:-64}
+      BUY_INTENT_PROCESS_POLL_INTERVAL_MS: ${BUY_INTENT_PROCESS_POLL_INTERVAL_MS:-10}
+      NEXT_TELEMETRY_DISABLED: "1"
+    command: ["pnpm", "worker:staged-buy-intents:process:loop"]
+
+  worker-staged-buy-intents-process-3:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: minishop-worker-staged-buy-intents-process-3
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/minishop
+      DATABASE_POOL_MAX: ${BUY_INTENT_PROCESS_DATABASE_POOL_MAX:-32}
+      BUY_INTENT_COMMAND_ORCHESTRATOR_MODE: ${BUY_INTENT_COMMAND_ORCHESTRATOR_MODE:-noop}
+      BUY_INTENT_BATCH_SIZE: ${BUY_INTENT_PROCESS_BATCH_SIZE:-1000}
+      BUY_INTENT_PROCESS_CONCURRENCY: ${BUY_INTENT_PROCESS_CONCURRENCY:-64}
+      BUY_INTENT_PROCESS_POLL_INTERVAL_MS: ${BUY_INTENT_PROCESS_POLL_INTERVAL_MS:-10}
       NEXT_TELEMETRY_DISABLED: "1"
     command: ["pnpm", "worker:staged-buy-intents:process:loop"]
 
@@ -171,7 +209,7 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/minishop
-      DATABASE_POOL_MAX: ${PROJECTION_DATABASE_POOL_MAX:-20}
+      DATABASE_POOL_MAX: ${PROJECTION_DATABASE_POOL_MAX:-8}
       PROJECTION_NAME: ${PROJECTION_NAME:-main}
       PROJECTION_BATCH_SIZE: ${PROJECTION_BATCH_SIZE:-100}
       PROJECTION_POLL_INTERVAL_MS: ${PROJECTION_POLL_INTERVAL_MS:-1000}

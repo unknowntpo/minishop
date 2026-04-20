@@ -69,9 +69,7 @@ describe("async buy-intent command flow integration", () => {
 
   it("accepts, stages, merges, and exposes a created command result", async () => {
     const accepted = await acceptBuyIntentCommand(buildAcceptInput("idem-created"), {
-      gateway,
       bus,
-      orchestrator,
       idGenerator: fixedIds("11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"),
       clock: fixedClock(),
     });
@@ -114,9 +112,7 @@ describe("async buy-intent command flow integration", () => {
 
   it("marks a second command with the same idempotency key as replay-created", async () => {
     const first = await acceptBuyIntentCommand(buildAcceptInput("idem-replay"), {
-      gateway,
       bus,
-      orchestrator,
       idGenerator: fixedIds("11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"),
       clock: fixedClock(),
     });
@@ -137,9 +133,7 @@ describe("async buy-intent command flow integration", () => {
     );
 
     const second = await acceptBuyIntentCommand(buildAcceptInput("idem-replay"), {
-      gateway,
       bus,
-      orchestrator,
       idGenerator: fixedIds("66666666-6666-4666-8666-666666666666", "77777777-7777-4777-8777-777777777777"),
       clock: fixedClock(),
     });
@@ -187,7 +181,13 @@ describe("async buy-intent command flow integration", () => {
       idempotencyKey: "idem-duplicate-command",
     });
 
-    await gateway.createAccepted(command);
+    await gateway.ensureAcceptedBatch([
+      {
+        commandId: command.command_id,
+        correlationId: command.correlation_id,
+        ...(command.idempotency_key ? { idempotencyKey: command.idempotency_key } : {}),
+      },
+    ]);
     await gateway.stage(command);
 
     await processStagedBuyIntentCommandBatch(

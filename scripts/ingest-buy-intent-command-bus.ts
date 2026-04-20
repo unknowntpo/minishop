@@ -1,9 +1,8 @@
 import "dotenv/config";
 
-import { headers } from "nats";
+import { headers, type JsMsg } from "nats";
 
 import { parseBuyIntentCommandContract } from "@/src/contracts/buy-intent-command-contract";
-import { ingestBuyIntentCommandMessage } from "@/src/application/checkout/ingest-buy-intent-command-message";
 import {
   buyIntentCommandCodec,
   ensureBuyIntentCommandConsumer,
@@ -55,49 +54,50 @@ async function main() {
     batchFetchCount += 1;
     const messages = js.fetch(streamName, durableConsumer, { batch: batchSize, expires: expiresMs });
     let emptyBatch = true;
+    const stagedBatch: Array<{ message: JsMsg; command: ReturnType<typeof parseBuyIntentCommandContract> }> = [];
 
     for await (const message of messages) {
       emptyBatch = false;
       receivedCount += 1;
 
-      const result = await ingestBuyIntentCommandMessage(
-        {
-          data: message.data,
-          sourceSubject: message.subject,
-        },
-        {
-          decode(data) {
-            return parseBuyIntentCommandContract(buyIntentCommandCodec.decode(data));
-          },
-          stage(command) {
-            return postgresBuyIntentCommandGateway.stage(command);
-          },
-          async publishDlq({ reason, sourceSubject, data }) {
-            await js.publish(dlqSubject, data, {
-              headers: buildDlqHeaders({
-                reason,
-                sourceSubject,
-              }),
-            });
-          },
-        },
-      );
-
-      if (result.outcome === "ack") {
-        message.ack();
-        if (result.staged) {
-          stagedCount += 1;
-        } else {
-          decodeFailedCount += 1;
-        }
-        continue;
-      }
-
       try {
-        message.nak(retryDelayMs);
-        retriedCount += 1;
+        stagedBatch.push({
+          message,
+          command: parseBuyIntentCommandContract(buyIntentCommandCodec.decode(message.data)),
+        });
       } catch (error) {
-        console.error("buy_intent_command_bus_nak_failed", error);
+        if (!isCodecError(error)) {
+          throw error;
+        }
+
+        await js.publish(dlqSubject, message.data, {
+          headers: buildDlqHeaders({
+            reason: "invalid_buy_intent_command",
+            sourceSubject: message.subject,
+          }),
+        });
+        message.ack();
+        decodeFailedCount += 1;
+      }
+    }
+
+    if (stagedBatch.length > 0) {
+      try {
+        await postgresBuyIntentCommandGateway.stageBatch(stagedBatch.map((entry) => entry.command));
+        for (const entry of stagedBatch) {
+          entry.message.ack();
+          stagedCount += 1;
+        }
+      } catch (error) {
+        for (const entry of stagedBatch) {
+          try {
+            entry.message.nak(retryDelayMs);
+            retriedCount += 1;
+          } catch (nakError) {
+            console.error("buy_intent_command_bus_nak_failed", nakError);
+          }
+        }
+        console.error("buy_intent_command_bus_stage_batch_failed", error);
       }
     }
 
@@ -158,6 +158,10 @@ function buildDlqHeaders(input: { reason: string; sourceSubject: string }) {
   h.set("x-buy-intent-dlq-reason", input.reason);
   h.set("x-buy-intent-source-subject", input.sourceSubject);
   return h;
+}
+
+function isCodecError(error: unknown) {
+  return error instanceof Error && /JSON|unexpected|invalid/i.test(error.message);
 }
 
 main().catch((error) => {

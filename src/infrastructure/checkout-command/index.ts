@@ -6,7 +6,6 @@ import { createPostgresBuyIntentCommandGateway } from "@/src/infrastructure/chec
 import { createTemporalBuyIntentCommandOrchestrator } from "@/src/infrastructure/checkout-command/temporal-buy-intent-command-orchestrator";
 import type { BuyIntentCommandBus } from "@/src/ports/buy-intent-command-bus";
 import type {
-  AcceptedBuyIntentCommand,
   BuyIntentCommandGateway,
   BuyIntentCommandStatusView,
   StagedBuyIntentCommand,
@@ -81,9 +80,6 @@ function getRuntimeOrchestrator() {
 }
 
 export const postgresBuyIntentCommandGateway: BuyIntentCommandGateway = {
-  createAccepted(command): Promise<AcceptedBuyIntentCommand> {
-    return getPostgresGateway().createAccepted(command);
-  },
   readStatus(commandId): Promise<BuyIntentCommandStatusView | null> {
     return getPostgresGateway().readStatus(commandId);
   },
@@ -92,6 +88,12 @@ export const postgresBuyIntentCommandGateway: BuyIntentCommandGateway = {
   },
   stage(command): Promise<void> {
     return getPostgresGateway().stage(command);
+  },
+  stageBatch(commands): Promise<void> {
+    return getPostgresGateway().stageBatch(commands);
+  },
+  ensureAcceptedBatch(commands): Promise<void> {
+    return getPostgresGateway().ensureAcceptedBatch(commands);
   },
   claimPendingBatch(input): Promise<StagedBuyIntentCommand[]> {
     return getPostgresGateway().claimPendingBatch(input);

@@ -26,27 +26,6 @@ type StagingRow = {
 
 export function createPostgresBuyIntentCommandGateway(pool: Pool): BuyIntentCommandGateway {
   return {
-    async createAccepted(command) {
-      await pool.query(
-        `
-          insert into command_status (
-            command_id,
-            correlation_id,
-            idempotency_key,
-            status
-          )
-          values ($1, $2, $3, 'accepted')
-        `,
-        [command.command_id, command.correlation_id, command.idempotency_key ?? null],
-      );
-
-      return {
-        commandId: command.command_id,
-        correlationId: command.correlation_id,
-        status: "accepted" as const,
-      };
-    },
-
     async readStatus(commandId) {
       const rows = await this.readStatuses([commandId]);
       return rows[0] ?? null;
@@ -111,6 +90,89 @@ export function createPostgresBuyIntentCommandGateway(pool: Pool): BuyIntentComm
           command.command_id,
           JSON.stringify(command),
           JSON.stringify(command.metadata),
+        ],
+      );
+    },
+
+    async stageBatch(commands) {
+      if (commands.length === 0) {
+        return;
+      }
+
+      await pool.query(
+        `
+          insert into staged_buy_intent_command (
+            command_id,
+            correlation_id,
+            idempotency_key,
+            aggregate_type,
+            aggregate_id,
+            payload_json,
+            metadata_json
+          )
+          select
+            entry.command_id,
+            entry.correlation_id,
+            entry.idempotency_key,
+            'checkout',
+            entry.command_id::text,
+            entry.payload_json::jsonb,
+            entry.metadata_json::jsonb
+          from jsonb_to_recordset($1::jsonb) as entry(
+            command_id uuid,
+            correlation_id uuid,
+            idempotency_key text,
+            payload_json jsonb,
+            metadata_json jsonb
+          )
+        `,
+        [
+          JSON.stringify(
+            commands.map((command) => ({
+              command_id: command.command_id,
+              correlation_id: command.correlation_id,
+              idempotency_key: command.idempotency_key ?? null,
+              payload_json: command,
+              metadata_json: command.metadata,
+            })),
+          ),
+        ],
+      );
+    },
+
+    async ensureAcceptedBatch(commands) {
+      if (commands.length === 0) {
+        return;
+      }
+
+      await pool.query(
+        `
+          insert into command_status (
+            command_id,
+            correlation_id,
+            idempotency_key,
+            status
+          )
+          select
+            entry.command_id,
+            entry.correlation_id,
+            entry.idempotency_key,
+            'accepted'
+          from jsonb_to_recordset($1::jsonb) as entry(
+            command_id uuid,
+            correlation_id uuid,
+            idempotency_key text
+          )
+          on conflict (command_id) do nothing
+        `,
+        [
+          JSON.stringify(
+            commands.map((command) => ({
+              command_id: command.commandId,
+              correlation_id: command.correlationId,
+              idempotency_key: command.idempotencyKey ?? null,
+            })),
+          ),
         ],
       );
     },

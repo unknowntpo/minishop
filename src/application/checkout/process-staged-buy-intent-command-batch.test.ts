@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 
 import { processStagedBuyIntentCommandBatch } from "@/src/application/checkout/process-staged-buy-intent-command-batch";
-import type { BuyIntentCommand } from "@/src/domain/checkout-command/buy-intent-command";
 import type { DomainEvent } from "@/src/domain/events/domain-event";
 import type { BuyIntentCommandGateway, BuyIntentCommandStatusView, StagedBuyIntentCommand } from "@/src/ports/buy-intent-command-gateway";
 import type { BuyIntentCommandOrchestrator } from "@/src/ports/buy-intent-command-orchestrator";
@@ -119,14 +118,6 @@ class FakeGateway implements BuyIntentCommandGateway {
 
   constructor(private readonly staged: StagedBuyIntentCommand[]) {}
 
-  async createAccepted(command: BuyIntentCommand) {
-    return {
-      commandId: command.command_id,
-      correlationId: command.correlation_id,
-      status: "accepted" as const,
-    };
-  }
-
   async readStatus(commandId: string): Promise<BuyIntentCommandStatusView | null> {
     return {
       commandId,
@@ -149,6 +140,10 @@ class FakeGateway implements BuyIntentCommandGateway {
   }
 
   async stage() {}
+
+  async stageBatch() {}
+
+  async ensureAcceptedBatch() {}
 
   async claimPendingBatch() {
     return this.staged;

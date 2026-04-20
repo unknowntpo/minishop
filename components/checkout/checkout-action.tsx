@@ -261,6 +261,11 @@ async function waitForBuyIntentCommandStatus(commandId: string) {
       cache: "no-store",
     });
 
+    if (response.status === 404) {
+      await new Promise((resolve) => window.setTimeout(resolve, 250));
+      continue;
+    }
+
     if (!response.ok) {
       throw new Error(await readError(response));
     }

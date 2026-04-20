@@ -3,14 +3,10 @@ import type { BuyIntentCommand } from "@/src/domain/checkout-command/buy-intent-
 import { isEventMetadata } from "@/src/domain/events/event-metadata";
 import type { Clock } from "@/src/ports/clock";
 import type { BuyIntentCommandBus } from "@/src/ports/buy-intent-command-bus";
-import type { BuyIntentCommandGateway } from "@/src/ports/buy-intent-command-gateway";
-import type { BuyIntentCommandOrchestrator } from "@/src/ports/buy-intent-command-orchestrator";
 import type { IdGenerator } from "@/src/ports/id-generator";
 
 export type AcceptBuyIntentCommandDeps = {
-  gateway: BuyIntentCommandGateway;
   bus: BuyIntentCommandBus;
-  orchestrator: BuyIntentCommandOrchestrator;
   idGenerator: IdGenerator;
   clock: Clock;
 };
@@ -36,58 +32,13 @@ export async function acceptBuyIntentCommand(
     issued_at: deps.clock.now().toISOString(),
   } satisfies BuyIntentCommand;
 
-  const accepted = await deps.gateway.createAccepted(command);
+  await deps.bus.publish(command);
 
-  try {
-    await deps.orchestrator.start(command);
-  } catch (error) {
-    await deps.gateway.markPublishFailed({
-      commandId: command.command_id,
-      failureCode: "command_orchestration_failed",
-      failureMessage: error instanceof Error ? error.message : "Unknown orchestration failure.",
-    });
-    throw error;
-  }
-
-  try {
-    await deps.bus.publish(command);
-  } catch (error) {
-    await deps.gateway.markPublishFailed({
-      commandId: command.command_id,
-      failureCode: "command_publish_failed",
-      failureMessage: error instanceof Error ? error.message : "Unknown publish failure.",
-    });
-    await notifyFailed(
-      deps.orchestrator,
-      command.command_id,
-      "command_publish_failed",
-      error instanceof Error ? error.message : "Unknown publish failure.",
-    );
-    throw error;
-  }
-
-  return accepted;
-}
-
-async function notifyFailed(
-  orchestrator: BuyIntentCommandOrchestrator,
-  commandId: string,
-  failureCode: string,
-  failureMessage: string,
-) {
-  try {
-    await orchestrator.markFailed({
-      commandId,
-      failureCode,
-      failureMessage,
-    });
-  } catch (error) {
-    console.error("buy_intent_command_orchestrator_mark_failed", {
-      commandId,
-      failureCode,
-      error,
-    });
-  }
+  return {
+    commandId: command.command_id,
+    correlationId: command.correlation_id,
+    status: "accepted" as const,
+  };
 }
 
 function validateInput(input: {

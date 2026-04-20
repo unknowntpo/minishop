@@ -1,12 +1,6 @@
 import type { BuyIntentCommand } from "@/src/domain/checkout-command/buy-intent-command";
 import type { BuyIntentCommandStatus } from "@/src/domain/checkout-command/command-status";
 
-export type AcceptedBuyIntentCommand = {
-  commandId: string;
-  correlationId: string;
-  status: Extract<BuyIntentCommandStatus, "accepted">;
-};
-
 export type BuyIntentCommandStatusView = {
   commandId: string;
   correlationId: string;
@@ -29,10 +23,17 @@ export type StagedBuyIntentCommand = {
 };
 
 export type BuyIntentCommandGateway = {
-  createAccepted(command: BuyIntentCommand): Promise<AcceptedBuyIntentCommand>;
   readStatus(commandId: string): Promise<BuyIntentCommandStatusView | null>;
   readStatuses(commandIds: string[]): Promise<BuyIntentCommandStatusView[]>;
   stage(command: BuyIntentCommand): Promise<void>;
+  stageBatch(commands: BuyIntentCommand[]): Promise<void>;
+  ensureAcceptedBatch(
+    commands: Array<{
+      commandId: string;
+      correlationId: string;
+      idempotencyKey?: string;
+    }>,
+  ): Promise<void>;
   claimPendingBatch(input: { batchId: string; batchSize: number }): Promise<StagedBuyIntentCommand[]>;
   markProcessing(commandId: string): Promise<void>;
   markProcessingBatch(commandIds: string[]): Promise<void>;

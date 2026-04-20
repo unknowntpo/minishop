@@ -29,6 +29,13 @@ export async function processStagedBuyIntentCommandBatch(
   const processConcurrency = Math.max(1, input.processConcurrency ?? 1);
   const batchId = deps.idGenerator.randomUuid();
   const claimed = await deps.gateway.claimPendingBatch({ batchId, batchSize });
+  await deps.gateway.ensureAcceptedBatch(
+    claimed.map((row) => ({
+      commandId: row.commandId,
+      correlationId: row.correlationId,
+      ...(row.idempotencyKey ? { idempotencyKey: row.idempotencyKey } : {}),
+    })),
+  );
   const existingByCommandId = new Map(
     (await deps.gateway.readStatuses(claimed.map((row) => row.commandId))).map((status) => [
       status.commandId,

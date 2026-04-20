@@ -20,6 +20,8 @@ type BenchmarkConfig = {
   resultsDir: string;
   scenarioName: string;
   mode: "temporal" | "bypass";
+  createdTimeoutMs: number;
+  resetStateBeforeRun: boolean;
 };
 
 type AcceptResult = {
@@ -83,6 +85,10 @@ async function main() {
   await assertAppReachable(config.appUrl);
 
   try {
+    if (config.resetStateBeforeRun) {
+      await resetBuyIntentBenchmarkState(pool, config.mode);
+    }
+
     const inventory = await readInventory(config.skuId);
     const effectiveRequests =
       config.mode === "bypass" ? config.requests : Math.min(config.requests, inventory.available);
@@ -509,7 +515,7 @@ async function waitForCreatedStatuses(
   );
   const pendingCommandIds = new Set(accepted.map((result) => result.commandId));
   const resultsByCommandId = new Map<string, CreatedResult>();
-  const deadline = Date.now() + 30_000;
+  const deadline = Date.now() + config.createdTimeoutMs;
 
   while (Date.now() < deadline && pendingCommandIds.size > 0) {
     const rows = await readCommandStatusBatch(pool, [...pendingCommandIds]);
@@ -1068,6 +1074,8 @@ function readConfig(): BenchmarkConfig {
       process.env.BENCHMARK_SCENARIO_NAME ??
       (readMode() === "temporal" ? "buy-intent-temporal-payment-fail" : "buy-intent-bypass-created"),
     mode: readMode(),
+    createdTimeoutMs: readPositiveIntegerEnv("BENCHMARK_CREATED_TIMEOUT_MS", 60_000),
+    resetStateBeforeRun: readBooleanWithDefault("BENCHMARK_RESET_STATE", true),
   };
 }
 
@@ -1111,8 +1119,50 @@ function readPositiveIntegerEnv(name: string, fallback: number) {
   return parsed;
 }
 
+function readBooleanWithDefault(name: string, fallback: boolean) {
+  const raw = process.env[name]?.trim().toLowerCase();
+
+  if (!raw) {
+    return fallback;
+  }
+
+  return raw === "1" || raw === "true" || raw === "yes";
+}
+
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function resetBuyIntentBenchmarkState(pool: Pool, mode: "temporal" | "bypass") {
+  const aggregateTypes = mode === "temporal" ? ["checkout", "payment", "order"] : ["checkout"];
+
+  await pool.query("begin");
+
+  try {
+    await pool.query(`delete from staged_buy_intent_command`);
+    await pool.query(`delete from command_status`);
+    await pool.query(`delete from checkout_intent_projection`);
+    await pool.query(`delete from order_projection`);
+    await pool.query(
+      `
+        delete from projection_checkpoint
+        where projection_name = 'main'
+      `,
+    );
+    await pool.query(
+      `
+        delete from event_store
+        where aggregate_type = any($1::text[])
+      `,
+      [aggregateTypes],
+    );
+    await pool.query("commit");
+  } catch (error) {
+    await pool.query("rollback");
+    throw error;
+  }
+
+  await sleep(500);
 }
 
 main().catch((error) => {
