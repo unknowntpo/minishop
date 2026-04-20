@@ -20,10 +20,42 @@ type CheckoutCompletionActivities struct {
 	logger *zap.Logger
 }
 
-type CompleteCheckoutInput struct {
+type StartCheckoutInput struct {
 	CommandID        string
 	CorrelationID    string
 	CheckoutIntentID string
+}
+
+type StartCheckoutResult struct {
+	CheckoutStatus  string   `json:"checkoutStatus"`
+	PaymentID       string   `json:"paymentId,omitempty"`
+	ReservationIDs  []string `json:"reservationIds,omitempty"`
+	RejectionReason string   `json:"rejectionReason,omitempty"`
+}
+
+type CompletePaymentInput struct {
+	CommandID         string
+	CheckoutIntentID  string
+	PaymentID         string
+	ProviderReference string
+}
+
+type CompletePaymentResult struct {
+	CheckoutStatus string `json:"checkoutStatus"`
+	OrderID        string `json:"orderId"`
+	PaymentID      string `json:"paymentId"`
+}
+
+type FailPaymentInput struct {
+	CommandID        string
+	CheckoutIntentID string
+	PaymentID        string
+	Reason           string
+}
+
+type FailPaymentResult struct {
+	CheckoutStatus string `json:"checkoutStatus"`
+	Reason         string `json:"reason"`
 }
 
 type checkoutIntentCreatedPayload struct {
@@ -64,6 +96,18 @@ type paymentRequestedPayload struct {
 	IdempotencyKey   string `json:"idempotency_key"`
 }
 
+type paymentSucceededPayload struct {
+	PaymentID         string `json:"payment_id"`
+	CheckoutIntentID  string `json:"checkout_intent_id"`
+	ProviderReference string `json:"provider_reference"`
+}
+
+type paymentFailedPayload struct {
+	PaymentID        string `json:"payment_id"`
+	CheckoutIntentID string `json:"checkout_intent_id"`
+	Reason           string `json:"reason"`
+}
+
 type orderConfirmedPayload struct {
 	OrderID          string                   `json:"order_id"`
 	CheckoutIntentID string                   `json:"checkout_intent_id"`
@@ -73,139 +117,123 @@ type orderConfirmedPayload struct {
 }
 
 type eventRecord struct {
-	ID               int64
-	EventID          pgtype.UUID
-	EventType        string
-	AggregateType    string
-	AggregateID      string
-	AggregateVersion int64
-	Payload          []byte
+	EventType string
+	Payload   []byte
 }
 
 func NewCheckoutCompletionActivities(pool *pgxpool.Pool, logger *zap.Logger) *CheckoutCompletionActivities {
-	return &CheckoutCompletionActivities{
-		pool:   pool,
-		logger: logger,
-	}
+	return &CheckoutCompletionActivities{pool: pool, logger: logger}
 }
 
-func (a *CheckoutCompletionActivities) CompleteCheckout(ctx context.Context, input CompleteCheckoutInput) error {
+func (a *CheckoutCompletionActivities) StartCheckout(ctx context.Context, input StartCheckoutInput) (StartCheckoutResult, error) {
 	checkout, err := a.loadCheckoutIntent(ctx, input.CheckoutIntentID)
 	if err != nil {
-		return err
+		return StartCheckoutResult{}, err
 	}
 
-	outcomes := make([]eventRecord, 0, len(checkout.Items))
-
+	reservationIDs := make([]string, 0, len(checkout.Items))
 	for index, item := range checkout.Items {
 		onHand, err := a.loadSkuOnHand(ctx, item.SKUID)
 		if err != nil {
-			return err
+			return StartCheckoutResult{}, err
 		}
 
-		outcome, err := a.reserveInventory(ctx, checkout.CheckoutIntentID, item, onHand, index)
+		reservationID, rejected, err := a.reserveInventory(ctx, checkout.CheckoutIntentID, item, onHand, index)
 		if err != nil {
-			return err
+			return StartCheckoutResult{}, err
 		}
-		outcomes = append(outcomes, outcome)
-	}
-
-	if rejected := firstRejectedOutcome(outcomes); rejected != nil {
-		for _, outcome := range outcomes {
-			if outcome.EventType != "InventoryReserved" {
-				continue
-			}
-
-			var reserved inventoryReservedPayload
-			if err := json.Unmarshal(outcome.Payload, &reserved); err != nil {
-				return err
-			}
-
-			if _, err := a.appendEvent(
-				ctx,
-				"sku",
-				reserved.SKUID,
-				map[string]any{
-					"type":    "InventoryReservationReleased",
-					"version": 1,
-					"payload": inventoryReservationReleasedPayload{
-						CheckoutIntentID: reserved.CheckoutIntentID,
-						ReservationID:    reserved.ReservationID,
-						SKUID:            reserved.SKUID,
-						Quantity:         reserved.Quantity,
-						Reason:           "cart_reservation_failed",
-					},
-				},
-				fmt.Sprintf("demo-release:%s:%s", reserved.CheckoutIntentID, reserved.ReservationID),
-				nextAggregateVersion(ctx, a.pool, "sku", reserved.SKUID),
-			); err != nil {
-				return err
-			}
+		if rejected != nil {
+			return StartCheckoutResult{
+				CheckoutStatus:  "rejected",
+				RejectionReason: rejected.Reason,
+			}, nil
 		}
-
-		a.logger.Info(
-			"checkout_completion_rejected",
-			zap.String("command_id", input.CommandID),
-			zap.String("checkout_intent_id", input.CheckoutIntentID),
-			zap.String("reason", rejected.Reason),
-		)
-		return nil
+		reservationIDs = append(reservationIDs, reservationID)
 	}
 
 	paymentID := uuid.NewString()
-	orderID := uuid.NewString()
 	totalAmountMinor := totalAmount(checkout.Items)
-
-	if _, err := a.appendEvent(
-		ctx,
-		"payment",
-		paymentID,
-		map[string]any{
-			"type":    "PaymentRequested",
-			"version": 1,
-			"payload": paymentRequestedPayload{
-				PaymentID:        paymentID,
-				CheckoutIntentID: checkout.CheckoutIntentID,
-				Amount:           totalAmountMinor,
-				IdempotencyKey:   fmt.Sprintf("demo-payment:%s", checkout.CheckoutIntentID),
-			},
-		},
-		fmt.Sprintf("demo-payment:%s", checkout.CheckoutIntentID),
-		1,
-	); err != nil {
-		return err
-	}
-
-	if _, err := a.appendEvent(
-		ctx,
-		"order",
-		orderID,
-		map[string]any{
-			"type":    "OrderConfirmed",
-			"version": 1,
-			"payload": orderConfirmedPayload{
-				OrderID:          orderID,
-				CheckoutIntentID: checkout.CheckoutIntentID,
-				BuyerID:          checkout.BuyerID,
-				Items:            checkout.Items,
-				TotalAmountMinor: totalAmountMinor,
-			},
-		},
-		fmt.Sprintf("demo-order:%s", checkout.CheckoutIntentID),
-		1,
-	); err != nil {
-		return err
+	if err := a.appendPaymentRequested(ctx, paymentID, checkout.CheckoutIntentID, totalAmountMinor); err != nil {
+		return StartCheckoutResult{}, err
 	}
 
 	a.logger.Info(
-		"checkout_completion_confirmed",
+		"checkout_started_pending_payment",
 		zap.String("command_id", input.CommandID),
 		zap.String("checkout_intent_id", input.CheckoutIntentID),
 		zap.String("payment_id", paymentID),
+	)
+
+	return StartCheckoutResult{
+		CheckoutStatus: "pending_payment",
+		PaymentID:      paymentID,
+		ReservationIDs: reservationIDs,
+	}, nil
+}
+
+func (a *CheckoutCompletionActivities) CompletePayment(ctx context.Context, input CompletePaymentInput) (CompletePaymentResult, error) {
+	checkout, err := a.loadCheckoutIntent(ctx, input.CheckoutIntentID)
+	if err != nil {
+		return CompletePaymentResult{}, err
+	}
+
+	if err := a.appendPaymentSucceeded(ctx, input.PaymentID, input.CheckoutIntentID, input.ProviderReference); err != nil {
+		return CompletePaymentResult{}, err
+	}
+
+	orderID := uuid.NewString()
+	if err := a.appendOrderConfirmed(ctx, orderID, checkout); err != nil {
+		return CompletePaymentResult{}, err
+	}
+
+	a.logger.Info(
+		"checkout_payment_confirmed",
+		zap.String("command_id", input.CommandID),
+		zap.String("checkout_intent_id", input.CheckoutIntentID),
+		zap.String("payment_id", input.PaymentID),
 		zap.String("order_id", orderID),
 	)
 
-	return nil
+	return CompletePaymentResult{
+		CheckoutStatus: "confirmed",
+		OrderID:        orderID,
+		PaymentID:      input.PaymentID,
+	}, nil
+}
+
+func (a *CheckoutCompletionActivities) FailPayment(ctx context.Context, input FailPaymentInput) (FailPaymentResult, error) {
+	if err := a.appendPaymentFailed(ctx, input.PaymentID, input.CheckoutIntentID, input.Reason); err != nil {
+		return FailPaymentResult{}, err
+	}
+
+	reservations, err := a.loadReservedInventory(ctx, input.CheckoutIntentID)
+	if err != nil {
+		return FailPaymentResult{}, err
+	}
+
+	for _, reservation := range reservations {
+		if err := a.appendInventoryRelease(ctx, reservation, input.Reason); err != nil {
+			return FailPaymentResult{}, err
+		}
+	}
+
+	status := "cancelled"
+	if input.Reason == "payment_timeout" {
+		status = "expired"
+	}
+
+	a.logger.Info(
+		"checkout_payment_failed",
+		zap.String("command_id", input.CommandID),
+		zap.String("checkout_intent_id", input.CheckoutIntentID),
+		zap.String("payment_id", input.PaymentID),
+		zap.String("reason", input.Reason),
+	)
+
+	return FailPaymentResult{
+		CheckoutStatus: status,
+		Reason:         input.Reason,
+	}, nil
 }
 
 func (a *CheckoutCompletionActivities) loadCheckoutIntent(ctx context.Context, checkoutIntentID string) (checkoutIntentCreatedPayload, error) {
@@ -248,94 +276,205 @@ func (a *CheckoutCompletionActivities) loadSkuOnHand(ctx context.Context, skuID 
 	return int(onHand), nil
 }
 
-func (a *CheckoutCompletionActivities) reserveInventory(
-	ctx context.Context,
-	checkoutIntentID string,
-	item contracts.CheckoutItem,
-	onHand int,
-	index int,
-) (eventRecord, error) {
+func (a *CheckoutCompletionActivities) reserveInventory(ctx context.Context, checkoutIntentID string, item contracts.CheckoutItem, onHand, index int) (string, *FailPaymentResult, error) {
 	priorEvents, err := a.loadAggregateEvents(ctx, "sku", item.SKUID)
 	if err != nil {
-		return eventRecord{}, err
+		return "", nil, err
 	}
 
 	available := onHand
-	reservations := map[string]reservationState{}
-
 	for _, event := range priorEvents {
 		switch event.EventType {
 		case "InventoryReserved":
 			var payload inventoryReservedPayload
 			if err := json.Unmarshal(event.Payload, &payload); err != nil {
-				return eventRecord{}, err
+				return "", nil, err
 			}
 			available -= payload.Quantity
-			reservations[payload.ReservationID] = reservationState{
-				CheckoutIntentID: payload.CheckoutIntentID,
-				Quantity:         payload.Quantity,
-				Status:           "reserved",
-			}
 		case "InventoryReservationReleased":
 			var payload inventoryReservationReleasedPayload
 			if err := json.Unmarshal(event.Payload, &payload); err != nil {
-				return eventRecord{}, err
+				return "", nil, err
 			}
-			if reservation, ok := reservations[payload.ReservationID]; ok && reservation.Status == "reserved" {
-				available += payload.Quantity
-				reservation.Status = "released"
-				reservations[payload.ReservationID] = reservation
-			}
+			available += payload.Quantity
 		}
 	}
 
 	reservationID := uuid.NewString()
 	idempotencyKey := fmt.Sprintf("demo-reserve:%s:%d", checkoutIntentID, index)
+	version := int64(len(priorEvents) + 1)
 
 	if available < item.Quantity {
-		return a.appendEvent(
+		_, err := a.appendEvent(
 			ctx,
 			"sku",
 			item.SKUID,
-			map[string]any{
-				"type":    "InventoryReservationRejected",
-				"version": 1,
-				"payload": inventoryReservationRejectedPayload{
-					CheckoutIntentID: checkoutIntentID,
-					ReservationID:    reservationID,
-					SKUID:            item.SKUID,
-					Quantity:         item.Quantity,
-					Reason:           "insufficient_inventory",
-				},
-			},
-			idempotencyKey,
-			int64(len(priorEvents)+1),
-		)
-	}
-
-	return a.appendEvent(
-		ctx,
-		"sku",
-		item.SKUID,
-		map[string]any{
-			"type":    "InventoryReserved",
-			"version": 1,
-			"payload": inventoryReservedPayload{
+			"InventoryReservationRejected",
+			inventoryReservationRejectedPayload{
 				CheckoutIntentID: checkoutIntentID,
 				ReservationID:    reservationID,
 				SKUID:            item.SKUID,
 				Quantity:         item.Quantity,
-				ExpiresAt:        time.Now().UTC().Add(15 * time.Minute).Format(time.RFC3339),
+				Reason:           "insufficient_inventory",
 			},
+			idempotencyKey,
+			version,
+		)
+		if err != nil {
+			return "", nil, err
+		}
+		return "", &FailPaymentResult{CheckoutStatus: "rejected", Reason: "insufficient_inventory"}, nil
+	}
+
+	if _, err := a.appendEvent(
+		ctx,
+		"sku",
+		item.SKUID,
+		"InventoryReserved",
+		inventoryReservedPayload{
+			CheckoutIntentID: checkoutIntentID,
+			ReservationID:    reservationID,
+			SKUID:            item.SKUID,
+			Quantity:         item.Quantity,
+			ExpiresAt:        time.Now().UTC().Add(15 * time.Minute).Format(time.RFC3339),
 		},
 		idempotencyKey,
-		int64(len(priorEvents)+1),
+		version,
+	); err != nil {
+		return "", nil, err
+	}
+
+	return reservationID, nil, nil
+}
+
+func (a *CheckoutCompletionActivities) appendPaymentRequested(ctx context.Context, paymentID, checkoutIntentID string, amount int) error {
+	_, err := a.appendEvent(
+		ctx,
+		"payment",
+		paymentID,
+		"PaymentRequested",
+		paymentRequestedPayload{
+			PaymentID:        paymentID,
+			CheckoutIntentID: checkoutIntentID,
+			Amount:           amount,
+			IdempotencyKey:   fmt.Sprintf("demo-payment:%s", checkoutIntentID),
+		},
+		fmt.Sprintf("demo-payment:%s", checkoutIntentID),
+		1,
 	)
+	return err
+}
+
+func (a *CheckoutCompletionActivities) appendPaymentSucceeded(ctx context.Context, paymentID, checkoutIntentID, providerReference string) error {
+	_, err := a.appendEvent(
+		ctx,
+		"payment",
+		paymentID,
+		"PaymentSucceeded",
+		paymentSucceededPayload{
+			PaymentID:         paymentID,
+			CheckoutIntentID:  checkoutIntentID,
+			ProviderReference: providerReference,
+		},
+		fmt.Sprintf("demo-payment-succeeded:%s", paymentID),
+		2,
+	)
+	return err
+}
+
+func (a *CheckoutCompletionActivities) appendPaymentFailed(ctx context.Context, paymentID, checkoutIntentID, reason string) error {
+	_, err := a.appendEvent(
+		ctx,
+		"payment",
+		paymentID,
+		"PaymentFailed",
+		paymentFailedPayload{
+			PaymentID:        paymentID,
+			CheckoutIntentID: checkoutIntentID,
+			Reason:           reason,
+		},
+		fmt.Sprintf("demo-payment-failed:%s", paymentID),
+		2,
+	)
+	return err
+}
+
+func (a *CheckoutCompletionActivities) appendOrderConfirmed(ctx context.Context, orderID string, checkout checkoutIntentCreatedPayload) error {
+	_, err := a.appendEvent(
+		ctx,
+		"order",
+		orderID,
+		"OrderConfirmed",
+		orderConfirmedPayload{
+			OrderID:          orderID,
+			CheckoutIntentID: checkout.CheckoutIntentID,
+			BuyerID:          checkout.BuyerID,
+			Items:            checkout.Items,
+			TotalAmountMinor: totalAmount(checkout.Items),
+		},
+		fmt.Sprintf("demo-order:%s", checkout.CheckoutIntentID),
+		1,
+	)
+	return err
+}
+
+func (a *CheckoutCompletionActivities) appendInventoryRelease(ctx context.Context, reservation inventoryReservedPayload, reason string) error {
+	version, err := nextAggregateVersion(ctx, a.pool, "sku", reservation.SKUID)
+	if err != nil {
+		return err
+	}
+
+	_, err = a.appendEvent(
+		ctx,
+		"sku",
+		reservation.SKUID,
+		"InventoryReservationReleased",
+		inventoryReservationReleasedPayload{
+			CheckoutIntentID: reservation.CheckoutIntentID,
+			ReservationID:    reservation.ReservationID,
+			SKUID:            reservation.SKUID,
+			Quantity:         reservation.Quantity,
+			Reason:           reason,
+		},
+		fmt.Sprintf("demo-release:%s:%s:%s", reservation.CheckoutIntentID, reservation.ReservationID, reason),
+		version,
+	)
+	return err
+}
+
+func (a *CheckoutCompletionActivities) loadReservedInventory(ctx context.Context, checkoutIntentID string) ([]inventoryReservedPayload, error) {
+	rows, err := a.pool.Query(ctx, `
+		select payload
+		from event_store
+		where aggregate_type = 'sku'
+		  and event_type = 'InventoryReserved'
+		  and payload ->> 'checkout_intent_id' = $1
+		order by id asc
+	`, checkoutIntentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var reservations []inventoryReservedPayload
+	for rows.Next() {
+		var payload []byte
+		if err := rows.Scan(&payload); err != nil {
+			return nil, err
+		}
+		var reservation inventoryReservedPayload
+		if err := json.Unmarshal(payload, &reservation); err != nil {
+			return nil, err
+		}
+		reservations = append(reservations, reservation)
+	}
+
+	return reservations, rows.Err()
 }
 
 func (a *CheckoutCompletionActivities) loadAggregateEvents(ctx context.Context, aggregateType, aggregateID string) ([]eventRecord, error) {
 	rows, err := a.pool.Query(ctx, `
-		select id, event_id, event_type, aggregate_type, aggregate_id, aggregate_version, payload
+		select event_type, payload
 		from event_store
 		where aggregate_type = $1
 		  and aggregate_id = $2
@@ -346,43 +485,32 @@ func (a *CheckoutCompletionActivities) loadAggregateEvents(ctx context.Context, 
 	}
 	defer rows.Close()
 
-	var result []eventRecord
+	var events []eventRecord
 	for rows.Next() {
 		var event eventRecord
-		if err := rows.Scan(
-			&event.ID,
-			&event.EventID,
-			&event.EventType,
-			&event.AggregateType,
-			&event.AggregateID,
-			&event.AggregateVersion,
-			&event.Payload,
-		); err != nil {
+		if err := rows.Scan(&event.EventType, &event.Payload); err != nil {
 			return nil, err
 		}
-		result = append(result, event)
+		events = append(events, event)
 	}
-
-	return result, rows.Err()
+	return events, rows.Err()
 }
 
 func (a *CheckoutCompletionActivities) appendEvent(
 	ctx context.Context,
 	aggregateType string,
 	aggregateID string,
-	event map[string]any,
+	eventType string,
+	payload any,
 	idempotencyKey string,
 	aggregateVersion int64,
 ) (eventRecord, error) {
-	payload, err := json.Marshal(event["payload"])
+	payloadJSON, err := json.Marshal(payload)
 	if err != nil {
 		return eventRecord{}, err
 	}
 
-	eventType := event["type"].(string)
-	eventVersion := int32(event["version"].(int))
-	eventID := uuid.New()
-	metadata, err := json.Marshal(contracts.EventMetadata{
+	metadataJSON, err := json.Marshal(contracts.EventMetadata{
 		RequestID: uuid.NewString(),
 		TraceID:   uuid.NewString(),
 		Source:    "worker",
@@ -392,6 +520,7 @@ func (a *CheckoutCompletionActivities) appendEvent(
 		return eventRecord{}, err
 	}
 
+	eventID := uuid.New()
 	row := a.pool.QueryRow(ctx, `
 		insert into event_store (
 			event_id,
@@ -405,52 +534,36 @@ func (a *CheckoutCompletionActivities) appendEvent(
 			idempotency_key,
 			occurred_at
 		)
-		values ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9,now())
+		values ($1, $2, 1, $3, $4, $5, $6::jsonb, $7::jsonb, $8, now())
 		on conflict (idempotency_key)
 		  where idempotency_key is not null
 		  do nothing
-		returning id, event_id, event_type, aggregate_type, aggregate_id, aggregate_version, payload
-	`, pgtype.UUID{Bytes: eventID, Valid: true}, eventType, eventVersion, aggregateType, aggregateID, aggregateVersion, payload, metadata, nullableText(idempotencyKey))
+		returning event_type, payload
+	`, pgtype.UUID{Bytes: eventID, Valid: true}, eventType, aggregateType, aggregateID, aggregateVersion, payloadJSON, metadataJSON, nullableText(idempotencyKey))
 
 	var inserted eventRecord
-	if err := row.Scan(
-		&inserted.ID,
-		&inserted.EventID,
-		&inserted.EventType,
-		&inserted.AggregateType,
-		&inserted.AggregateID,
-		&inserted.AggregateVersion,
-		&inserted.Payload,
-	); err == nil {
+	if err := row.Scan(&inserted.EventType, &inserted.Payload); err == nil {
 		return inserted, nil
 	} else if err != pgx.ErrNoRows {
 		return eventRecord{}, err
 	}
 
 	row = a.pool.QueryRow(ctx, `
-		select id, event_id, event_type, aggregate_type, aggregate_id, aggregate_version, payload
+		select event_type, payload
 		from event_store
 		where idempotency_key = $1
 		limit 1
 	`, nullableText(idempotencyKey))
 
 	var existing eventRecord
-	if err := row.Scan(
-		&existing.ID,
-		&existing.EventID,
-		&existing.EventType,
-		&existing.AggregateType,
-		&existing.AggregateID,
-		&existing.AggregateVersion,
-		&existing.Payload,
-	); err != nil {
+	if err := row.Scan(&existing.EventType, &existing.Payload); err != nil {
 		return eventRecord{}, err
 	}
 
 	return existing, nil
 }
 
-func nextAggregateVersion(ctx context.Context, pool *pgxpool.Pool, aggregateType, aggregateID string) int64 {
+func nextAggregateVersion(ctx context.Context, pool *pgxpool.Pool, aggregateType, aggregateID string) (int64, error) {
 	row := pool.QueryRow(ctx, `
 		select coalesce(max(aggregate_version), 0)
 		from event_store
@@ -460,37 +573,10 @@ func nextAggregateVersion(ctx context.Context, pool *pgxpool.Pool, aggregateType
 
 	var version int64
 	if err := row.Scan(&version); err != nil {
-		return 1
+		return 0, err
 	}
 
-	return version + 1
-}
-
-type reservationState struct {
-	CheckoutIntentID string
-	Quantity         int
-	Status           string
-}
-
-type rejectedOutcome struct {
-	Reason string
-}
-
-func firstRejectedOutcome(outcomes []eventRecord) *rejectedOutcome {
-	for _, outcome := range outcomes {
-		if outcome.EventType != "InventoryReservationRejected" {
-			continue
-		}
-
-		var payload inventoryReservationRejectedPayload
-		if err := json.Unmarshal(outcome.Payload, &payload); err != nil {
-			return &rejectedOutcome{Reason: "unknown_rejection"}
-		}
-
-		return &rejectedOutcome{Reason: payload.Reason}
-	}
-
-	return nil
+	return version + 1, nil
 }
 
 func totalAmount(items []contracts.CheckoutItem) int {
@@ -505,9 +591,5 @@ func nullableText(value string) pgtype.Text {
 	if value == "" {
 		return pgtype.Text{}
 	}
-
-	return pgtype.Text{
-		String: value,
-		Valid:  true,
-	}
+	return pgtype.Text{String: value, Valid: true}
 }

@@ -22,10 +22,32 @@ var _ = Describe("BuyIntentCommandWorkflow", func() {
 	BeforeEach(func() {
 		env = suite.NewTestWorkflowEnvironment()
 		env.RegisterActivityWithOptions(
-			func(ctx context.Context, input CompleteCheckoutInput) error {
-				return nil
+			func(ctx context.Context, input StartCheckoutInput) (StartCheckoutResult, error) {
+				return StartCheckoutResult{
+					CheckoutStatus: "pending_payment",
+					PaymentID:      "payment-123",
+				}, nil
 			},
-			activity.RegisterOptions{Name: "complete-demo-checkout"},
+			activity.RegisterOptions{Name: "start-demo-checkout"},
+		)
+		env.RegisterActivityWithOptions(
+			func(ctx context.Context, input CompletePaymentInput) (CompletePaymentResult, error) {
+				return CompletePaymentResult{
+					CheckoutStatus: "confirmed",
+					OrderID:        "order-123",
+					PaymentID:      input.PaymentID,
+				}, nil
+			},
+			activity.RegisterOptions{Name: "complete-payment"},
+		)
+		env.RegisterActivityWithOptions(
+			func(ctx context.Context, input FailPaymentInput) (FailPaymentResult, error) {
+				return FailPaymentResult{
+					CheckoutStatus: "expired",
+					Reason:         input.Reason,
+				}, nil
+			},
+			activity.RegisterOptions{Name: "fail-payment"},
 		)
 		input = contracts.WorkflowInput{
 			CommandID:     "cmd-123",
@@ -38,13 +60,16 @@ var _ = Describe("BuyIntentCommandWorkflow", func() {
 		env.AssertExpectations(GinkgoT())
 	})
 
-	It("completes after receiving the created signal", func() {
+	It("completes after receiving the payment succeeded signal", func() {
 		env.RegisterDelayedCallback(func() {
 			env.SignalWorkflow(contracts.SignalProcessing, input.CommandID)
 			env.SignalWorkflow(contracts.SignalCreated, contracts.CreatedSignalPayload{
 				CheckoutIntentID: "checkout-123",
 				EventID:          "event-123",
 				IsDuplicate:      false,
+			})
+			env.SignalWorkflow(contracts.SignalPaymentSucceeded, contracts.PaymentSucceededSignalPayload{
+				ProviderReference: "provider-123",
 			})
 		}, time.Millisecond)
 
@@ -61,6 +86,9 @@ var _ = Describe("BuyIntentCommandWorkflow", func() {
 			CheckoutIntentID: "checkout-123",
 			EventID:          "event-123",
 			IsDuplicate:      false,
+			CheckoutStatus:   "confirmed",
+			OrderID:          "order-123",
+			PaymentID:        "payment-123",
 		}))
 	})
 
@@ -85,5 +113,25 @@ var _ = Describe("BuyIntentCommandWorkflow", func() {
 			FailureCode:    contracts.FailureCodeMergeFailed,
 			FailureMessage: "append failed",
 		}))
+	})
+
+	It("expires the checkout when payment does not arrive before the timer", func() {
+		env.RegisterDelayedCallback(func() {
+			env.SignalWorkflow(contracts.SignalCreated, contracts.CreatedSignalPayload{
+				CheckoutIntentID: "checkout-123",
+				EventID:          "event-123",
+				IsDuplicate:      false,
+			})
+		}, time.Millisecond)
+
+		env.ExecuteWorkflow(BuyIntentCommandWorkflow, input)
+
+		Expect(env.IsWorkflowCompleted()).To(BeTrue())
+		Expect(env.GetWorkflowError()).NotTo(HaveOccurred())
+
+		var result contracts.WorkflowResult
+		Expect(env.GetWorkflowResult(&result)).To(Succeed())
+		Expect(result.CheckoutStatus).To(Equal("expired"))
+		Expect(result.PaymentID).To(Equal("payment-123"))
 	})
 })

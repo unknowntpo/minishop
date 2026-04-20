@@ -123,3 +123,20 @@ async function createTemporalClient(input: {
     ...(input.namespace?.trim() ? { namespace: input.namespace } : {}),
   });
 }
+
+export async function signalTemporalBuyIntentWorkflow(input: {
+  address: string;
+  namespace?: string;
+  commandId: string;
+  signalName: string;
+  signalArgs: unknown[];
+}) {
+  const client = await createTemporalClient({
+    address: input.address,
+    namespace: input.namespace,
+  });
+
+  await client.workflow
+    .getHandle(buyIntentTemporalWorkflowId(input.commandId))
+    .signal(input.signalName, ...input.signalArgs);
+}

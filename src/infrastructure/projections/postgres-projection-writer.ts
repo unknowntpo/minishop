@@ -153,18 +153,19 @@ async function applyPaymentRequested(client: PoolClient, storedEvent: StoredEven
 
 async function applyPaymentFailed(client: PoolClient, storedEvent: StoredEvent) {
   const payload = (storedEvent.event as Extract<DomainEvent, { type: "PaymentFailed" }>).payload;
+  const status = payload.reason === "payment_timeout" ? "expired" : "cancelled";
 
   await client.query(
     `
       update checkout_intent_projection
       set
-        status = 'cancelled',
-        cancellation_reason = $2,
-        last_event_id = $3,
+        status = $2,
+        cancellation_reason = $3,
+        last_event_id = $4,
         updated_at = now()
       where checkout_intent_id = $1
     `,
-    [payload.checkout_intent_id, payload.reason, storedEvent.id],
+    [payload.checkout_intent_id, status, payload.reason, storedEvent.id],
   );
 
   await updateOrderPaymentStatus(client, {

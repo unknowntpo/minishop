@@ -25,10 +25,12 @@ func BuyIntentCommandWorkflow(ctx workflow.Context, input contracts.WorkflowInpu
 	processingCh := workflow.GetSignalChannel(ctx, contracts.SignalProcessing)
 	createdCh := workflow.GetSignalChannel(ctx, contracts.SignalCreated)
 	failedCh := workflow.GetSignalChannel(ctx, contracts.SignalFailed)
+	paymentSucceededCh := workflow.GetSignalChannel(ctx, contracts.SignalPaymentSucceeded)
+	paymentFailedCh := workflow.GetSignalChannel(ctx, contracts.SignalPaymentFailed)
 
 	state := "accepted"
 	var result contracts.WorkflowResult
-	var completionErr error
+	var paymentID string
 	done := false
 
 	for !done {
@@ -45,11 +47,12 @@ func BuyIntentCommandWorkflow(ctx workflow.Context, input contracts.WorkflowInpu
 		selector.AddReceive(createdCh, func(c workflow.ReceiveChannel, more bool) {
 			var payload contracts.CreatedSignalPayload
 			c.Receive(ctx, &payload)
-			completionErr = workflow.ExecuteActivity(ctx, "complete-demo-checkout", CompleteCheckoutInput{
+			var startResult StartCheckoutResult
+			err := workflow.ExecuteActivity(ctx, "start-demo-checkout", StartCheckoutInput{
 				CommandID:        input.CommandID,
 				CorrelationID:    input.CorrelationID,
 				CheckoutIntentID: payload.CheckoutIntentID,
-			}).Get(ctx, nil)
+			}).Get(ctx, &startResult)
 			result = contracts.WorkflowResult{
 				CommandID:        input.CommandID,
 				Status:           "created",
@@ -57,7 +60,24 @@ func BuyIntentCommandWorkflow(ctx workflow.Context, input contracts.WorkflowInpu
 				EventID:          payload.EventID,
 				IsDuplicate:      payload.IsDuplicate,
 			}
-			done = true
+			if err != nil {
+				result.CheckoutStatus = "failed"
+				done = true
+				return
+			}
+
+			result.PaymentID = startResult.PaymentID
+			result.CheckoutStatus = startResult.CheckoutStatus
+
+			switch startResult.CheckoutStatus {
+			case "pending_payment":
+				paymentID = startResult.PaymentID
+				state = "pending_payment"
+			case "rejected":
+				done = true
+			default:
+				done = true
+			}
 		})
 
 		selector.AddReceive(failedCh, func(c workflow.ReceiveChannel, more bool) {
@@ -72,12 +92,79 @@ func BuyIntentCommandWorkflow(ctx workflow.Context, input contracts.WorkflowInpu
 			done = true
 		})
 
-		selector.Select(ctx)
-	}
+		selector.AddReceive(paymentSucceededCh, func(c workflow.ReceiveChannel, more bool) {
+			if state != "pending_payment" {
+				var ignored contracts.PaymentSucceededSignalPayload
+				c.Receive(ctx, &ignored)
+				return
+			}
 
-	if completionErr != nil {
-		logger.Error("buy_intent_workflow_completion_failed", "command_id", input.CommandID, "error", completionErr)
-		return result, completionErr
+			var payload contracts.PaymentSucceededSignalPayload
+			c.Receive(ctx, &payload)
+			var completionResult CompletePaymentResult
+			err := workflow.ExecuteActivity(ctx, "complete-payment", CompletePaymentInput{
+				CommandID:         input.CommandID,
+				CheckoutIntentID:  result.CheckoutIntentID,
+				PaymentID:         paymentID,
+				ProviderReference: payload.ProviderReference,
+			}).Get(ctx, &completionResult)
+			if err != nil {
+				result.CheckoutStatus = "failed"
+				done = true
+				return
+			}
+			result.CheckoutStatus = completionResult.CheckoutStatus
+			result.OrderID = completionResult.OrderID
+			result.PaymentID = completionResult.PaymentID
+			done = true
+		})
+
+		selector.AddReceive(paymentFailedCh, func(c workflow.ReceiveChannel, more bool) {
+			if state != "pending_payment" {
+				var ignored contracts.PaymentFailedSignalPayload
+				c.Receive(ctx, &ignored)
+				return
+			}
+
+			var payload contracts.PaymentFailedSignalPayload
+			c.Receive(ctx, &payload)
+			var failureResult FailPaymentResult
+			err := workflow.ExecuteActivity(ctx, "fail-payment", FailPaymentInput{
+				CommandID:        input.CommandID,
+				CheckoutIntentID: result.CheckoutIntentID,
+				PaymentID:        paymentID,
+				Reason:           payload.Reason,
+			}).Get(ctx, &failureResult)
+			if err != nil {
+				result.CheckoutStatus = "failed"
+				done = true
+				return
+			}
+			result.CheckoutStatus = failureResult.CheckoutStatus
+			done = true
+		})
+
+		if state == "pending_payment" {
+			timeoutFuture := workflow.NewTimer(ctx, 30*time.Minute)
+			selector.AddFuture(timeoutFuture, func(f workflow.Future) {
+				var failureResult FailPaymentResult
+				err := workflow.ExecuteActivity(ctx, "fail-payment", FailPaymentInput{
+					CommandID:        input.CommandID,
+					CheckoutIntentID: result.CheckoutIntentID,
+					PaymentID:        paymentID,
+					Reason:           "payment_timeout",
+				}).Get(ctx, &failureResult)
+				if err != nil {
+					result.CheckoutStatus = "failed"
+					done = true
+					return
+				}
+				result.CheckoutStatus = failureResult.CheckoutStatus
+				done = true
+			})
+		}
+
+		selector.Select(ctx)
 	}
 
 	logger.Info("buy_intent_workflow_completed", "command_id", input.CommandID, "status", result.Status)

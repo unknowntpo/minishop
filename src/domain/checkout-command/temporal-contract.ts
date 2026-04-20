@@ -14,6 +14,8 @@ export const buyIntentTemporalSignals = {
   processing: "buy-intent-processing",
   created: "buy-intent-created",
   failed: "buy-intent-failed",
+  paymentSucceeded: "buy-intent-payment-succeeded",
+  paymentFailed: "buy-intent-payment-failed",
 } as const;
 
 export function buyIntentTemporalWorkflowId(commandId: string) {

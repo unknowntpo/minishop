@@ -85,10 +85,43 @@ async function main() {
   }
 
   const checkoutIntentId = firstStatus.checkoutIntentId;
-  const checkoutStatus = await waitForCheckoutStatus(appBaseUrl, checkoutIntentId);
+  const checkoutStatus = await waitForCheckoutStatus(
+    appBaseUrl,
+    checkoutIntentId,
+    (status) => status !== "queued" && status !== "reserving",
+    "a display-ready status",
+  );
 
-  if (checkoutStatus.status !== "confirmed") {
-    throw new Error(`Expected confirmed checkout status, got ${checkoutStatus.status}.`);
+  if (checkoutStatus.status !== "pending_payment") {
+    throw new Error(`Expected pending_payment checkout status, got ${checkoutStatus.status}.`);
+  }
+
+  const paymentSignalResponse = await fetch(
+    `${appBaseUrl}/api/internal/buy-intent-commands/${firstCommandId}/payment-demo`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        outcome: "succeeded",
+      }),
+    },
+  );
+
+  if (!paymentSignalResponse.ok) {
+    throw new Error(`Expected payment signal to succeed, got ${paymentSignalResponse.status}.`);
+  }
+
+  const finalCheckoutStatus = await waitForCheckoutStatus(
+    appBaseUrl,
+    checkoutIntentId,
+    (status) => status === "confirmed",
+    "confirmed",
+  );
+
+  if (finalCheckoutStatus.status !== "confirmed") {
+    throw new Error(`Expected confirmed checkout status, got ${finalCheckoutStatus.status}.`);
   }
 
   const completionPage = await fetch(`${appBaseUrl}/checkout-complete/${checkoutIntentId}`).then(
@@ -113,7 +146,7 @@ async function main() {
         firstCommandId,
         secondCommandId,
         checkoutIntentId,
-        checkoutStatus: checkoutStatus.status,
+        checkoutStatus: finalCheckoutStatus.status,
         firstEventId: firstStatus.eventId,
         secondEventId: secondStatus.eventId,
       },
@@ -203,7 +236,12 @@ async function waitForCreatedStatus(
   throw new Error(`Command ${commandId} did not reach created status in time.`);
 }
 
-async function waitForCheckoutStatus(baseUrl: string, checkoutIntentId: string) {
+async function waitForCheckoutStatus(
+  baseUrl: string,
+  checkoutIntentId: string,
+  predicate: (status: string) => boolean,
+  expectedDescription: string,
+) {
   const deadline = Date.now() + 30_000;
 
   while (Date.now() < deadline) {
@@ -229,7 +267,7 @@ async function waitForCheckoutStatus(baseUrl: string, checkoutIntentId: string) 
         status: string;
       };
 
-      if (body.status !== "queued" && body.status !== "reserving") {
+      if (predicate(body.status)) {
         return body;
       }
     }
@@ -237,7 +275,9 @@ async function waitForCheckoutStatus(baseUrl: string, checkoutIntentId: string) 
     await sleep(250);
   }
 
-  throw new Error(`Checkout intent ${checkoutIntentId} did not reach a display-ready status in time.`);
+  throw new Error(
+    `Checkout intent ${checkoutIntentId} did not reach ${expectedDescription} in time.`,
+  );
 }
 
 async function waitForPostgres(connectionString: string) {

@@ -53,10 +53,10 @@ func main() {
 	tw.RegisterWorkflowWithOptions(workerworkflow.BuyIntentCommandWorkflow, sdkworkflow.RegisterOptions{
 		Name: "buy-intent-command-workflow",
 	})
-	tw.RegisterActivityWithOptions(
-		workerworkflow.NewCheckoutCompletionActivities(pool, logger).CompleteCheckout,
-		sdkactivity.RegisterOptions{Name: "complete-demo-checkout"},
-	)
+	activities := workerworkflow.NewCheckoutCompletionActivities(pool, logger)
+	tw.RegisterActivityWithOptions(activities.StartCheckout, sdkactivity.RegisterOptions{Name: "start-demo-checkout"})
+	tw.RegisterActivityWithOptions(activities.CompletePayment, sdkactivity.RegisterOptions{Name: "complete-payment"})
+	tw.RegisterActivityWithOptions(activities.FailPayment, sdkactivity.RegisterOptions{Name: "fail-payment"})
 
 	if err := tw.Start(); err != nil {
 		logger.Fatal("temporal_worker_start_failed", zap.Error(err))

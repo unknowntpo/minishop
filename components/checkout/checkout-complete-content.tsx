@@ -1,6 +1,8 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useState } from "react";
 
 import { BuyerDevMenu } from "@/components/buyer/buyer-dev-menu";
 import { BuyerLocaleProvider, useBuyerLocale } from "@/components/buyer/buyer-locale-provider";
@@ -35,7 +37,52 @@ export function CheckoutCompleteContent({ checkout, initialLocale }: CheckoutCom
 }
 
 function CheckoutCompleteBody({ checkout }: Omit<CheckoutCompleteContentProps, "initialLocale">) {
+  const router = useRouter();
   const { locale, messages } = useBuyerLocale();
+  const [paymentState, setPaymentState] = useState<"idle" | "submitting" | "error">("idle");
+  const [paymentError, setPaymentError] = useState<string | null>(null);
+
+  async function submitPaymentOutcome(outcome: "succeeded" | "failed") {
+    if (!checkout.commandId) {
+      setPaymentError(messages.completion.paymentActionUnavailable);
+      setPaymentState("error");
+      return;
+    }
+
+    setPaymentState("submitting");
+    setPaymentError(null);
+
+    try {
+      const response = await fetch(
+        `/api/internal/buy-intent-commands/${checkout.commandId}/payment-demo`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ outcome }),
+        },
+      );
+
+      if (!response.ok) {
+        throw new Error(messages.completion.paymentActionFailed);
+      }
+
+      await waitForCheckoutResolution(checkout.checkoutIntentId);
+      router.refresh();
+      router.push(`/checkout-complete/${checkout.checkoutIntentId}`);
+    } catch (error) {
+      setPaymentState("error");
+      setPaymentError(
+        error instanceof Error && error.message.trim().length > 0
+          ? error.message
+          : messages.completion.paymentActionFailed,
+      );
+      return;
+    }
+
+    setPaymentState("idle");
+  }
 
   return (
     <main className="page-shell checkout-complete-shell">
@@ -61,6 +108,30 @@ function CheckoutCompleteBody({ checkout }: Omit<CheckoutCompleteContentProps, "
         </p>
         {checkout.status === "queued" ? (
           <p className="muted">{messages.completion.queuedHelp(checkout.commandStatus)}</p>
+        ) : null}
+        {checkout.status === "pending_payment" ? (
+          <>
+            <p className="muted">{messages.completion.pendingPaymentHelp}</p>
+            <div className="buyer-toolbar-actions">
+              <button
+                className="button primary"
+                type="button"
+                disabled={paymentState === "submitting"}
+                onClick={() => void submitPaymentOutcome("succeeded")}
+              >
+                {messages.completion.actions.payNow}
+              </button>
+              <button
+                className="button secondary"
+                type="button"
+                disabled={paymentState === "submitting"}
+                onClick={() => void submitPaymentOutcome("failed")}
+              >
+                {messages.completion.actions.failPayment}
+              </button>
+            </div>
+            {paymentError ? <p className="checkout-demo-status error">{paymentError}</p> : null}
+          </>
         ) : null}
 
         <div className="completion-grid">
@@ -98,4 +169,23 @@ function CheckoutCompleteBody({ checkout }: Omit<CheckoutCompleteContentProps, "
       </section>
     </main>
   );
+}
+
+async function waitForCheckoutResolution(checkoutIntentId: string) {
+  const deadline = Date.now() + 15_000;
+
+  while (Date.now() < deadline) {
+    const response = await fetch(`/api/checkout-intents/${checkoutIntentId}`, {
+      cache: "no-store",
+    });
+
+    if (response.ok) {
+      const body = (await response.json()) as { status: string };
+      if (body.status !== "pending_payment" && body.status !== "reserving") {
+        return;
+      }
+    }
+
+    await new Promise((resolve) => window.setTimeout(resolve, 250));
+  }
 }

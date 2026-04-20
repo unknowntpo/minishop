@@ -79,6 +79,13 @@ type BuyerMessages = {
     receivedTitle: string;
     subtitle: (checkoutIntentId: string, status: string) => string;
     queuedHelp: (commandStatus: string | null) => string;
+    pendingPaymentHelp: string;
+    paymentActionUnavailable: string;
+    paymentActionFailed: string;
+    actions: {
+      payNow: string;
+      failPayment: string;
+    };
     metrics: {
       status: string;
       command: string;
@@ -168,6 +175,13 @@ const buyerMessages: Record<BuyerLocale, BuyerMessages> = {
       subtitle: (checkoutIntentId, status) => `Intent ${checkoutIntentId} 目前為 ${status}。`,
       queuedHelp: (commandStatus) =>
         `這表示 checkout intent 已經建立，後續 reservation 或 payment 流程尚未啟動。指令狀態：${commandStatus ?? "無資料"}。`,
+      pendingPaymentHelp: "付款已建立，現在等待第三方付款結果。這裡可用 demo 按鈕模擬成功或失敗。",
+      paymentActionUnavailable: "目前沒有可用的指令 ID，無法送出付款模擬。",
+      paymentActionFailed: "付款模擬失敗，請稍後再試。",
+      actions: {
+        payNow: "模擬付款成功",
+        failPayment: "模擬付款失敗",
+      },
       metrics: {
         status: "狀態",
         command: "指令",
@@ -255,6 +269,13 @@ const buyerMessages: Record<BuyerLocale, BuyerMessages> = {
       subtitle: (checkoutIntentId, status) => `Intent ${checkoutIntentId} is ${status}.`,
       queuedHelp: (commandStatus) =>
         `This means the checkout intent was created, but downstream reservation or payment work has not started yet. Command status: ${commandStatus ?? "n/a"}.`,
+      pendingPaymentHelp: "Payment was requested and is now waiting for the provider result. Use the demo buttons here to simulate success or failure.",
+      paymentActionUnavailable: "No command ID is available for the demo payment action.",
+      paymentActionFailed: "Demo payment action failed. Please try again.",
+      actions: {
+        payNow: "Simulate payment success",
+        failPayment: "Simulate payment failure",
+      },
       metrics: {
         status: "Status",
         command: "Command",
