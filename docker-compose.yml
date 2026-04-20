@@ -17,5 +17,17 @@ services:
       timeout: 5s
       retries: 10
 
+  nats:
+    image: nats:2.11-alpine
+    container_name: minishop-nats
+    restart: unless-stopped
+    command: ["-js", "-sd", "/data"]
+    ports:
+      - "${MINISHOP_NATS_PORT:-4222}:4222"
+      - "${MINISHOP_NATS_MONITOR_PORT:-8222}:8222"
+    volumes:
+      - minishop_nats_data:/data
+
 volumes:
   minishop_postgres_data:
+  minishop_nats_data:

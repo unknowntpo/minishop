@@ -11,6 +11,9 @@ importers:
       drizzle-orm:
         specifier: ^0.45.2
         version: 0.45.2(@types/pg@8.20.0)(pg@8.20.0)
+      nats:
+        specifier: ^2.29.3
+        version: 2.29.3
       next:
         specifier: 16.2.4
         version: 16.2.4(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
@@ -1544,6 +1547,10 @@ packages:
     engines: {node: ^10 || ^12 || ^13.7 || ^14 || >=15.0.1}
     hasBin: true
 
+  nats@2.29.3:
+    resolution: {integrity: sha512-tOQCRCwC74DgBTk4pWZ9V45sk4d7peoE2njVprMRCBXrhJ5q5cYM7i6W+Uvw2qUrcfOSnuisrX7bEx3b3Wx4QA==}
+    engines: {node: '>= 14.0.0'}
+
   next@16.2.4:
     resolution: {integrity: sha512-kPvz56wF5frc+FxlHI5qnklCzbq53HTwORaWBGdT0vNoKh1Aya9XC8aPauH4NJxqtzbWsS5mAbctm4cr+EkQ2Q==}
     engines: {node: '>=20.9.0'}
@@ -1564,6 +1571,10 @@ packages:
         optional: true
       sass:
         optional: true
+
+  nkeys.js@1.1.0:
+    resolution: {integrity: sha512-tB/a0shZL5UZWSwsoeyqfTszONTt4k2YS0tuQioMOD180+MbombYVgzDUYHlx+gejYK6rgf08n/2Df99WY0Sxg==}
+    engines: {node: '>=10.0.0'}
 
   obug@2.1.1:
     resolution: {integrity: sha512-uTqF9MuPraAQ+IsnPf366RG4cP9RtUi7MLO1N3KEc+wb0a6yKpeL0lmk2IB1jY5KHPAlTc6T/JRdC/YqxHNwkQ==}
@@ -1834,6 +1845,9 @@ packages:
     resolution: {integrity: sha512-5C1sg4USs1lfG0GFb2RLXsdpXqBSEhAaA/0kPL01wxzpMqLILNxIxIOKiILz+cdg/pLnOUxFYOR5yhHU666wbw==}
     engines: {node: '>=18.0.0'}
     hasBin: true
+
+  tweetnacl@1.0.3:
+    resolution: {integrity: sha512-6rt+RN7aOi1nGMyC4Xa5DdYiukl2UWCbcJft7YhxReBGQD7OAM8Pbxw6YMo4r2diNEA8FEmu32YOn9rhaiE5yw==}
 
   typescript@6.0.3:
     resolution: {integrity: sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw==}
@@ -3049,6 +3063,10 @@ snapshots:
 
   nanoid@3.3.11: {}
 
+  nats@2.29.3:
+    dependencies:
+      nkeys.js: 1.1.0
+
   next@16.2.4(react-dom@19.2.5(react@19.2.5))(react@19.2.5):
     dependencies:
       '@next/env': 16.2.4
@@ -3072,6 +3090,10 @@ snapshots:
     transitivePeerDependencies:
       - '@babel/core'
       - babel-plugin-macros
+
+  nkeys.js@1.1.0:
+    dependencies:
+      tweetnacl: 1.0.3
 
   obug@2.1.1: {}
 
@@ -3352,6 +3374,8 @@ snapshots:
       get-tsconfig: 4.14.0
     optionalDependencies:
       fsevents: 2.3.3
+
+  tweetnacl@1.0.3: {}
 
   typescript@6.0.3: {}
 
