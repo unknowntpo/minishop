@@ -18,6 +18,11 @@ let sharedPostgresBus: BuyIntentCommandBus | null = null;
 let sharedBus: BuyIntentCommandBus | null = null;
 let sharedOrchestrator: BuyIntentCommandOrchestrator | null = null;
 
+function readRuntimeEnv(name: string) {
+  const value = globalThis.process?.env?.[name];
+  return typeof value === "string" ? value.trim() : "";
+}
+
 function getPostgresGateway() {
   sharedGateway ??= createPostgresBuyIntentCommandGateway(getPool());
   return sharedGateway;
@@ -33,13 +38,15 @@ function getRuntimeCommandBus() {
     return sharedBus;
   }
 
-  sharedBus = process.env.NATS_URL?.trim()
+  const natsUrl = readRuntimeEnv("NATS_URL");
+
+  sharedBus = natsUrl
     ? createNatsBuyIntentCommandBus({
-        servers: process.env.NATS_URL,
-        streamName: process.env.NATS_BUY_INTENT_STREAM?.trim() || "BUY_INTENT_COMMANDS",
-        subject: process.env.NATS_BUY_INTENT_SUBJECT?.trim() || "buy-intent.command",
-        retrySubject: process.env.NATS_BUY_INTENT_RETRY_SUBJECT?.trim() || "buy-intent.retry",
-        dlqSubject: process.env.NATS_BUY_INTENT_DLQ_SUBJECT?.trim() || "buy-intent.dlq",
+        servers: natsUrl,
+        streamName: readRuntimeEnv("NATS_BUY_INTENT_STREAM") || "BUY_INTENT_COMMANDS",
+        subject: readRuntimeEnv("NATS_BUY_INTENT_SUBJECT") || "buy-intent.command",
+        retrySubject: readRuntimeEnv("NATS_BUY_INTENT_RETRY_SUBJECT") || "buy-intent.retry",
+        dlqSubject: readRuntimeEnv("NATS_BUY_INTENT_DLQ_SUBJECT") || "buy-intent.dlq",
       })
     : getPostgresBus();
 
@@ -51,11 +58,13 @@ function getRuntimeOrchestrator() {
     return sharedOrchestrator;
   }
 
-  sharedOrchestrator = process.env.TEMPORAL_ADDRESS?.trim()
+  const temporalAddress = readRuntimeEnv("TEMPORAL_ADDRESS");
+
+  sharedOrchestrator = temporalAddress
     ? createTemporalBuyIntentCommandOrchestrator({
-        address: process.env.TEMPORAL_ADDRESS,
-        namespace: process.env.TEMPORAL_NAMESPACE?.trim() || undefined,
-        taskQueue: process.env.TEMPORAL_BUY_INTENT_TASK_QUEUE?.trim() || undefined,
+        address: temporalAddress,
+        namespace: readRuntimeEnv("TEMPORAL_NAMESPACE") || undefined,
+        taskQueue: readRuntimeEnv("TEMPORAL_BUY_INTENT_TASK_QUEUE") || undefined,
       })
     : createNoopBuyIntentCommandOrchestrator();
 

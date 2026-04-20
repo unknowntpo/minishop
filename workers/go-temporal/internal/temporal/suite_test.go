@@ -1,0 +1,13 @@
+package temporal
+
+import (
+	"testing"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+)
+
+func TestTemporal(t *testing.T) {
+	RegisterFailHandler(Fail)
+	RunSpecs(t, "Temporal Suite")
+}

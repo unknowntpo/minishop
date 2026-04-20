@@ -2,6 +2,7 @@ import "dotenv/config";
 
 import { headers } from "nats";
 
+import { parseBuyIntentCommandContract } from "@/src/contracts/buy-intent-command-contract";
 import { ingestBuyIntentCommandMessage } from "@/src/application/checkout/ingest-buy-intent-command-message";
 import {
   buyIntentCommandCodec,
@@ -66,7 +67,7 @@ async function main() {
         },
         {
           decode(data) {
-            return buyIntentCommandCodec.decode(data);
+            return parseBuyIntentCommandContract(buyIntentCommandCodec.decode(data));
           },
           stage(command) {
             return postgresBuyIntentCommandGateway.stage(command);

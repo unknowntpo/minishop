@@ -40,7 +40,10 @@ async function main() {
       truncate table
         staging_buy_intent_command,
         command_status,
-        event_store
+        event_store,
+        checkout_intent_projection,
+        order_projection,
+        projection_checkpoint
       restart identity
     `);
   } finally {
@@ -50,9 +53,9 @@ async function main() {
 
   process.env.DATABASE_URL = databaseUrl;
   process.env.NATS_URL = natsUrl;
-  process.env.NATS_BUY_INTENT_INGEST_CONTINUOUS = "0";
+  process.env.NATS_BUY_INTENT_INGEST_CONTINUOUS = "1";
 
-  execSync("docker compose up -d --build app worker-buy-intents-ingest worker-buy-intents-process", {
+  execSync("docker compose up -d --build --remove-orphans app worker-buy-intents-ingest worker-buy-intents-temporal", {
     cwd: workdir,
     stdio: "inherit",
   });

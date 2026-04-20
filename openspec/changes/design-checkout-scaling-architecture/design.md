@@ -53,6 +53,66 @@ Temporal sits in the command orchestration layer. It owns retry, timeout, workfl
 
 Temporal does not replace the event store, and it does not become the durable source of business truth. PostgreSQL remains the place where `CheckoutIntentCreated` is established.
 
+### Temporal is not tracing, and tracing is not orchestration
+
+Distributed tracing and telemetry remain required in this architecture, but they solve a different problem.
+
+Telemetry answers questions such as:
+
+- which services participated in a request or command path
+- where latency accumulated
+- which hop failed
+- how logs, metrics, and traces correlate
+
+Temporal answers different questions:
+
+- which workflow instance currently owns a command lifecycle
+- which state transition the command is waiting on
+- whether retries, timers, and external signals should still execute after process restarts
+- how long-running orchestration state is resumed and inspected
+
+In other words:
+
+- telemetry is the observability layer
+- Temporal is the workflow control layer
+
+The design therefore does not treat OpenTelemetry or distributed tracing as a substitute for Temporal. Tracing is still necessary for debugging and performance analysis, but tracing alone does not provide durable workflow state, timers, signals, or resumable orchestration semantics.
+
+### Why keep Temporal in this design at all
+
+The current `buy-intent` path is intentionally modest: accept a command, stage it, merge it, append the durable event, and expose status through polling. That narrow scope means a plain NATS-plus-worker model would be viable.
+
+Temporal is still kept in the design because this command path is not the intended endpoint. It is the control-plane foundation for a longer checkout lifecycle that is expected to grow into:
+
+- inventory reservation coordination
+- payment coordination
+- expiration and timeout handling
+- compensation flows
+- multi-step command outcome visibility across restarts and deploys
+
+The architectural decision is therefore not "Temporal is required to make async ingestion work today." The real decision is "Temporal is reserved for orchestration because the broader checkout lifecycle is expected to need orchestration soon, and we want that boundary established before the worker surface expands."
+
+This keeps the responsibilities explicit:
+
+- NATS JetStream buffers commands and shapes throughput
+- PostgreSQL establishes business facts
+- Temporal tracks orchestration lifecycle
+- telemetry explains what happened operationally
+
+### Criteria for removing Temporal later
+
+Temporal should remain under scrutiny rather than becoming irreversible infrastructure. If the checkout backend stays limited to short-lived queue consumption plus deterministic merge writes, and does not grow meaningful needs for timers, signals, or multi-step compensation, then plain workers would likely be the simpler design.
+
+The architecture should therefore revisit the Temporal dependency if most of the following remain true:
+
+- command processing stays single-stage after staging
+- retries are local worker concerns rather than workflow concerns
+- no workflow timers or delayed wakeups are needed
+- no cross-service compensation steps are introduced
+- operator visibility from `command_status` plus telemetry is sufficient
+
+If those conditions hold for the medium term, removing Temporal would be a reasonable simplification. Until then, the design keeps Temporal deliberately scoped to orchestration and forbids it from expanding into business-fact storage or general-purpose messaging.
+
 ### Staging plus merge, not direct `COPY` into `event_store`
 
 Workers may use `COPY` for throughput, but the `COPY` target should be a staging table rather than the final `event_store`.
@@ -217,6 +277,20 @@ The trade-off is that the system may eventually operate both a lightweight comma
 Temporal is introduced as workflow orchestration, not as durable fact storage. Its value is visibility, retries, timeout handling, and command-lifecycle coordination.
 
 The trade-off is conceptual and operational complexity. A plain worker model would be simpler to deploy, but harder to observe and reason about for long-running asynchronous command lifecycles. This design keeps Temporal only where orchestration adds value and avoids making it the system of record.
+
+### Temporal versus telemetry
+
+Temporal and telemetry are complementary, not competing choices.
+
+If only telemetry is added, operators gain better traces and metrics, but the system still relies on ad hoc worker code and database rows to express orchestration state. If Temporal is added without telemetry, operators gain workflow visibility but still lose latency breakdowns, infrastructure-level traces, and cross-service debugging depth.
+
+For this reason, the intended stack is:
+
+- Temporal for orchestration semantics
+- `command_status` for product-facing query state
+- telemetry for traces, metrics, and logs across app, broker, worker, and database edges
+
+The design rejects the idea that "adding tracing later" removes the need for orchestration, just as it rejects the idea that "using Temporal" removes the need for distributed tracing.
 
 ### Temporal TypeScript worker versus Go worker
 

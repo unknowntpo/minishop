@@ -1,16 +1,23 @@
-FROM node:20-bookworm-slim
+FROM golang:1.25-bookworm AS builder
 
-ENV PNPM_HOME="/pnpm"
-ENV PATH="$PNPM_HOME:$PATH"
-ENV NEXT_TELEMETRY_DISABLED=1
+WORKDIR /src/workers/go-temporal
 
-RUN corepack enable
+COPY workers/go-temporal/go.mod workers/go-temporal/go.sum ./
+RUN go mod download
+
+COPY workers/go-temporal ./
+
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/buy-intent-go-temporal-worker ./cmd/worker
+
+FROM debian:bookworm-slim
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-COPY package.json pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile
+COPY contracts ./contracts
+COPY --from=builder /out/buy-intent-go-temporal-worker ./buy-intent-go-temporal-worker
 
-COPY . .
-
-CMD ["pnpm", "--config.engine-strict=false", "worker:buy-intents:temporal"]
+CMD ["/app/buy-intent-go-temporal-worker"]

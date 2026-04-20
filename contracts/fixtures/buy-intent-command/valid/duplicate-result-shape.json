@@ -1,0 +1,20 @@
+{
+  "command_id": "33333333-3333-4333-8333-333333333333",
+  "correlation_id": "44444444-4444-4444-8444-444444444444",
+  "buyer_id": "buyer_repeat",
+  "items": [
+    {
+      "sku_id": "sku_hot_002",
+      "quantity": 2,
+      "unit_price_amount_minor": 500,
+      "currency": "USD"
+    }
+  ],
+  "metadata": {
+    "request_id": "req_repeat",
+    "trace_id": "trace_repeat",
+    "source": "api",
+    "actor_id": "buyer_repeat"
+  },
+  "issued_at": "2026-04-20T11:12:13Z"
+}

@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import type { Product } from "@/src/domain/catalog/product";
 import {
@@ -25,17 +25,32 @@ type CheckoutStatusResponse = {
   cancellationReason?: string | null;
 };
 
+type BuyIntentCommandStatusResponse = {
+  commandId: string;
+  correlationId: string;
+  status: "accepted" | "processing" | "created" | "failed";
+  checkoutIntentId: string | null;
+  eventId: string | null;
+  isDuplicate: boolean;
+  failureCode: string | null;
+  failureMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
 type CheckoutActionState =
   | {
       phase: "idle";
     }
   | {
       phase: "submitting" | "projecting" | "polling";
+      commandId?: string;
       checkoutIntentId?: string;
       message: string;
     }
   | {
       phase: "ready" | "completed";
+      commandId?: string;
       checkoutIntentId: string;
       status: string;
       message: string;
@@ -64,44 +79,6 @@ export function CheckoutAction({
   const normalizedLocale = normalizeBuyerLocale(locale);
   const messages = getBuyerMessages(normalizedLocale);
   const [state, setState] = useState<CheckoutActionState>({ phase: "idle" });
-  const [checkoutIntentId, setCheckoutIntentId] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!checkoutIntentId) {
-      return;
-    }
-
-    let cancelled = false;
-    const interval = window.setInterval(async () => {
-      try {
-        const response = await fetch(`/api/checkout-intents/${checkoutIntentId}`, {
-          cache: "no-store",
-        });
-
-        if (!response.ok) {
-          return;
-        }
-
-        const body = (await response.json()) as CheckoutStatusResponse;
-
-        if (!cancelled) {
-          setState({
-            phase: "ready",
-            checkoutIntentId,
-            status: body.status,
-            message: statusMessage(body, normalizedLocale),
-          });
-        }
-      } catch {
-        // Keep polling; transient read failures are expected while projections catch up.
-      }
-    }, 1200);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(interval);
-    };
-  }, [checkoutIntentId, normalizedLocale]);
 
   async function buy() {
     setState({
@@ -119,7 +96,7 @@ export function CheckoutAction({
           currency: product.currency,
         },
       ];
-      const response = await fetch("/api/checkout-intents", {
+      const response = await fetch("/api/buy-intents", {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -135,59 +112,72 @@ export function CheckoutAction({
         throw new Error(await readError(response));
       }
 
-      const body = (await response.json()) as { checkoutIntentId: string };
-      setCheckoutIntentId(body.checkoutIntentId);
+      const body = (await response.json()) as {
+        commandId: string;
+        correlationId: string;
+        status: "accepted";
+      };
       setState({
-        phase: "projecting",
-        checkoutIntentId: body.checkoutIntentId,
+        phase: "polling",
+        commandId: body.commandId,
         message: messages.checkout.accepted,
       });
 
-      await processProjections();
+      const commandStatus = await waitForBuyIntentCommandStatus(body.commandId);
+
+      if (commandStatus.status === "failed") {
+        throw new Error(
+          commandStatus.failureMessage ??
+            commandStatus.failureCode ??
+            "Buy intent command failed.",
+        );
+      }
+
+      if (!commandStatus.checkoutIntentId) {
+        throw new Error("Buy intent command completed without a checkout intent ID.");
+      }
 
       setState({
         phase: "projecting",
-        checkoutIntentId: body.checkoutIntentId,
+        commandId: commandStatus.commandId,
+        checkoutIntentId: commandStatus.checkoutIntentId,
         message: messages.checkout.completing,
       });
 
-      const completeResponse = await fetch(
-        `/api/internal/checkout-intents/${body.checkoutIntentId}/complete-demo`,
-        {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-          },
-        },
-      );
-
-      if (!completeResponse.ok) {
-        throw new Error(await readError(completeResponse));
-      }
-
       await processProjections();
-      const completedStatus = await waitForCheckoutStatus(body.checkoutIntentId);
+      const completedStatus = await waitForCheckoutStatus(commandStatus.checkoutIntentId);
 
       setState({
-        phase: "completed",
-        checkoutIntentId: body.checkoutIntentId,
+        phase: "ready",
+        commandId: commandStatus.commandId,
+        checkoutIntentId: commandStatus.checkoutIntentId,
         status: completedStatus.status,
         message: statusMessage(completedStatus, normalizedLocale),
       });
       onCompleted?.();
       router.refresh();
-      router.push(`/checkout-complete/${body.checkoutIntentId}`);
+      router.push(`/checkout-complete/${commandStatus.checkoutIntentId}`);
     } catch (error) {
       console.error("checkout_action_failed", error);
       setState({
         phase: "error",
-        message: messages.checkout.failed,
+        message:
+          error instanceof Error && error.message.trim().length > 0
+            ? error.message
+            : messages.checkout.failed,
       });
     }
   }
 
-  const disabled = disabledProp || state.phase === "submitting" || state.phase === "projecting";
-  const busy = state.phase === "submitting" || state.phase === "projecting";
+  const disabled =
+    disabledProp ||
+    state.phase === "submitting" ||
+    state.phase === "projecting" ||
+    state.phase === "polling";
+  const busy =
+    state.phase === "submitting" ||
+    state.phase === "projecting" ||
+    state.phase === "polling";
 
   return (
     <div className="checkout-demo">
@@ -209,7 +199,7 @@ export function CheckoutAction({
 }
 
 async function processProjections() {
-  await fetch("/api/internal/projections/process", {
+  const response = await fetch("/api/internal/projections/process", {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -219,36 +209,61 @@ async function processProjections() {
       batchSize: 100,
     }),
   });
+
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
+
+  const body = (await response.json()) as {
+    locked: boolean;
+  };
+
+  if (!body.locked) {
+    throw new Error("Projection processing is busy. Please try again.");
+  }
 }
 
 async function waitForCheckoutStatus(checkoutIntentId: string) {
-  for (let attempt = 0; attempt < 8; attempt += 1) {
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    await processProjections();
+
     const response = await fetch(`/api/checkout-intents/${checkoutIntentId}`, {
       cache: "no-store",
     });
 
     if (response.ok) {
       const body = (await response.json()) as CheckoutStatusResponse;
-
-      if (
-        ["confirmed", "rejected", "cancelled", "expired", "pending_payment"].includes(body.status)
-      ) {
-        return body;
-      }
+      return body;
     }
 
-    await new Promise((resolve) => window.setTimeout(resolve, 350));
+    await new Promise((resolve) => window.setTimeout(resolve, 250));
   }
 
-  const response = await fetch(`/api/checkout-intents/${checkoutIntentId}`, {
-    cache: "no-store",
-  });
+  throw new Error("Checkout intent projection did not become available in time.");
+}
 
-  if (!response.ok) {
-    throw new Error(await readError(response));
+async function waitForBuyIntentCommandStatus(commandId: string) {
+  const deadline = Date.now() + 30_000;
+
+  while (Date.now() < deadline) {
+    const response = await fetch(`/api/buy-intent-commands/${commandId}`, {
+      cache: "no-store",
+    });
+
+    if (!response.ok) {
+      throw new Error(await readError(response));
+    }
+
+    const body = (await response.json()) as BuyIntentCommandStatusResponse;
+
+    if (body.status === "created" || body.status === "failed") {
+      return body;
+    }
+
+    await new Promise((resolve) => window.setTimeout(resolve, 250));
   }
 
-  return (await response.json()) as CheckoutStatusResponse;
+  throw new Error("Buy intent command did not complete in time.");
 }
 
 function statusMessage(body: CheckoutStatusResponse, locale: BuyerLocale) {

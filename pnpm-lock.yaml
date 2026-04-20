@@ -17,6 +17,9 @@ importers:
       '@temporalio/workflow':
         specifier: 1.13.0
         version: 1.13.0
+      ajv:
+        specifier: ^8.17.1
+        version: 8.18.0
       drizzle-orm:
         specifier: ^0.45.2
         version: 0.45.2(@types/pg@8.20.0)(pg@8.20.0)

@@ -55,7 +55,10 @@ describe("async buy-intent command flow integration", () => {
       truncate table
         staging_buy_intent_command,
         command_status,
-        event_store
+        event_store,
+        checkout_intent_projection,
+        order_projection,
+        projection_checkpoint
       restart identity
     `);
   });

@@ -1,5 +1,6 @@
 import type { Pool } from "pg";
 
+import { assertValidBuyIntentCommandContract } from "@/src/contracts/buy-intent-command-contract";
 import { createPostgresBuyIntentCommandGateway } from "@/src/infrastructure/checkout-command/postgres-buy-intent-command-gateway";
 import type { BuyIntentCommandBus } from "@/src/ports/buy-intent-command-bus";
 
@@ -8,6 +9,7 @@ export function createPostgresBuyIntentCommandBus(pool: Pool): BuyIntentCommandB
 
   return {
     async publish(command) {
+      assertValidBuyIntentCommandContract(command);
       await gateway.stage(command);
     },
   };

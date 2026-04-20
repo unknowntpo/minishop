@@ -25,6 +25,8 @@
 - [ ] 3.4 Capture the Temporal versus plain workers trade-off in a form that can be reused in architecture communication
 - [ ] 3.5 Capture the decision to prefer a Go Temporal worker over a long-term TypeScript Temporal worker, including the runtime-complexity versus contract-discipline trade-off
 - [ ] 3.6 Define separate deployable/runtime boundaries for app, backend workers, and the Temporal orchestration worker
+- [ ] 3.7 Capture the Temporal versus telemetry distinction, including why tracing is required but does not replace workflow orchestration
+- [ ] 3.8 Capture the explicit criteria for removing Temporal later if the backend remains a short-lived queue-and-merge pipeline
 
 ## 4. Rollout and Observability
 
