@@ -1609,8 +1609,8 @@ button.design-preview {
 .benchmark-plot-value {
   position: absolute;
   left: 50%;
-  top: -4px;
-  transform: translate(-50%, -6px);
+  top: -16px;
+  transform: translate(-50%, -8px);
   opacity: 0;
   pointer-events: none;
   padding: 2px 6px;
@@ -1629,7 +1629,7 @@ button.design-preview {
 .benchmark-plot-column:hover .benchmark-plot-value,
 .benchmark-plot-column:focus-visible .benchmark-plot-value {
   opacity: 1;
-  transform: translate(-50%, -10px);
+  transform: translate(-50%, -14px);
 }
 
 .benchmark-plot-bar {

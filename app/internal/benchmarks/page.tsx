@@ -975,7 +975,6 @@ function ComparisonChart({
             <span
               className="benchmark-plot-column"
               key={run.artifactFile}
-              title={hoverText}
               aria-label={hoverText}
               tabIndex={0}
             >
@@ -983,7 +982,6 @@ function ComparisonChart({
               <span
                 className={run.pass ? "benchmark-plot-bar" : "benchmark-plot-bar failed"}
                 style={{ height }}
-                title={hoverText}
               />
               <code>{displayRunShortName(run, index + 1)}</code>
             </span>
