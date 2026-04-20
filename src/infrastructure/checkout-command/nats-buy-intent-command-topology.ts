@@ -18,6 +18,8 @@ export type NatsBuyIntentCommandTopologyOptions = {
   servers: string;
   streamName: string;
   subject: string;
+  retrySubject?: string;
+  dlqSubject?: string;
   durableConsumer?: string;
   ackWaitMs?: number;
   maxDeliver?: number;
@@ -62,7 +64,7 @@ export async function ensureBuyIntentCommandStream(
   } catch {
     await jsm.streams.add({
       name: options.streamName,
-      subjects: [options.subject],
+      subjects: getBuyIntentCommandSubjects(options),
       retention: RetentionPolicy.Limits,
       storage: StorageType.File,
     });
@@ -102,4 +104,14 @@ export async function ensureBuyIntentCommandConsumer(
   }
 
   ensuredConsumers.add(key);
+}
+
+function getBuyIntentCommandSubjects(options: NatsBuyIntentCommandTopologyOptions) {
+  return [
+    ...new Set(
+      [options.subject, options.retrySubject, options.dlqSubject].filter(
+        (subject): subject is string => typeof subject === "string" && subject.length > 0,
+      ),
+    ),
+  ];
 }

@@ -11,6 +11,8 @@ type NatsBuyIntentCommandBusOptions = {
   servers: string;
   streamName: string;
   subject: string;
+  retrySubject?: string;
+  dlqSubject?: string;
 };
 
 export function createNatsBuyIntentCommandBus(

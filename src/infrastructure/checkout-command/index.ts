@@ -18,5 +18,7 @@ export const buyIntentCommandBus: BuyIntentCommandBus = process.env.NATS_URL?.tr
       servers: process.env.NATS_URL,
       streamName: process.env.NATS_BUY_INTENT_STREAM?.trim() || "BUY_INTENT_COMMANDS",
       subject: process.env.NATS_BUY_INTENT_SUBJECT?.trim() || "buy-intent.command",
+      retrySubject: process.env.NATS_BUY_INTENT_RETRY_SUBJECT?.trim() || "buy-intent.retry",
+      dlqSubject: process.env.NATS_BUY_INTENT_DLQ_SUBJECT?.trim() || "buy-intent.dlq",
     })
   : postgresBuyIntentCommandBus;
