@@ -22,7 +22,9 @@ export function createNatsBuyIntentCommandBus(
     async publish(command) {
       const js = await getJetStreamClient(options.servers);
       await ensureBuyIntentCommandStream(options);
-      await js.publish(options.subject, buyIntentCommandCodec.encode(command));
+      await js.publish(options.subject, buyIntentCommandCodec.encode(command), {
+        msgID: command.command_id,
+      });
     },
   };
 }
