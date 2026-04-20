@@ -3,6 +3,7 @@ import { type NextRequest, NextResponse } from "next/server";
 import { acceptBuyIntentCommand } from "@/src/application/checkout/accept-buy-intent-command";
 import {
   buyIntentCommandBus,
+  buyIntentCommandOrchestrator,
   postgresBuyIntentCommandGateway,
 } from "@/src/infrastructure/checkout-command";
 import { systemClock } from "@/src/ports/clock";
@@ -41,6 +42,7 @@ export async function POST(request: NextRequest) {
       {
         gateway: postgresBuyIntentCommandGateway,
         bus: buyIntentCommandBus,
+        orchestrator: buyIntentCommandOrchestrator,
         idGenerator: cryptoIdGenerator,
         clock: systemClock,
       },

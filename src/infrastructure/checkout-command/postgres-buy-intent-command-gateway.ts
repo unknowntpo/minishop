@@ -1,5 +1,3 @@
-import "server-only";
-
 import type { Pool, PoolClient } from "pg";
 
 import type { BuyIntentCommand } from "@/src/domain/checkout-command/buy-intent-command";

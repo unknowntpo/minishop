@@ -1,5 +1,3 @@
-import "server-only";
-
 import type { Pool, PoolClient } from "pg";
 import { applyProjectionEvent } from "@/src/infrastructure/projections/postgres-projection-writer";
 import type { StoredEvent } from "@/src/ports/event-store";

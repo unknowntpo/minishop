@@ -1,5 +1,3 @@
-import "server-only";
-
 import type { Pool } from "pg";
 
 import { type DomainEvent, isDomainEvent } from "@/src/domain/events/domain-event";

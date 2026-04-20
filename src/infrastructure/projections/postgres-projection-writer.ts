@@ -1,5 +1,3 @@
-import "server-only";
-
 import type { PoolClient } from "pg";
 
 import type { CheckoutItem } from "@/src/domain/checkout/item";

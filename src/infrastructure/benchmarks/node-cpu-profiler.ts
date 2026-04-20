@@ -1,5 +1,3 @@
-import "server-only";
-
 import inspector from "node:inspector";
 
 type CpuProfile = {

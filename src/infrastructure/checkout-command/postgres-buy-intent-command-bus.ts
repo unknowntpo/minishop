@@ -1,5 +1,3 @@
-import "server-only";
-
 import type { Pool } from "pg";
 
 import { createPostgresBuyIntentCommandGateway } from "@/src/infrastructure/checkout-command/postgres-buy-intent-command-gateway";

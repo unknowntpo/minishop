@@ -4,11 +4,13 @@ import { isEventMetadata } from "@/src/domain/events/event-metadata";
 import type { Clock } from "@/src/ports/clock";
 import type { BuyIntentCommandBus } from "@/src/ports/buy-intent-command-bus";
 import type { BuyIntentCommandGateway } from "@/src/ports/buy-intent-command-gateway";
+import type { BuyIntentCommandOrchestrator } from "@/src/ports/buy-intent-command-orchestrator";
 import type { IdGenerator } from "@/src/ports/id-generator";
 
 export type AcceptBuyIntentCommandDeps = {
   gateway: BuyIntentCommandGateway;
   bus: BuyIntentCommandBus;
+  orchestrator: BuyIntentCommandOrchestrator;
   idGenerator: IdGenerator;
   clock: Clock;
 };
@@ -35,6 +37,17 @@ export async function acceptBuyIntentCommand(
   } satisfies BuyIntentCommand;
 
   const accepted = await deps.gateway.createAccepted(command);
+
+  try {
+    await deps.orchestrator.start(command);
+  } catch (error) {
+    await deps.gateway.markPublishFailed({
+      commandId: command.command_id,
+      failureCode: "command_orchestration_failed",
+      failureMessage: error instanceof Error ? error.message : "Unknown orchestration failure.",
+    });
+    throw error;
+  }
 
   try {
     await deps.bus.publish(command);
