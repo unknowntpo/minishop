@@ -376,6 +376,11 @@ export default function InternalDesignSystemPage() {
           <div className="design-system-heading">
             <p className="eyebrow">Motion</p>
             <h2 id="motion-title">Transition and easing rules</h2>
+            <p className="muted">
+              TODO: fine-tune buyer navbar motion. Current overlay behavior is functionally aligned
+              across cart, profile, and utility menus, but the navbar-trigger motion still needs a
+              more satisfying open/close feel before it should be treated as final.
+            </p>
           </div>
           <div className="design-shape-grid">
             {motionTokens.map((item) => (
