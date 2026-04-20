@@ -31,6 +31,7 @@ export type StagedBuyIntentCommand = {
 export type BuyIntentCommandGateway = {
   createAccepted(command: BuyIntentCommand): Promise<AcceptedBuyIntentCommand>;
   readStatus(commandId: string): Promise<BuyIntentCommandStatusView | null>;
+  stage(command: BuyIntentCommand): Promise<void>;
   claimPendingBatch(input: { batchId: string; batchSize: number }): Promise<StagedBuyIntentCommand[]>;
   markProcessing(commandId: string): Promise<void>;
   markPublishFailed(input: {

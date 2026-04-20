@@ -92,6 +92,8 @@ class FakeGateway implements BuyIntentCommandGateway {
     return null;
   }
 
+  async stage() {}
+
   async claimPendingBatch() {
     return [];
   }
