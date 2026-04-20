@@ -62,6 +62,53 @@ describe("processBuyIntentCommandBatch", () => {
       isDuplicate: false,
     });
   });
+
+  it("marks replayed event append as created with duplicate flag", async () => {
+    const gateway = new FakeGateway([
+      {
+        stagingId: 2,
+        commandId: "cmd_2",
+        correlationId: "corr_2",
+        idempotencyKey: "idem_same",
+        payload: {
+          command_id: "cmd_2",
+          correlation_id: "corr_2",
+          buyer_id: "buyer_2",
+          items: [
+            {
+              sku_id: "sku_hot_001",
+              quantity: 1,
+              unit_price_amount_minor: 1200,
+              currency: "TWD",
+            },
+          ],
+          idempotency_key: "idem_same",
+          metadata: {
+            request_id: "req_2",
+            trace_id: "trace_2",
+            source: "web",
+            actor_id: "buyer_2",
+          },
+          issued_at: "2026-04-20T03:10:00.000Z",
+        },
+      },
+    ]);
+
+    await processBuyIntentCommandBatch(
+      { batchSize: 10 },
+      {
+        gateway,
+        eventStore: new FakeEventStore(true),
+        idGenerator: fixedIds("batch_2", "checkout_2", "event_2"),
+        clock: { now: () => new Date("2026-04-20T03:10:00.000Z") },
+      },
+    );
+
+    expect(gateway.created[0]).toMatchObject({
+      commandId: "cmd_2",
+      isDuplicate: true,
+    });
+  });
 });
 
 class FakeGateway implements BuyIntentCommandGateway {
