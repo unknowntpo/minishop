@@ -58,15 +58,24 @@ function getRuntimeOrchestrator() {
     return sharedOrchestrator;
   }
 
+  const orchestratorMode = readRuntimeEnv("BUY_INTENT_COMMAND_ORCHESTRATOR_MODE") || "auto";
   const temporalAddress = readRuntimeEnv("TEMPORAL_ADDRESS");
 
-  sharedOrchestrator = temporalAddress
-    ? createTemporalBuyIntentCommandOrchestrator({
-        address: temporalAddress,
-        namespace: readRuntimeEnv("TEMPORAL_NAMESPACE") || undefined,
-        taskQueue: readRuntimeEnv("TEMPORAL_BUY_INTENT_TASK_QUEUE") || undefined,
-      })
-    : createNoopBuyIntentCommandOrchestrator();
+  if (orchestratorMode === "noop") {
+    sharedOrchestrator = createNoopBuyIntentCommandOrchestrator();
+    return sharedOrchestrator;
+  }
+
+  if (orchestratorMode === "temporal" || temporalAddress) {
+    sharedOrchestrator = createTemporalBuyIntentCommandOrchestrator({
+      address: temporalAddress,
+      namespace: readRuntimeEnv("TEMPORAL_NAMESPACE") || undefined,
+      taskQueue: readRuntimeEnv("TEMPORAL_BUY_INTENT_TASK_QUEUE") || undefined,
+    });
+    return sharedOrchestrator;
+  }
+
+  sharedOrchestrator = createNoopBuyIntentCommandOrchestrator();
 
   return sharedOrchestrator;
 }

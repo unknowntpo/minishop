@@ -45,6 +45,7 @@
     "benchmark:checkout:postgres:cart:reset": "BENCHMARK_RESET=1 BENCHMARK_WORKLOAD_TYPE=multi_sku_cart_checkout tsx scripts/run-checkout-postgres-benchmark.ts",
     "benchmark:checkout:postgres:sweep": "tsx scripts/run-checkout-postgres-sweep.ts",
     "benchmark:buy-intent:temporal": "tsx scripts/benchmark-buy-intent-temporal.ts",
+    "benchmark:buy-intent:compare": "tsx scripts/run-buy-intent-benchmark-compare.ts",
     "benchmark:compose:up": "docker compose -p minishop-benchmark -f docker-compose.yml -f docker-compose.benchmark.yml up -d --build benchmark-postgres benchmark-app",
     "benchmark:compose:down": "docker compose -p minishop-benchmark -f docker-compose.yml -f docker-compose.benchmark.yml down -v --remove-orphans",
     "benchmark:compose:baseline": "docker compose -p minishop-benchmark -f docker-compose.yml -f docker-compose.benchmark.yml run --build --rm benchmark-runner pnpm benchmark:checkout:postgres:reset",

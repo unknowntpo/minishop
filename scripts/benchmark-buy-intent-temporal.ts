@@ -15,6 +15,7 @@ type BenchmarkConfig = {
   runId: string;
   resultsDir: string;
   scenarioName: string;
+  mode: "temporal" | "bypass";
 };
 
 type AcceptResult = {
@@ -88,63 +89,57 @@ async function main() {
     accepted.map((result) => [result.commandId, result.acceptedAtMs] as const),
   );
 
-  const pendingPaymentResults = await Promise.all(
+  const displayReadyResults = await Promise.all(
     createdResults
       .filter((result) => typeof result.checkoutIntentId === "string" && result.checkoutIntentId.length > 0)
       .map((result) =>
         waitForCheckoutStatus(
           result.checkoutIntentId as string,
           acceptedAtByCommandId.get(result.commandId) ?? performance.now(),
-          (status) => status === "pending_payment" || status === "rejected",
-          "pending_payment or rejected",
+          (status) =>
+            config.mode === "temporal"
+              ? status === "pending_payment" || status === "rejected"
+              : status === "queued",
+          config.mode === "temporal" ? "pending_payment or rejected" : "queued",
         ),
       ),
   );
 
-  const pendingPaymentCheckouts = pendingPaymentResults.filter(
-    (result) => result.status === "pending_payment",
-  );
-  const signalStartedAt = performance.now();
-  const paymentSignalResults = await runWithConcurrency(
-    pendingPaymentCheckouts.length,
-    config.httpConcurrency,
-    async (index) => {
-      const checkout = pendingPaymentCheckouts[index];
+  const pendingPaymentCheckouts =
+    config.mode === "temporal"
+      ? displayReadyResults.filter((result) => result.status === "pending_payment")
+      : [];
+  const paymentSignalRun =
+    config.mode === "temporal"
+      ? await runPaymentFailureSignals(pendingPaymentCheckouts, createdResults)
+      : { results: [], durationMs: 0 };
+  const paymentSignalResults = paymentSignalRun.results;
+  const signalDurationMs = paymentSignalRun.durationMs;
 
-      if (!checkout) {
-        throw new Error(`Missing checkout for payment signal index ${index}.`);
-      }
+  const cancelledResults =
+    config.mode === "temporal"
+      ? await Promise.all(
+          paymentSignalResults.map((signalResult) => {
+            const checkout = pendingPaymentCheckouts.find((entry) => {
+              const command = createdResults.find(
+                (result) => result.checkoutIntentId === entry.checkoutIntentId,
+              );
+              return command?.commandId === signalResult.commandId;
+            });
 
-      const command = createdResults.find((result) => result.checkoutIntentId === checkout.checkoutIntentId);
+            if (!checkout) {
+              throw new Error(`Missing checkout for payment signal command ${signalResult.commandId}.`);
+            }
 
-      if (!command) {
-        throw new Error(`Missing command for checkout ${checkout.checkoutIntentId}.`);
-      }
-
-      return failPayment(command.commandId);
-    },
-  );
-  const signalDurationMs = performance.now() - signalStartedAt;
-
-  const cancelledResults = await Promise.all(
-    paymentSignalResults.map((signalResult) => {
-      const checkout = pendingPaymentCheckouts.find((entry) => {
-        const command = createdResults.find((result) => result.checkoutIntentId === entry.checkoutIntentId);
-        return command?.commandId === signalResult.commandId;
-      });
-
-      if (!checkout) {
-        throw new Error(`Missing checkout for payment signal command ${signalResult.commandId}.`);
-      }
-
-      return waitForCheckoutStatus(
-        checkout.checkoutIntentId,
-        signalResult.signaledAtMs,
-        (status) => status === "cancelled" || status === "expired",
-        "cancelled or expired",
-      );
-    }),
-  );
+            return waitForCheckoutStatus(
+              checkout.checkoutIntentId,
+              signalResult.signaledAtMs,
+              (status) => status === "cancelled" || status === "expired",
+              "cancelled or expired",
+            );
+          }),
+        )
+      : [];
 
   const natsSnapshot = await readNatsSnapshot();
   const finishedAtIso = new Date().toISOString();
@@ -172,6 +167,7 @@ async function main() {
       unitPriceAmountMinor: config.unitPriceAmountMinor,
       currency: config.currency,
       startingInventoryAvailable: inventory.available,
+      mode: config.mode,
     },
     requestPath: {
       accepted: accepted.length,
@@ -191,11 +187,13 @@ async function main() {
       createdThroughputPerSecond: ratePerSecond(createdResults.length, Math.max(...createdResults.map((result) => result.latencyMs))),
     },
     checkoutLifecycle: {
-      pendingPayment: pendingPaymentResults.filter((result) => result.status === "pending_payment").length,
-      rejected: pendingPaymentResults.filter((result) => result.status === "rejected").length,
-      pendingPaymentLatencyMs: summarizeLatencies(
-        pendingPaymentResults.map((result) => result.latencyMs),
+      displayReadyStatusDistribution: countBy(displayReadyResults, (result) => result.status),
+      displayReadyLatencyMs: summarizeLatencies(
+        displayReadyResults.map((result) => result.latencyMs),
       ),
+      pendingPayment: displayReadyResults.filter((result) => result.status === "pending_payment").length,
+      rejected: displayReadyResults.filter((result) => result.status === "rejected").length,
+      queued: displayReadyResults.filter((result) => result.status === "queued").length,
       paymentFailureSignals: paymentSignalResults.length,
       paymentSignalDurationMs: Math.round(signalDurationMs),
       paymentSignalRequestsPerSecond: ratePerSecond(paymentSignalResults.length, signalDurationMs),
@@ -210,8 +208,12 @@ async function main() {
     },
     nats: natsSnapshot,
     notes: [
-      "This benchmark measures the current async buy-intent + Temporal + pending_payment demo path.",
-      "The benchmark intentionally uses payment failure signals so reserved inventory is released after each run.",
+      config.mode === "temporal"
+        ? "This benchmark measures the current async buy-intent + Temporal + pending_payment demo path."
+        : "This benchmark measures the async buy-intent path with Temporal orchestration bypassed and a Node merge loop instead.",
+      config.mode === "temporal"
+        ? "The benchmark intentionally uses payment failure signals so reserved inventory is released after each run."
+        : "Bypass mode stops at CheckoutIntentCreated and queued projection state, so no payment signal or reservation release work is included.",
     ],
   };
 
@@ -375,6 +377,38 @@ async function failPayment(commandId: string): Promise<PaymentSignalResult> {
     status: response.status,
     latencyMs: performance.now() - startedAt,
     signaledAtMs: performance.now(),
+  };
+}
+
+async function runPaymentFailureSignals(
+  pendingPaymentCheckouts: CheckoutResult[],
+  createdResults: CreatedResult[],
+) {
+  const signalStartedAt = performance.now();
+  const results = await runWithConcurrency(
+    pendingPaymentCheckouts.length,
+    config.httpConcurrency,
+    async (index) => {
+      const checkout = pendingPaymentCheckouts[index];
+
+      if (!checkout) {
+        throw new Error(`Missing checkout for payment signal index ${index}.`);
+      }
+
+      const command = createdResults.find((result) => result.checkoutIntentId === checkout.checkoutIntentId);
+
+      if (!command) {
+        throw new Error(`Missing command for checkout ${checkout.checkoutIntentId}.`);
+      }
+
+      return failPayment(command.commandId);
+    },
+  );
+
+  const durationMs = performance.now() - signalStartedAt;
+  return {
+    results,
+    durationMs,
   };
 }
 
@@ -545,8 +579,25 @@ function readConfig(): BenchmarkConfig {
     buyerPrefix: process.env.BENCHMARK_BUYER_PREFIX ?? "benchmark_buyer_temporal",
     runId: process.env.BENCHMARK_RUN_ID ?? `bench_${Date.now()}`,
     resultsDir: process.env.BENCHMARK_RESULTS_DIR ?? "benchmark-results",
-    scenarioName: process.env.BENCHMARK_SCENARIO_NAME ?? "buy-intent-temporal-payment-fail",
+    scenarioName:
+      process.env.BENCHMARK_SCENARIO_NAME ??
+      (readMode() === "temporal" ? "buy-intent-temporal-payment-fail" : "buy-intent-bypass-created"),
+    mode: readMode(),
   };
+}
+
+function readMode(): "temporal" | "bypass" {
+  const raw = process.env.BENCHMARK_TEMPORAL_MODE?.trim();
+
+  if (!raw || raw === "temporal") {
+    return "temporal";
+  }
+
+  if (raw === "bypass") {
+    return "bypass";
+  }
+
+  throw new Error("BENCHMARK_TEMPORAL_MODE must be temporal or bypass.");
 }
 
 function readPositiveIntegerEnv(name: string, fallback: number) {

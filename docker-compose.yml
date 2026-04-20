@@ -80,6 +80,7 @@ services:
       NATS_BUY_INTENT_INGEST_RETRY_DELAY_MS: ${NATS_BUY_INTENT_INGEST_RETRY_DELAY_MS:-1000}
       NATS_BUY_INTENT_ACK_WAIT_MS: ${NATS_BUY_INTENT_ACK_WAIT_MS:-30000}
       NATS_BUY_INTENT_INGEST_CONTINUOUS: ${NATS_BUY_INTENT_INGEST_CONTINUOUS:-0}
+      BUY_INTENT_COMMAND_ORCHESTRATOR_MODE: ${BUY_INTENT_COMMAND_ORCHESTRATOR_MODE:-auto}
       TEMPORAL_ADDRESS: temporal:7233
       TEMPORAL_NAMESPACE: ${TEMPORAL_NAMESPACE:-default}
       TEMPORAL_BUY_INTENT_TASK_QUEUE: ${TEMPORAL_BUY_INTENT_TASK_QUEUE:-buy-intent-command-orchestration}
@@ -137,6 +138,23 @@ services:
       BUY_INTENT_BATCH_SIZE: ${BUY_INTENT_BATCH_SIZE:-100}
       BUY_INTENT_PROCESS_POLL_INTERVAL_MS: ${BUY_INTENT_PROCESS_POLL_INTERVAL_MS:-1000}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+
+  worker-buy-intents-process:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: minishop-worker-buy-intents-process
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/minishop
+      BUY_INTENT_COMMAND_ORCHESTRATOR_MODE: ${BUY_INTENT_COMMAND_ORCHESTRATOR_MODE:-noop}
+      BUY_INTENT_BATCH_SIZE: ${BUY_INTENT_BATCH_SIZE:-100}
+      BUY_INTENT_PROCESS_POLL_INTERVAL_MS: ${BUY_INTENT_PROCESS_POLL_INTERVAL_MS:-1000}
+      NEXT_TELEMETRY_DISABLED: "1"
+    command: ["pnpm", "worker:buy-intents:process:loop"]
 
   worker-projections:
     build:
