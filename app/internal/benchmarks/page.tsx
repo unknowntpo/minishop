@@ -557,8 +557,8 @@ export default async function InternalBenchmarksPage({
                   valueFor={(point) => point.acceptedRate * 100}
                 />
                 <LaneMetricChart
-                  description="Ingress throughput by concurrency step inside the same architecture lane."
-                  label="request/sec"
+                  description={ingressMetricDescription(capacityScenarioName)}
+                  label={ingressMetricLabel(capacityScenarioName)}
                   lanes={architectureLanes}
                   unit="/s"
                   valueFor={(point) => point.requestsPerSecond}
@@ -571,8 +571,8 @@ export default async function InternalBenchmarksPage({
                   valueFor={(point) => point.p95LatencyMs}
                 />
                 <LaneMetricChart
-                  description="Durable append throughput across concurrency steps in the same architecture lane."
-                  label="append/sec"
+                  description={throughputMetricDescription(capacityScenarioName)}
+                  label={throughputMetricLabel(capacityScenarioName)}
                   lanes={architectureLanes}
                   unit="/s"
                   valueFor={(point) => point.appendPerSecond}
@@ -608,7 +608,7 @@ export default async function InternalBenchmarksPage({
                     <th>Accepted</th>
                     <th>Errors</th>
                     <th>p95</th>
-                    <th>Append/sec</th>
+                    <th>Throughput</th>
                     <th>Lag</th>
                     <th>Profiling</th>
                     <th>Status</th>
@@ -633,7 +633,7 @@ export default async function InternalBenchmarksPage({
                       <td>{formatNumber(run.requestPath?.accepted)}</td>
                       <td>{formatNumber(run.requestPath?.errors)}</td>
                       <td>{formatNumber(readRequestP95(run))}ms</td>
-                      <td>{formatNumber(readAppendThroughputPerSecond(run))}</td>
+                      <td>{formatPrimaryThroughput(run)}</td>
                       <td>{formatNumber(readProjectionLagEvents(run))}</td>
                       <td>{renderProfilingEvidence(run)}</td>
                       <td>
@@ -802,10 +802,10 @@ function RunComparison({
           valueFor={(run) => Math.round(readAcceptedRate(run) * 100)}
         />
         <ComparisonChart
-          definition="HTTP requests completed per second by the benchmark client during the request burst."
-          calculation="total requests / request burst duration seconds"
-          interpretation="Read this with accepted rate and errors. Higher is only better when success remains stable."
-          label="request/sec"
+          definition={ingressMetricDefinition(scenarioName)}
+          calculation={ingressMetricCalculation(scenarioName)}
+          interpretation={ingressMetricInterpretation(scenarioName)}
+          label={ingressMetricLabel(scenarioName)}
           runs={runs}
           unit="/s"
           valueFor={(run) => readRequestsPerSecond(run)}
@@ -820,10 +820,10 @@ function RunComparison({
           valueFor={(run) => readRequestP95(run)}
         />
         <ComparisonChart
-          definition="Durable event append throughput. It tracks how quickly accepted work became event_store facts."
-          calculation="appendedEvents / request burst duration seconds"
-          interpretation="Compare this with request/sec. If append/sec lags far behind ingress, persistence is the bottleneck."
-          label="append/sec"
+          definition={throughputMetricDefinition(scenarioName)}
+          calculation={throughputMetricCalculation(scenarioName)}
+          interpretation={throughputMetricInterpretation(scenarioName)}
+          label={throughputMetricLabel(scenarioName)}
           runs={runs}
           unit="/s"
           valueFor={(run) => readAppendThroughputPerSecond(run)}
@@ -883,7 +883,7 @@ function SelectedRunPanel({
           accepted: formatNumber(run.requestPath?.accepted),
           errors: formatNumber(run.requestPath?.errors),
           "p95 latency": `${formatNumber(readRequestP95(run))}ms`,
-          "append/sec": formatNumber(readAppendThroughputPerSecond(run)),
+          [throughputMetricLabelForRun(run)]: formatNumber(readAppendThroughputPerSecond(run)),
           "projection lag": formatNumber(readProjectionLagEvents(run)),
           profiling: run.profiling?.status ?? "disabled",
         }}
@@ -1249,6 +1249,90 @@ function readCheckoutStatusDistribution(run: BenchmarkRun) {
     run.checkoutLifecycle?.resolvedStatusDistribution ??
     run.checkoutLifecycle?.displayReadyStatusDistribution
   );
+}
+
+function isBuyIntentScenarioName(scenarioName?: string) {
+  return Boolean(scenarioName?.startsWith("buy-intent-"));
+}
+
+function throughputMetricLabel(scenarioName?: string) {
+  return isBuyIntentScenarioName(scenarioName) ? "buyIntent created/sec" : "append/sec";
+}
+
+function throughputMetricLabelForRun(run: BenchmarkRun) {
+  return throughputMetricLabel(scenarioNameFor(run));
+}
+
+function ingressMetricLabel(scenarioName?: string) {
+  return isBuyIntentScenarioName(scenarioName) ? "accept/sec" : "request/sec";
+}
+
+function ingressMetricDescription(scenarioName?: string) {
+  if (isBuyIntentScenarioName(scenarioName)) {
+    return "Accepted buy-intent commands per second at the HTTP ingress boundary.";
+  }
+
+  return "Ingress throughput by concurrency step inside the same architecture lane.";
+}
+
+function ingressMetricDefinition(scenarioName?: string) {
+  if (isBuyIntentScenarioName(scenarioName)) {
+    return "Accepted buy-intent ingress throughput. It tracks how quickly the API admitted buy-intent work.";
+  }
+
+  return "HTTP requests completed per second by the benchmark client during the request burst.";
+}
+
+function ingressMetricCalculation(scenarioName?: string) {
+  if (isBuyIntentScenarioName(scenarioName)) {
+    return "acceptedCommands / accept duration seconds";
+  }
+
+  return "total requests / request burst duration seconds";
+}
+
+function ingressMetricInterpretation(scenarioName?: string) {
+  if (isBuyIntentScenarioName(scenarioName)) {
+    return "This is the fast ingress metric. Compare it with buyIntent created/sec to see how much slower durable processing is than acceptance.";
+  }
+
+  return "Read this with accepted rate and errors. Higher is only better when success remains stable.";
+}
+
+function throughputMetricDescription(scenarioName?: string) {
+  if (isBuyIntentScenarioName(scenarioName)) {
+    return "Buy-intent commands reaching created across concurrency steps in the same architecture lane.";
+  }
+
+  return "Durable append throughput across concurrency steps in the same architecture lane.";
+}
+
+function throughputMetricDefinition(scenarioName?: string) {
+  if (isBuyIntentScenarioName(scenarioName)) {
+    return "Buy-intent command creation throughput. It tracks how quickly accepted work reached command status created.";
+  }
+
+  return "Durable event append throughput. It tracks how quickly accepted work became event_store facts.";
+}
+
+function throughputMetricCalculation(scenarioName?: string) {
+  if (isBuyIntentScenarioName(scenarioName)) {
+    return "createdCommands / created latency window seconds";
+  }
+
+  return "appendedEvents / request burst duration seconds";
+}
+
+function throughputMetricInterpretation(scenarioName?: string) {
+  if (isBuyIntentScenarioName(scenarioName)) {
+    return "Compare this with request/sec. If buyIntent created/sec lags far behind ingress, orchestration or merge progress is the bottleneck.";
+  }
+
+  return "Compare this with request/sec. If append/sec lags far behind ingress, persistence is the bottleneck.";
+}
+
+function formatPrimaryThroughput(run: BenchmarkRun) {
+  return `${throughputMetricLabelForRun(run)} ${formatNumber(readAppendThroughputPerSecond(run))}`;
 }
 
 function scenarioNameFor(run: BenchmarkRun) {
