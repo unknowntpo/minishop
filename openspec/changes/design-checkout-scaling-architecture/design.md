@@ -131,7 +131,7 @@ The final append semantics, validation, dedupe, and status transition happen in 
 
 The merge phase should be explicit. Whether implemented in a separate worker binary mode or in the same deployable process with a different role flag, the merge responsibility is distinct:
 
-- claim staging rows
+- process staged buy intent commands
 - validate payload and domain prerequisites
 - reuse existing append business logic
 - dedupe duplicate commands at the staging/merge boundary via `command_id`
@@ -213,6 +213,111 @@ This favors effectively-once business outcomes over stricter and more expensive 
    +--> projection worker
    +--> SSE / notification gateway (later)
    +--> analytics / downstream systems (optional later via Kafka)
+```
+
+### Write Path Diagram
+
+```text
++------------------------+        publish BuyIntentCommand         +------------------------+
+|       Browser/UI       | -------------------------------------> |     Next.js App        |
+|------------------------|                                        |------------------------|
+| POST /api/buy-intents  | <------------------------------------- | 202 Accepted           |
++------------------------+      command_id + correlation_id       | command acceptance     |
+                                                                    +-----------+------------+
+                                                                                |
+                                                                                | publish command
+                                                                                v
+                                                                    +------------------------+
+                                                                    |   NATS JetStream       |
+                                                                    |------------------------|
+                                                                    | BUY_INTENT_COMMANDS    |
+                                                                    +-----------+------------+
+                                                                                |
+                                                                                | consume
+                                                                                v
+                                                                    +------------------------+
+                                                                    | worker-buy-intents-    |
+                                                                    | ingest                 |
+                                                                    |------------------------|
+                                                                    | NATS -> staging        |
+                                                                    +-----------+------------+
+                                                                                |
+                                                                                | insert raw command
+                                                                                v
++------------------------+                                      +------------------------+
+|     PostgreSQL         | <----------------------------------- | staging_buy_intent_    |
+|------------------------|                                      | command                |
+| command_status         |                                      |------------------------|
+| staging_buy_intent...  |                                      | payload_json           |
+| event_store            |                                      | ingest_status=pending  |
+| projection tables      |                                      +-----------+------------+
++-----------+------------+                                                  |
+            ^                                                               | process staged commands
+            |                                                               v
+            |                         +-------------------------------------+------------------+
+            |                         |                                                        |
+            |                         v                                                        v
+            |             +------------------------+                              +------------------------+
+            |             | worker-buy-intents-   |                              | worker-buy-intents-   |
+            |             | process (bypass lane) |                              | temporal              |
+            |             |------------------------|                              |------------------------|
+            |             | mark processing        |                              | workflow orchestration |
+            |             | append CheckoutIntent  |                              | append domain events   |
+            |             | update command_status  |                              | update command_status  |
+            |             +-----------+------------+                              +-----------+------------+
+            |                         |                                                       |
+            +-------------------------+-----------------------------+-------------------------+
+                                                              write created/failed
+```
+
+### Read Path Diagram
+
+```text
++------------------------+
+|       Browser / UI     |
+|------------------------|
+| poll projection        |
+| poll receipt/status    |
++-----------+------------+
+            |
+            | GET /api/checkout-intents/:id
+            | GET /api/buy-intent-commands/:id
+            v
++------------------------+
+|      Next.js App       |
+|------------------------|
+| query APIs             |
++-----------+------------+
+            |
+            | read models / status
+            v
++------------------------+           replay committed events        +------------------------+
+|      PostgreSQL        | <-------------------------------------- | worker-projections     |
+|------------------------|                                         |------------------------|
+| event_store            | --------------------------------------> | update read models     |
+| projection tables      |           read committed events         +-----------+------------+
+| command_status         |                                                     |
++------------------------+                                                     |
+                                                                 update projection tables
+```
+
+### Worker Responsibility Split
+
+```text
+worker-buy-intents-ingest
+  NATS -> staging_buy_intent_command
+
+worker-buy-intents-process
+  process staged buy intent commands
+  -> command_status + event_store              (bypass lane)
+
+worker-buy-intents-temporal
+  process staged buy intent commands
+  -> Temporal workflow
+  -> command_status + event_store
+
+worker-projections
+  event_store -> projection tables
 ```
 
 ## Contracts
