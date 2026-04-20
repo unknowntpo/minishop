@@ -71,6 +71,7 @@ type BenchmarkProfilingMetadata = {
 const config = readConfig();
 
 async function main() {
+  const startedAtIso = new Date().toISOString();
   await assertAppReachable(config.appUrl);
 
   const inventory = await readInventory(config.skuId);
@@ -85,15 +86,22 @@ async function main() {
   const profilingPlan = createProfilingPlan();
   let profiling = await maybeStartProfiling();
   const acceptStartedAt = performance.now();
+  let acceptResults: AcceptResult[] = [];
+  let accepted: Array<AcceptResult & { commandId: string; acceptedAtMs: number }> = [];
+  let createdResults: CreatedResult[] = [];
+  let displayReadyResults: CheckoutResult[] = [];
+  let paymentSignalResults: PaymentSignalResult[] = [];
+  let cancelledResults: CheckoutResult[] = [];
+  let acceptDurationMs = 0;
   try {
-    const acceptResults = await runWithConcurrency(
+    acceptResults = await runWithConcurrency(
       effectiveRequests,
       config.httpConcurrency,
       async (index) => createBuyIntent(index),
     );
-    const acceptDurationMs = performance.now() - acceptStartedAt;
+    acceptDurationMs = performance.now() - acceptStartedAt;
 
-    const accepted = acceptResults.filter(
+    accepted = acceptResults.filter(
       (result): result is AcceptResult & { commandId: string; acceptedAtMs: number } =>
         result.ok && typeof result.commandId === "string" && typeof result.acceptedAtMs === "number",
     );
@@ -102,14 +110,14 @@ async function main() {
       throw new Error("No benchmark requests were accepted.");
     }
 
-    const createdResults = await Promise.all(
+    createdResults = await Promise.all(
       accepted.map((result) => waitForCreatedStatus(result.commandId, result.acceptedAtMs)),
     );
     const acceptedAtByCommandId = new Map(
       accepted.map((result) => [result.commandId, result.acceptedAtMs] as const),
     );
 
-    const displayReadyResults = await Promise.all(
+    displayReadyResults = await Promise.all(
       createdResults
         .filter(
           (result) => typeof result.checkoutIntentId === "string" && result.checkoutIntentId.length > 0,
@@ -135,10 +143,10 @@ async function main() {
       config.mode === "temporal"
         ? await runPaymentFailureSignals(pendingPaymentCheckouts, createdResults)
         : { results: [], durationMs: 0 };
-    const paymentSignalResults = paymentSignalRun.results;
+    paymentSignalResults = paymentSignalRun.results;
     const signalDurationMs = paymentSignalRun.durationMs;
 
-    const cancelledResults =
+    cancelledResults =
       config.mode === "temporal"
         ? await Promise.all(
             paymentSignalResults.map((signalResult) => {
@@ -263,6 +271,103 @@ async function main() {
     console.log(`Benchmark artifact written to ${artifactPath}`);
   } catch (error) {
     profiling = await maybeStopProfiling(profilingPlan, profiling);
+    const natsSnapshot = await readNatsSnapshot().catch(() => ({ available: false }));
+    const finishedAtIso = new Date().toISOString();
+    const failureMessage = error instanceof Error ? error.message : "unknown benchmark failure";
+    const artifactPath = await writeBenchmarkArtifact({
+      schemaVersion: 1,
+      pass: false,
+      scenarioName: config.scenarioName,
+      runId: config.runId,
+      startedAt: startedAtIso,
+      finishedAt: finishedAtIso,
+      environment: {
+        runtime: process.version,
+        platform: `${os.platform()} ${os.arch()}`,
+        cpuCount: os.cpus().length,
+        cpuModel: os.cpus()[0]?.model ?? "unknown",
+        totalMemoryBytes: os.totalmem(),
+        appUrl: config.appUrl,
+        skuId: config.skuId,
+      },
+      conditions: {
+        workload: {
+          scenarioName: config.scenarioName,
+          architectureLane: config.mode === "temporal" ? "temporal" : "bypass",
+          workloadType: "buy_intent_temporal_flow",
+          requestedBuyClicks: config.requests,
+          httpConcurrency: config.httpConcurrency,
+          skuId: config.skuId,
+          quantityPerIntent: 1,
+          profilingEnabled: config.profilingEnabled,
+        },
+        requestedBuyIntents: config.requests,
+        effectiveBuyIntents: effectiveRequests,
+        httpConcurrency: config.httpConcurrency,
+        buyerPrefix: config.buyerPrefix,
+        unitPriceAmountMinor: config.unitPriceAmountMinor,
+        currency: config.currency,
+        startingInventoryAvailable: inventory.available,
+        mode: config.mode,
+      },
+      requestPath: {
+        accepted: accepted.length,
+        errors: Math.max(acceptResults.length - accepted.length, 0),
+        acceptDurationMs: Math.round(acceptDurationMs),
+        acceptRequestsPerSecond: ratePerSecond(accepted.length, acceptDurationMs),
+        acceptLatencyMs: summarizeLatencies(acceptResults.map((result) => result.latencyMs)),
+        errorDistribution: countBy(
+          acceptResults.filter((result) => !result.ok),
+          (result) => result.error ?? `HTTP ${result.status}`,
+        ),
+      },
+      commandLifecycle: {
+        created: createdResults.filter((result) => result.status === "created").length,
+        duplicates: createdResults.filter((result) => result.isDuplicate).length,
+        createdLatencyMs: summarizeLatencies(createdResults.map((result) => result.latencyMs)),
+        createdThroughputPerSecond: ratePerSecond(
+          createdResults.length,
+          Math.max(...createdResults.map((result) => result.latencyMs), 1),
+        ),
+      },
+      checkoutLifecycle: {
+        displayReadyStatusDistribution: countBy(displayReadyResults, (result) => result.status),
+        displayReadyLatencyMs: summarizeLatencies(displayReadyResults.map((result) => result.latencyMs)),
+        pendingPayment: displayReadyResults.filter((result) => result.status === "pending_payment")
+          .length,
+        rejected: displayReadyResults.filter((result) => result.status === "rejected").length,
+        queued: displayReadyResults.filter((result) => result.status === "queued").length,
+        paymentFailureSignals: paymentSignalResults.length,
+        paymentSignalDurationMs: 0,
+        paymentSignalRequestsPerSecond: 0,
+        paymentSignalLatencyMs: summarizeLatencies(
+          paymentSignalResults.map((result) => result.latencyMs),
+        ),
+        resolved: cancelledResults.length,
+        resolvedStatusDistribution: countBy(cancelledResults, (result) => result.status),
+        resolutionLatencyMs: summarizeLatencies(cancelledResults.map((result) => result.latencyMs)),
+        resolutionThroughputPerSecond: 0,
+      },
+      profiling,
+      nats: natsSnapshot,
+      failure: {
+        message: failureMessage,
+        stage:
+          cancelledResults.length < paymentSignalResults.length
+            ? "resolution"
+            : paymentSignalResults.length < displayReadyResults.filter((result) => result.status === "pending_payment").length
+              ? "payment_signal"
+              : displayReadyResults.length < createdResults.filter((result) => result.checkoutIntentId).length
+                ? "display_ready"
+                : createdResults.length < accepted.length
+                  ? "created"
+                  : "accept",
+      },
+      notes: [
+        "This artifact was written from a failed benchmark run so the dashboard can still show partial progress and profiling evidence.",
+      ],
+    });
+    console.error(`Benchmark artifact written to ${artifactPath}`);
     throw error;
   }
 }
