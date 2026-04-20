@@ -2,6 +2,7 @@ import "dotenv/config";
 
 import { headers } from "nats";
 
+import { ingestBuyIntentCommandMessage } from "@/src/application/checkout/ingest-buy-intent-command-message";
 import {
   buyIntentCommandCodec,
   ensureBuyIntentCommandConsumer,
@@ -58,26 +59,44 @@ async function main() {
       emptyBatch = false;
       receivedCount += 1;
 
-      try {
-        const command = buyIntentCommandCodec.decode(message.data);
-        await postgresBuyIntentCommandGateway.stage(command);
-        message.ack();
-        stagedCount += 1;
-      } catch (error) {
-        if (isCodecError(error)) {
-          await js.publish(dlqSubject, message.data, {
-            headers: buildDlqHeaders({
-              reason: "invalid_buy_intent_command",
-              sourceSubject: message.subject,
-            }),
-          });
-          message.ack();
-          decodeFailedCount += 1;
-          continue;
-        }
+      const result = await ingestBuyIntentCommandMessage(
+        {
+          data: message.data,
+          sourceSubject: message.subject,
+        },
+        {
+          decode(data) {
+            return buyIntentCommandCodec.decode(data);
+          },
+          stage(command) {
+            return postgresBuyIntentCommandGateway.stage(command);
+          },
+          async publishDlq({ reason, sourceSubject, data }) {
+            await js.publish(dlqSubject, data, {
+              headers: buildDlqHeaders({
+                reason,
+                sourceSubject,
+              }),
+            });
+          },
+        },
+      );
 
+      if (result.outcome === "ack") {
+        message.ack();
+        if (result.staged) {
+          stagedCount += 1;
+        } else {
+          decodeFailedCount += 1;
+        }
+        continue;
+      }
+
+      try {
         message.nak(retryDelayMs);
         retriedCount += 1;
+      } catch (error) {
+        console.error("buy_intent_command_bus_nak_failed", error);
       }
     }
 
@@ -131,10 +150,6 @@ function readPositiveIntegerEnv(name: string, fallback: number) {
 function readBooleanEnv(name: string) {
   const value = process.env[name]?.trim().toLowerCase();
   return value === "1" || value === "true" || value === "yes";
-}
-
-function isCodecError(error: unknown) {
-  return error instanceof Error && /JSON|unexpected|invalid/i.test(error.message);
 }
 
 function buildDlqHeaders(input: { reason: string; sourceSubject: string }) {
