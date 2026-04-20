@@ -9,4 +9,7 @@ export const postgresCheckoutDemoRepository: CheckoutDemoRepository = {
   getSkuOnHand(skuId) {
     return createPostgresCheckoutDemoRepository(getPool()).getSkuOnHand(skuId);
   },
+  listQueuedCheckoutIntentIds(limit) {
+    return createPostgresCheckoutDemoRepository(getPool()).listQueuedCheckoutIntentIds(limit);
+  },
 };

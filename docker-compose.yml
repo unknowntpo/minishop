@@ -155,6 +155,22 @@ services:
       NEXT_TELEMETRY_DISABLED: "1"
     command: ["pnpm", "worker:projections"]
 
+  worker-checkout-intents:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: minishop-worker-checkout-intents
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/minishop
+      CHECKOUT_INTENT_BATCH_SIZE: ${CHECKOUT_INTENT_BATCH_SIZE:-20}
+      CHECKOUT_INTENT_POLL_INTERVAL_MS: ${CHECKOUT_INTENT_POLL_INTERVAL_MS:-1000}
+      NEXT_TELEMETRY_DISABLED: "1"
+    command: ["pnpm", "worker:checkout-intents"]
+
 volumes:
   minishop_postgres_data:
   minishop_nats_data:

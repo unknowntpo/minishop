@@ -55,7 +55,7 @@ async function main() {
   process.env.NATS_URL = natsUrl;
   process.env.NATS_BUY_INTENT_INGEST_CONTINUOUS = "1";
 
-  execSync("docker compose up -d --build --remove-orphans app worker-buy-intents-ingest worker-buy-intents-temporal worker-projections", {
+  execSync("docker compose up -d --build --remove-orphans app worker-buy-intents-ingest worker-buy-intents-temporal worker-projections worker-checkout-intents", {
     cwd: workdir,
     stdio: "inherit",
   });
@@ -80,16 +80,27 @@ async function main() {
     throw new Error("Replay command did not resolve to the original checkout intent.");
   }
 
-  const completionPage = await fetch(
-    `${appBaseUrl}/checkout-complete/${firstStatus.checkoutIntentId}`,
-  ).then((response) => response.text());
+  if (!firstStatus.checkoutIntentId) {
+    throw new Error("Created command did not include a checkout intent ID.");
+  }
+
+  const checkoutIntentId = firstStatus.checkoutIntentId;
+  const checkoutStatus = await waitForCheckoutStatus(appBaseUrl, checkoutIntentId);
+
+  if (checkoutStatus.status !== "confirmed") {
+    throw new Error(`Expected confirmed checkout status, got ${checkoutStatus.status}.`);
+  }
+
+  const completionPage = await fetch(`${appBaseUrl}/checkout-complete/${checkoutIntentId}`).then(
+    (response) => response.text(),
+  );
 
   if (!completionPage.includes(firstCommandId) && !completionPage.includes(secondCommandId)) {
     throw new Error("Completion page did not include any command id for the checkout intent.");
   }
 
-  if (!completionPage.includes("reservation")) {
-    throw new Error("Completion page did not include the queued checkout explanation.");
+  if (!completionPage.includes("confirmed")) {
+    throw new Error("Completion page did not include the confirmed checkout status.");
   }
 
   if (!completionPage.includes("created")) {
@@ -101,7 +112,8 @@ async function main() {
       {
         firstCommandId,
         secondCommandId,
-        checkoutIntentId: firstStatus.checkoutIntentId,
+        checkoutIntentId,
+        checkoutStatus: checkoutStatus.status,
         firstEventId: firstStatus.eventId,
         secondEventId: secondStatus.eventId,
       },
@@ -189,6 +201,43 @@ async function waitForCreatedStatus(
   }
 
   throw new Error(`Command ${commandId} did not reach created status in time.`);
+}
+
+async function waitForCheckoutStatus(baseUrl: string, checkoutIntentId: string) {
+  const deadline = Date.now() + 30_000;
+
+  while (Date.now() < deadline) {
+    const processResponse = await fetch(`${baseUrl}/api/internal/projections/process`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        projectionName: "main",
+        batchSize: 100,
+      }),
+    });
+
+    if (!processResponse.ok && processResponse.status !== 409) {
+      throw new Error(`Projection processing failed with ${processResponse.status}.`);
+    }
+
+    const response = await fetch(`${baseUrl}/api/checkout-intents/${checkoutIntentId}`);
+
+    if (response.ok) {
+      const body = (await response.json()) as {
+        status: string;
+      };
+
+      if (body.status !== "queued" && body.status !== "reserving") {
+        return body;
+      }
+    }
+
+    await sleep(250);
+  }
+
+  throw new Error(`Checkout intent ${checkoutIntentId} did not reach a display-ready status in time.`);
 }
 
 async function waitForPostgres(connectionString: string) {

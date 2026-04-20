@@ -9,4 +9,5 @@ export type DemoCheckoutIntent = {
 export type CheckoutDemoRepository = {
   findCheckoutIntent(checkoutIntentId: string): Promise<DemoCheckoutIntent | null>;
   getSkuOnHand(skuId: string): Promise<number | null>;
+  listQueuedCheckoutIntentIds(limit: number): Promise<string[]>;
 };

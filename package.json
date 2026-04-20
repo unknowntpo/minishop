@@ -36,6 +36,7 @@
     "worker:buy-intents:ingest:nats": "tsx scripts/ingest-buy-intent-command-bus.ts",
     "worker:buy-intents:process": "tsx scripts/process-buy-intent-command-batch.ts",
     "worker:buy-intents:process:loop": "tsx scripts/process-buy-intent-command-batch-loop.ts",
+    "worker:checkout-intents": "tsx scripts/process-checkout-intents-loop.ts",
     "worker:projections": "tsx scripts/process-projections-loop.ts",
     "worker:buy-intents:temporal": "tsx scripts/run-buy-intent-temporal-worker.ts",
     "benchmark:checkout:postgres:raw": "tsx scripts/benchmark-checkout-postgres.ts",

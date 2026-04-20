@@ -226,7 +226,9 @@ async function processProjections() {
 }
 
 async function waitForCheckoutStatus(checkoutIntentId: string) {
-  for (let attempt = 0; attempt < 12; attempt += 1) {
+  const deadline = Date.now() + 30_000;
+
+  while (Date.now() < deadline) {
     await processProjections();
 
     const response = await fetch(`/api/checkout-intents/${checkoutIntentId}`, {
@@ -235,13 +237,20 @@ async function waitForCheckoutStatus(checkoutIntentId: string) {
 
     if (response.ok) {
       const body = (await response.json()) as CheckoutStatusResponse;
-      return body;
+
+      if (hasCheckoutReachedDisplayState(body.status)) {
+        return body;
+      }
     }
 
     await new Promise((resolve) => window.setTimeout(resolve, 250));
   }
 
-  throw new Error("Checkout intent projection did not become available in time.");
+  throw new Error("Checkout intent did not finish progressing in time.");
+}
+
+function hasCheckoutReachedDisplayState(status: string) {
+  return status !== "queued" && status !== "reserving";
 }
 
 async function waitForBuyIntentCommandStatus(commandId: string) {
