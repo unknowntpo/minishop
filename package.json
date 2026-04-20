@@ -31,6 +31,7 @@
     "worker:buy-intents:ingest:nats": "tsx scripts/ingest-buy-intent-command-bus.ts",
     "worker:buy-intents:process": "tsx scripts/process-buy-intent-command-batch.ts",
     "worker:buy-intents:process:loop": "tsx scripts/process-buy-intent-command-batch-loop.ts",
+    "worker:buy-intents:temporal": "tsx scripts/run-buy-intent-temporal-worker.ts",
     "benchmark:checkout:postgres:raw": "tsx scripts/benchmark-checkout-postgres.ts",
     "benchmark:checkout:postgres": "tsx scripts/run-checkout-postgres-benchmark.ts",
     "benchmark:checkout:postgres:reset": "BENCHMARK_RESET=1 tsx scripts/run-checkout-postgres-benchmark.ts",
@@ -43,6 +44,9 @@
     "benchmark:compose:cart": "docker compose -p minishop-benchmark -f docker-compose.yml -f docker-compose.benchmark.yml run --build --rm benchmark-runner pnpm benchmark:checkout:postgres:cart:reset"
   },
   "dependencies": {
+    "@temporalio/client": "1.13.0",
+    "@temporalio/worker": "1.13.0",
+    "@temporalio/workflow": "1.13.0",
     "drizzle-orm": "^0.45.2",
     "nats": "^2.29.3",
     "next": "16.2.4",

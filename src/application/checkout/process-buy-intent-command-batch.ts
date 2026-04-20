@@ -1,11 +1,13 @@
 import { createCheckoutIntent } from "@/src/application/checkout/create-checkout-intent";
 import type { Clock } from "@/src/ports/clock";
 import type { BuyIntentCommandGateway } from "@/src/ports/buy-intent-command-gateway";
+import type { BuyIntentCommandOrchestrator } from "@/src/ports/buy-intent-command-orchestrator";
 import type { EventStore } from "@/src/ports/event-store";
 import type { IdGenerator } from "@/src/ports/id-generator";
 
 export type ProcessBuyIntentCommandBatchDeps = {
   gateway: BuyIntentCommandGateway;
+  orchestrator: BuyIntentCommandOrchestrator;
   eventStore: EventStore;
   idGenerator: IdGenerator;
   clock: Clock;
@@ -55,6 +57,7 @@ export async function processBuyIntentCommandBatch(
     }
 
     await deps.gateway.markProcessing(row.commandId);
+    await notifyProcessing(deps.orchestrator, row.commandId);
 
     try {
       const result = await createCheckoutIntent(
@@ -78,13 +81,25 @@ export async function processBuyIntentCommandBatch(
         eventId: result.eventId,
         isDuplicate: result.idempotentReplay,
       });
+      await notifyCreated(deps.orchestrator, {
+        commandId: row.commandId,
+        checkoutIntentId: result.checkoutIntentId,
+        eventId: result.eventId,
+        isDuplicate: result.idempotentReplay,
+      });
       createdCount += 1;
     } catch (error) {
+      const failureMessage = error instanceof Error ? error.message : "Unknown merge failure.";
       await deps.gateway.markFailed({
         stagingId: row.stagingId,
         commandId: row.commandId,
         failureCode: "merge_failed",
-        failureMessage: error instanceof Error ? error.message : "Unknown merge failure.",
+        failureMessage,
+      });
+      await notifyFailed(deps.orchestrator, {
+        commandId: row.commandId,
+        failureCode: "merge_failed",
+        failureMessage,
       });
       failedCount += 1;
     }
@@ -97,4 +112,53 @@ export async function processBuyIntentCommandBatch(
     failedCount,
     duplicateCommandCount,
   };
+}
+
+async function notifyProcessing(orchestrator: BuyIntentCommandOrchestrator, commandId: string) {
+  try {
+    await orchestrator.markProcessing(commandId);
+  } catch (error) {
+    console.error("buy_intent_command_orchestrator_mark_processing", {
+      commandId,
+      error,
+    });
+  }
+}
+
+async function notifyCreated(
+  orchestrator: BuyIntentCommandOrchestrator,
+  input: {
+    commandId: string;
+    checkoutIntentId: string;
+    eventId: string;
+    isDuplicate: boolean;
+  },
+) {
+  try {
+    await orchestrator.markCreated(input);
+  } catch (error) {
+    console.error("buy_intent_command_orchestrator_mark_created", {
+      commandId: input.commandId,
+      error,
+    });
+  }
+}
+
+async function notifyFailed(
+  orchestrator: BuyIntentCommandOrchestrator,
+  input: {
+    commandId: string;
+    failureCode: string;
+    failureMessage: string;
+  },
+) {
+  try {
+    await orchestrator.markFailed(input);
+  } catch (error) {
+    console.error("buy_intent_command_orchestrator_mark_failed", {
+      commandId: input.commandId,
+      failureCode: input.failureCode,
+      error,
+    });
+  }
 }

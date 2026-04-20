@@ -3,6 +3,7 @@ import { createNatsBuyIntentCommandBus } from "@/src/infrastructure/checkout-com
 import { createNoopBuyIntentCommandOrchestrator } from "@/src/infrastructure/checkout-command/noop-buy-intent-command-orchestrator";
 import { createPostgresBuyIntentCommandBus } from "@/src/infrastructure/checkout-command/postgres-buy-intent-command-bus";
 import { createPostgresBuyIntentCommandGateway } from "@/src/infrastructure/checkout-command/postgres-buy-intent-command-gateway";
+import { createTemporalBuyIntentCommandOrchestrator } from "@/src/infrastructure/checkout-command/temporal-buy-intent-command-orchestrator";
 import type { BuyIntentCommandBus } from "@/src/ports/buy-intent-command-bus";
 import type {
   AcceptedBuyIntentCommand,
@@ -15,6 +16,7 @@ import type { BuyIntentCommandOrchestrator } from "@/src/ports/buy-intent-comman
 let sharedGateway: BuyIntentCommandGateway | null = null;
 let sharedPostgresBus: BuyIntentCommandBus | null = null;
 let sharedBus: BuyIntentCommandBus | null = null;
+let sharedOrchestrator: BuyIntentCommandOrchestrator | null = null;
 
 function getPostgresGateway() {
   sharedGateway ??= createPostgresBuyIntentCommandGateway(getPool());
@@ -42,6 +44,22 @@ function getRuntimeCommandBus() {
     : getPostgresBus();
 
   return sharedBus;
+}
+
+function getRuntimeOrchestrator() {
+  if (sharedOrchestrator) {
+    return sharedOrchestrator;
+  }
+
+  sharedOrchestrator = process.env.TEMPORAL_ADDRESS?.trim()
+    ? createTemporalBuyIntentCommandOrchestrator({
+        address: process.env.TEMPORAL_ADDRESS,
+        namespace: process.env.TEMPORAL_NAMESPACE?.trim() || undefined,
+        taskQueue: process.env.TEMPORAL_BUY_INTENT_TASK_QUEUE?.trim() || undefined,
+      })
+    : createNoopBuyIntentCommandOrchestrator();
+
+  return sharedOrchestrator;
 }
 
 export const postgresBuyIntentCommandGateway: BuyIntentCommandGateway = {
@@ -86,5 +104,17 @@ export const buyIntentCommandBus: BuyIntentCommandBus = {
   },
 };
 
-export const buyIntentCommandOrchestrator: BuyIntentCommandOrchestrator =
-  createNoopBuyIntentCommandOrchestrator();
+export const buyIntentCommandOrchestrator: BuyIntentCommandOrchestrator = {
+  start(command): Promise<void> {
+    return getRuntimeOrchestrator().start(command);
+  },
+  markProcessing(commandId): Promise<void> {
+    return getRuntimeOrchestrator().markProcessing(commandId);
+  },
+  markCreated(input): Promise<void> {
+    return getRuntimeOrchestrator().markCreated(input);
+  },
+  markFailed(input): Promise<void> {
+    return getRuntimeOrchestrator().markFailed(input);
+  },
+};

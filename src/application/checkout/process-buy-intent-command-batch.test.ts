@@ -4,6 +4,7 @@ import { processBuyIntentCommandBatch } from "@/src/application/checkout/process
 import type { BuyIntentCommand } from "@/src/domain/checkout-command/buy-intent-command";
 import type { DomainEvent } from "@/src/domain/events/domain-event";
 import type { BuyIntentCommandGateway, BuyIntentCommandStatusView, StagedBuyIntentCommand } from "@/src/ports/buy-intent-command-gateway";
+import type { BuyIntentCommandOrchestrator } from "@/src/ports/buy-intent-command-orchestrator";
 import type { EventStore, EventStoreAppendInput, StoredEvent } from "@/src/ports/event-store";
 
 describe("processBuyIntentCommandBatch", () => {
@@ -42,6 +43,7 @@ describe("processBuyIntentCommandBatch", () => {
       { batchSize: 10 },
       {
         gateway,
+        orchestrator: new FakeOrchestrator(),
         eventStore: new FakeEventStore(false),
         idGenerator: fixedIds("batch_1", "checkout_1", "event_1"),
         clock: { now: () => new Date("2026-04-20T03:00:00.000Z") },
@@ -98,6 +100,7 @@ describe("processBuyIntentCommandBatch", () => {
       { batchSize: 10 },
       {
         gateway,
+        orchestrator: new FakeOrchestrator(),
         eventStore: new FakeEventStore(true),
         idGenerator: fixedIds("batch_2", "checkout_2", "event_2"),
         clock: { now: () => new Date("2026-04-20T03:10:00.000Z") },
@@ -174,6 +177,16 @@ class FakeEventStore implements EventStore {
   async readAggregateEvents() {
     return [];
   }
+}
+
+class FakeOrchestrator implements BuyIntentCommandOrchestrator {
+  async start() {}
+
+  async markProcessing() {}
+
+  async markCreated() {}
+
+  async markFailed() {}
 }
 
 function fixedIds(...values: string[]) {

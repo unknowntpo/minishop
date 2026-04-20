@@ -4,5 +4,8 @@ import type { BuyIntentCommandOrchestrator } from "@/src/ports/buy-intent-comman
 export function createNoopBuyIntentCommandOrchestrator(): BuyIntentCommandOrchestrator {
   return {
     async start(_command: BuyIntentCommand) {},
+    async markProcessing(_commandId: string) {},
+    async markCreated(_input) {},
+    async markFailed(_input) {},
   };
 }

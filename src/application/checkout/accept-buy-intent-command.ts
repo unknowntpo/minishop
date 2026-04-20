@@ -57,10 +57,37 @@ export async function acceptBuyIntentCommand(
       failureCode: "command_publish_failed",
       failureMessage: error instanceof Error ? error.message : "Unknown publish failure.",
     });
+    await notifyFailed(
+      deps.orchestrator,
+      command.command_id,
+      "command_publish_failed",
+      error instanceof Error ? error.message : "Unknown publish failure.",
+    );
     throw error;
   }
 
   return accepted;
+}
+
+async function notifyFailed(
+  orchestrator: BuyIntentCommandOrchestrator,
+  commandId: string,
+  failureCode: string,
+  failureMessage: string,
+) {
+  try {
+    await orchestrator.markFailed({
+      commandId,
+      failureCode,
+      failureMessage,
+    });
+  } catch (error) {
+    console.error("buy_intent_command_orchestrator_mark_failed", {
+      commandId,
+      failureCode,
+      error,
+    });
+  }
 }
 
 function validateInput(input: {

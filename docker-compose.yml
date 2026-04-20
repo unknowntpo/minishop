@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:17-alpine
+    image: postgres:17
     container_name: minishop-postgres
     restart: unless-stopped
     environment:
@@ -18,7 +18,7 @@ services:
       retries: 10
 
   nats:
-    image: nats:2.11-alpine
+    image: nats:2.11
     container_name: minishop-nats
     restart: unless-stopped
     command: ["-js", "-sd", "/data"]
@@ -27,6 +27,34 @@ services:
       - "${MINISHOP_NATS_MONITOR_PORT:-8222}:8222"
     volumes:
       - minishop_nats_data:/data
+
+  temporal:
+    image: temporalio/auto-setup:1.28.4
+    container_name: minishop-temporal
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB: postgres12
+      DB_PORT: 5432
+      POSTGRES_USER: postgres
+      POSTGRES_PWD: postgres
+      POSTGRES_SEEDS: postgres
+    ports:
+      - "${MINISHOP_TEMPORAL_PORT:-7233}:7233"
+
+  temporal-ui:
+    image: temporalio/ui:2.34.0
+    container_name: minishop-temporal-ui
+    restart: unless-stopped
+    depends_on:
+      temporal:
+        condition: service_started
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+    ports:
+      - "${MINISHOP_TEMPORAL_UI_PORT:-8081}:8080"
 
   app:
     build:
@@ -52,6 +80,9 @@ services:
       NATS_BUY_INTENT_INGEST_RETRY_DELAY_MS: ${NATS_BUY_INTENT_INGEST_RETRY_DELAY_MS:-1000}
       NATS_BUY_INTENT_ACK_WAIT_MS: ${NATS_BUY_INTENT_ACK_WAIT_MS:-30000}
       NATS_BUY_INTENT_INGEST_CONTINUOUS: ${NATS_BUY_INTENT_INGEST_CONTINUOUS:-0}
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_NAMESPACE: ${TEMPORAL_NAMESPACE:-default}
+      TEMPORAL_BUY_INTENT_TASK_QUEUE: ${TEMPORAL_BUY_INTENT_TASK_QUEUE:-buy-intent-command-orchestration}
       BUY_INTENT_BATCH_SIZE: ${BUY_INTENT_BATCH_SIZE:-100}
       BUY_INTENT_PROCESS_POLL_INTERVAL_MS: ${BUY_INTENT_PROCESS_POLL_INTERVAL_MS:-1000}
       NEXT_TELEMETRY_DISABLED: "1"
@@ -68,6 +99,8 @@ services:
       postgres:
         condition: service_healthy
       nats:
+        condition: service_started
+      temporal:
         condition: service_started
     environment:
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/minishop
@@ -94,12 +127,33 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      temporal:
+        condition: service_started
     environment:
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/minishop
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_NAMESPACE: ${TEMPORAL_NAMESPACE:-default}
+      TEMPORAL_BUY_INTENT_TASK_QUEUE: ${TEMPORAL_BUY_INTENT_TASK_QUEUE:-buy-intent-command-orchestration}
       BUY_INTENT_BATCH_SIZE: ${BUY_INTENT_BATCH_SIZE:-100}
       BUY_INTENT_PROCESS_POLL_INTERVAL_MS: ${BUY_INTENT_PROCESS_POLL_INTERVAL_MS:-1000}
       NEXT_TELEMETRY_DISABLED: "1"
     command: ["pnpm", "worker:buy-intents:process:loop"]
+
+  worker-buy-intents-temporal:
+    build:
+      context: .
+      dockerfile: Dockerfile.temporal-worker
+    container_name: minishop-worker-buy-intents-temporal
+    restart: unless-stopped
+    depends_on:
+      temporal:
+        condition: service_started
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_NAMESPACE: ${TEMPORAL_NAMESPACE:-default}
+      TEMPORAL_BUY_INTENT_TASK_QUEUE: ${TEMPORAL_BUY_INTENT_TASK_QUEUE:-buy-intent-command-orchestration}
+      NEXT_TELEMETRY_DISABLED: "1"
+    command: ["pnpm", "worker:buy-intents:temporal"]
 
 volumes:
   minishop_postgres_data:

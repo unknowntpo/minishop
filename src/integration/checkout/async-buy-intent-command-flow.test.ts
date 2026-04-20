@@ -25,6 +25,9 @@ const gateway = createPostgresBuyIntentCommandGateway(pool);
 const bus = createPostgresBuyIntentCommandBus(pool);
 const orchestrator: BuyIntentCommandOrchestrator = {
   async start() {},
+  async markProcessing() {},
+  async markCreated() {},
+  async markFailed() {},
 };
 const eventStore = createPostgresEventStore(pool);
 
@@ -74,6 +77,7 @@ describe("async buy-intent command flow integration", () => {
       {},
       {
         gateway,
+        orchestrator,
         eventStore,
         idGenerator: fixedIds(
           "33333333-3333-4333-8333-333333333333",
@@ -118,6 +122,7 @@ describe("async buy-intent command flow integration", () => {
       {},
       {
         gateway,
+        orchestrator,
         eventStore,
         idGenerator: fixedIds(
           "33333333-3333-4333-8333-333333333333",
@@ -140,6 +145,7 @@ describe("async buy-intent command flow integration", () => {
       {},
       {
         gateway,
+        orchestrator,
         eventStore,
         idGenerator: fixedIds(
           "88888888-8888-4888-8888-888888888888",
@@ -185,6 +191,7 @@ describe("async buy-intent command flow integration", () => {
       {},
       {
         gateway,
+        orchestrator,
         eventStore,
         idGenerator: fixedIds(
           "33333333-3333-4333-8333-333333333333",
@@ -201,6 +208,7 @@ describe("async buy-intent command flow integration", () => {
       {},
       {
         gateway,
+        orchestrator,
         eventStore,
         idGenerator: fixedIds(
           "66666666-6666-4666-8666-666666666666",

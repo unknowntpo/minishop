@@ -1,7 +1,10 @@
 import "dotenv/config";
 
 import { processBuyIntentCommandBatch } from "@/src/application/checkout/process-buy-intent-command-batch";
-import { postgresBuyIntentCommandGateway } from "@/src/infrastructure/checkout-command";
+import {
+  buyIntentCommandOrchestrator,
+  postgresBuyIntentCommandGateway,
+} from "@/src/infrastructure/checkout-command";
 import { postgresEventStore } from "@/src/infrastructure/event-store";
 import { systemClock } from "@/src/ports/clock";
 import { cryptoIdGenerator } from "@/src/ports/id-generator";
@@ -15,6 +18,7 @@ async function main() {
       { batchSize },
       {
         gateway: postgresBuyIntentCommandGateway,
+        orchestrator: buyIntentCommandOrchestrator,
         eventStore: postgresEventStore,
         idGenerator: cryptoIdGenerator,
         clock: systemClock,

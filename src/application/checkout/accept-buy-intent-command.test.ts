@@ -51,6 +51,7 @@ describe("acceptBuyIntentCommand", () => {
 
   it("marks publish failure after accepted status creation", async () => {
     const gateway = new PublishFailureGateway();
+    const orchestrator = new FakeOrchestrator();
 
     await expect(
       acceptBuyIntentCommand(
@@ -75,7 +76,7 @@ describe("acceptBuyIntentCommand", () => {
         {
           gateway,
           bus: new FailingBus(),
-          orchestrator: new FakeOrchestrator(),
+          orchestrator,
           idGenerator: fixedIds("cmd_2", "corr_2"),
           clock: { now: () => new Date("2026-04-20T03:00:00.000Z") },
         },
@@ -83,6 +84,10 @@ describe("acceptBuyIntentCommand", () => {
     ).rejects.toThrow("publish failed");
 
     expect(gateway.publishFailed[0]).toMatchObject({
+      commandId: "cmd_2",
+      failureCode: "command_publish_failed",
+    });
+    expect(orchestrator.failed[0]).toMatchObject({
       commandId: "cmd_2",
       failureCode: "command_publish_failed",
     });
@@ -176,9 +181,18 @@ class ObservableBus implements BuyIntentCommandBus {
 
 class FakeOrchestrator implements BuyIntentCommandOrchestrator {
   readonly started: Array<Parameters<BuyIntentCommandOrchestrator["start"]>[0]> = [];
+  readonly failed: Array<Parameters<BuyIntentCommandOrchestrator["markFailed"]>[0]> = [];
 
   async start(command: Parameters<BuyIntentCommandOrchestrator["start"]>[0]) {
     this.started.push(command);
+  }
+
+  async markProcessing() {}
+
+  async markCreated() {}
+
+  async markFailed(input: Parameters<BuyIntentCommandOrchestrator["markFailed"]>[0]) {
+    this.failed.push(input);
   }
 }
 
@@ -202,6 +216,12 @@ class FailingOrchestrator implements BuyIntentCommandOrchestrator {
   async start() {
     throw new Error("orchestration failed");
   }
+
+  async markProcessing() {}
+
+  async markCreated() {}
+
+  async markFailed() {}
 }
 
 function fixedIds(...values: string[]) {
