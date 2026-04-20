@@ -28,6 +28,79 @@ services:
     volumes:
       - minishop_nats_data:/data
 
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: minishop-app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/minishop
+      NATS_URL: nats://nats:4222
+      NATS_BUY_INTENT_STREAM: ${NATS_BUY_INTENT_STREAM:-BUY_INTENT_COMMANDS}
+      NATS_BUY_INTENT_SUBJECT: ${NATS_BUY_INTENT_SUBJECT:-buy-intent.command}
+      NATS_BUY_INTENT_RETRY_SUBJECT: ${NATS_BUY_INTENT_RETRY_SUBJECT:-buy-intent.retry}
+      NATS_BUY_INTENT_DLQ_SUBJECT: ${NATS_BUY_INTENT_DLQ_SUBJECT:-buy-intent.dlq}
+      NATS_BUY_INTENT_DURABLE_CONSUMER: ${NATS_BUY_INTENT_DURABLE_CONSUMER:-buy-intent-ingest}
+      NATS_BUY_INTENT_INGEST_BATCH_SIZE: ${NATS_BUY_INTENT_INGEST_BATCH_SIZE:-100}
+      NATS_BUY_INTENT_INGEST_EXPIRES_MS: ${NATS_BUY_INTENT_INGEST_EXPIRES_MS:-1000}
+      NATS_BUY_INTENT_INGEST_RETRY_DELAY_MS: ${NATS_BUY_INTENT_INGEST_RETRY_DELAY_MS:-1000}
+      NATS_BUY_INTENT_ACK_WAIT_MS: ${NATS_BUY_INTENT_ACK_WAIT_MS:-30000}
+      NATS_BUY_INTENT_INGEST_CONTINUOUS: ${NATS_BUY_INTENT_INGEST_CONTINUOUS:-0}
+      BUY_INTENT_BATCH_SIZE: ${BUY_INTENT_BATCH_SIZE:-100}
+      BUY_INTENT_PROCESS_POLL_INTERVAL_MS: ${BUY_INTENT_PROCESS_POLL_INTERVAL_MS:-1000}
+      NEXT_TELEMETRY_DISABLED: "1"
+    ports:
+      - "${MINISHOP_APP_PORT:-3000}:3000"
+
+  worker-buy-intents-ingest:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: minishop-worker-buy-intents-ingest
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/minishop
+      NATS_URL: nats://nats:4222
+      NATS_BUY_INTENT_STREAM: ${NATS_BUY_INTENT_STREAM:-BUY_INTENT_COMMANDS}
+      NATS_BUY_INTENT_SUBJECT: ${NATS_BUY_INTENT_SUBJECT:-buy-intent.command}
+      NATS_BUY_INTENT_RETRY_SUBJECT: ${NATS_BUY_INTENT_RETRY_SUBJECT:-buy-intent.retry}
+      NATS_BUY_INTENT_DLQ_SUBJECT: ${NATS_BUY_INTENT_DLQ_SUBJECT:-buy-intent.dlq}
+      NATS_BUY_INTENT_DURABLE_CONSUMER: ${NATS_BUY_INTENT_DURABLE_CONSUMER:-buy-intent-ingest}
+      NATS_BUY_INTENT_INGEST_BATCH_SIZE: ${NATS_BUY_INTENT_INGEST_BATCH_SIZE:-100}
+      NATS_BUY_INTENT_INGEST_EXPIRES_MS: ${NATS_BUY_INTENT_INGEST_EXPIRES_MS:-1000}
+      NATS_BUY_INTENT_INGEST_RETRY_DELAY_MS: ${NATS_BUY_INTENT_INGEST_RETRY_DELAY_MS:-1000}
+      NATS_BUY_INTENT_ACK_WAIT_MS: ${NATS_BUY_INTENT_ACK_WAIT_MS:-30000}
+      NATS_BUY_INTENT_INGEST_CONTINUOUS: ${NATS_BUY_INTENT_INGEST_CONTINUOUS:-1}
+      NEXT_TELEMETRY_DISABLED: "1"
+    command: ["pnpm", "worker:buy-intents:ingest:nats"]
+
+  worker-buy-intents-process:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: minishop-worker-buy-intents-process
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/minishop
+      BUY_INTENT_BATCH_SIZE: ${BUY_INTENT_BATCH_SIZE:-100}
+      BUY_INTENT_PROCESS_POLL_INTERVAL_MS: ${BUY_INTENT_PROCESS_POLL_INTERVAL_MS:-1000}
+      NEXT_TELEMETRY_DISABLED: "1"
+    command: ["pnpm", "worker:buy-intents:process:loop"]
+
 volumes:
   minishop_postgres_data:
   minishop_nats_data:

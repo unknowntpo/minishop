@@ -27,6 +27,7 @@
     "db:studio": "drizzle-kit studio",
     "worker:buy-intents:ingest:nats": "tsx scripts/ingest-buy-intent-command-bus.ts",
     "worker:buy-intents:process": "tsx scripts/process-buy-intent-command-batch.ts",
+    "worker:buy-intents:process:loop": "tsx scripts/process-buy-intent-command-batch-loop.ts",
     "benchmark:checkout:postgres:raw": "tsx scripts/benchmark-checkout-postgres.ts",
     "benchmark:checkout:postgres": "tsx scripts/run-checkout-postgres-benchmark.ts",
     "benchmark:checkout:postgres:reset": "BENCHMARK_RESET=1 tsx scripts/run-checkout-postgres-benchmark.ts",
