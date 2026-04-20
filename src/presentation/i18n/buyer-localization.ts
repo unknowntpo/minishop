@@ -73,18 +73,19 @@ type BuyerMessages = {
     cancelled: string;
     status: (checkoutIntentId: string, status: string) => string;
   };
-  completion: {
-    eyebrow: string;
-    completeTitle: string;
-    receivedTitle: string;
-    subtitle: (checkoutIntentId: string, status: string) => string;
-    metrics: {
-      status: string;
-      order: string;
-      payment: string;
-      updated: string;
-    };
-    notAvailable: string;
+    completion: {
+      eyebrow: string;
+      completeTitle: string;
+      receivedTitle: string;
+      subtitle: (checkoutIntentId: string, status: string) => string;
+      metrics: {
+        status: string;
+        command: string;
+        order: string;
+        payment: string;
+        updated: string;
+      };
+      notAvailable: string;
   };
 };
 
@@ -165,6 +166,7 @@ const buyerMessages: Record<BuyerLocale, BuyerMessages> = {
       subtitle: (checkoutIntentId, status) => `Intent ${checkoutIntentId} 目前為 ${status}。`,
       metrics: {
         status: "狀態",
+        command: "指令",
         order: "訂單",
         payment: "付款",
         updated: "更新時間",
@@ -248,6 +250,7 @@ const buyerMessages: Record<BuyerLocale, BuyerMessages> = {
       subtitle: (checkoutIntentId, status) => `Intent ${checkoutIntentId} is ${status}.`,
       metrics: {
         status: "Status",
+        command: "Command",
         order: "Order",
         payment: "Payment",
         updated: "Updated",

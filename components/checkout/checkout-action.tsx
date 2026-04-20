@@ -156,7 +156,9 @@ export function CheckoutAction({
       });
       onCompleted?.();
       router.refresh();
-      router.push(`/checkout-complete/${commandStatus.checkoutIntentId}`);
+      router.push(
+        `/checkout-complete/${commandStatus.checkoutIntentId}?commandId=${encodeURIComponent(commandStatus.commandId)}`,
+      );
     } catch (error) {
       console.error("checkout_action_failed", error);
       setState({

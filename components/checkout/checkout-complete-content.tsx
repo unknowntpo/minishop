@@ -15,6 +15,7 @@ type CheckoutCompleteContentProps = {
   checkout: {
     cancellationReason: string | null;
     checkoutIntentId: string;
+    commandId: string | null;
     orderId: string | null;
     paymentId: string | null;
     rejectionReason: string | null;
@@ -62,6 +63,10 @@ function CheckoutCompleteBody({ checkout }: Omit<CheckoutCompleteContentProps, "
           <span className="completion-metric">
             <strong>{messages.completion.metrics.status}</strong>
             <code>{checkout.status}</code>
+          </span>
+          <span className="completion-metric">
+            <strong>{messages.completion.metrics.command}</strong>
+            <code>{checkout.commandId ?? messages.completion.notAvailable}</code>
           </span>
           <span className="completion-metric">
             <strong>{messages.completion.metrics.order}</strong>

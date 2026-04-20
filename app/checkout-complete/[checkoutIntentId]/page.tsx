@@ -12,6 +12,9 @@ type CheckoutCompletePageProps = {
   params: Promise<{
     checkoutIntentId: string;
   }>;
+  searchParams: Promise<{
+    commandId?: string | string[];
+  }>;
 };
 
 type CheckoutRow = {
@@ -28,8 +31,12 @@ type CheckoutRow = {
 
 export const dynamic = "force-dynamic";
 
-export default async function CheckoutCompletePage({ params }: CheckoutCompletePageProps) {
+export default async function CheckoutCompletePage({
+  params,
+  searchParams,
+}: CheckoutCompletePageProps) {
   const { checkoutIntentId } = await params;
+  const resolvedSearchParams = await searchParams;
   const initialLocale = normalizeBuyerLocale((await cookies()).get(buyerLocaleCookieName)?.value);
   const result = await getPool().query<CheckoutRow>(
     `
@@ -60,6 +67,7 @@ export default async function CheckoutCompletePage({ params }: CheckoutCompleteP
       checkout={{
         cancellationReason: checkout.cancellation_reason,
         checkoutIntentId: checkout.checkout_intent_id,
+        commandId: readSingleSearchParam(resolvedSearchParams.commandId),
         orderId: checkout.order_id,
         paymentId: checkout.payment_id,
         rejectionReason: checkout.rejection_reason,
@@ -69,4 +77,8 @@ export default async function CheckoutCompletePage({ params }: CheckoutCompleteP
       initialLocale={initialLocale}
     />
   );
+}
+
+function readSingleSearchParam(value: string | string[] | undefined) {
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
 }
