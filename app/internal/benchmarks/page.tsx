@@ -979,6 +979,7 @@ function ComparisonChart({
               aria-label={hoverText}
               tabIndex={0}
             >
+              <span className="benchmark-plot-value">{formatPlotHoverValue(value, unit)}</span>
               <span
                 className={run.pass ? "benchmark-plot-bar" : "benchmark-plot-bar failed"}
                 style={{ height }}
@@ -1644,6 +1645,22 @@ function formatPercent(value: number | undefined) {
 
 function formatNumber(value: number | undefined) {
   return typeof value === "number" && Number.isFinite(value) ? value.toLocaleString("en") : "n/a";
+}
+
+function formatPlotHoverValue(value: number, unit: string) {
+  if (!Number.isFinite(value)) {
+    return "n/a";
+  }
+
+  if (unit === "%") {
+    return `${Math.round(value)}%`;
+  }
+
+  if (unit === "") {
+    return formatNumber(value);
+  }
+
+  return `${formatNumber(Number(value.toFixed(2)))}${unit}`;
 }
 
 function formatBytes(value: number | undefined) {

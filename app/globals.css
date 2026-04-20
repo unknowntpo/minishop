@@ -1596,6 +1596,7 @@ button.design-preview {
   min-width: 10px;
   gap: 6px;
   cursor: help;
+  position: relative;
 }
 
 .benchmark-plot-column code {
@@ -1603,6 +1604,32 @@ button.design-preview {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 12px;
   text-align: center;
+}
+
+.benchmark-plot-value {
+  position: absolute;
+  left: 50%;
+  top: -4px;
+  transform: translate(-50%, -6px);
+  opacity: 0;
+  pointer-events: none;
+  padding: 2px 6px;
+  border: 1px solid var(--ms-line);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ms-panel) 96%, white 4%);
+  color: var(--ms-ink);
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
+  transition: opacity 140ms ease, transform 140ms ease;
+  z-index: 2;
+}
+
+.benchmark-plot-column:hover .benchmark-plot-value,
+.benchmark-plot-column:focus-visible .benchmark-plot-value {
+  opacity: 1;
+  transform: translate(-50%, -10px);
 }
 
 .benchmark-plot-bar {
