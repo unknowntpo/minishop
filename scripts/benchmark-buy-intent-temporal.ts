@@ -8,6 +8,7 @@ type BenchmarkConfig = {
   appUrl: string;
   requests: number;
   httpConcurrency: number;
+  profilingEnabled: boolean;
   skuId: string;
   unitPriceAmountMinor: number;
   currency: string;
@@ -51,6 +52,22 @@ type PaymentSignalResult = {
   signaledAtMs: number;
 };
 
+type BenchmarkProfilingMetadata = {
+  enabled: boolean;
+  status: "disabled" | "captured" | "failed";
+  target?: string;
+  scope?: string;
+  format?: string;
+  startedAt?: string;
+  stoppedAt?: string;
+  error?: string;
+  files?: Array<{
+    kind: "cpu";
+    path: string;
+    label: string;
+  }>;
+};
+
 const config = readConfig();
 
 async function main() {
@@ -65,162 +82,189 @@ async function main() {
     );
   }
 
+  const profilingPlan = createProfilingPlan();
+  let profiling = await maybeStartProfiling();
   const acceptStartedAt = performance.now();
-  const acceptResults = await runWithConcurrency(
-    effectiveRequests,
-    config.httpConcurrency,
-    async (index) => createBuyIntent(index),
-  );
-  const acceptDurationMs = performance.now() - acceptStartedAt;
+  try {
+    const acceptResults = await runWithConcurrency(
+      effectiveRequests,
+      config.httpConcurrency,
+      async (index) => createBuyIntent(index),
+    );
+    const acceptDurationMs = performance.now() - acceptStartedAt;
 
-  const accepted = acceptResults.filter(
-    (result): result is AcceptResult & { commandId: string; acceptedAtMs: number } =>
-      result.ok && typeof result.commandId === "string" && typeof result.acceptedAtMs === "number",
-  );
+    const accepted = acceptResults.filter(
+      (result): result is AcceptResult & { commandId: string; acceptedAtMs: number } =>
+        result.ok && typeof result.commandId === "string" && typeof result.acceptedAtMs === "number",
+    );
 
-  if (accepted.length === 0) {
-    throw new Error("No benchmark requests were accepted.");
-  }
+    if (accepted.length === 0) {
+      throw new Error("No benchmark requests were accepted.");
+    }
 
-  const createdResults = await Promise.all(
-    accepted.map((result) => waitForCreatedStatus(result.commandId, result.acceptedAtMs)),
-  );
-  const acceptedAtByCommandId = new Map(
-    accepted.map((result) => [result.commandId, result.acceptedAtMs] as const),
-  );
+    const createdResults = await Promise.all(
+      accepted.map((result) => waitForCreatedStatus(result.commandId, result.acceptedAtMs)),
+    );
+    const acceptedAtByCommandId = new Map(
+      accepted.map((result) => [result.commandId, result.acceptedAtMs] as const),
+    );
 
-  const displayReadyResults = await Promise.all(
-    createdResults
-      .filter((result) => typeof result.checkoutIntentId === "string" && result.checkoutIntentId.length > 0)
-      .map((result) =>
-        waitForCheckoutStatus(
-          result.checkoutIntentId as string,
-          acceptedAtByCommandId.get(result.commandId) ?? performance.now(),
-          (status) =>
-            config.mode === "temporal"
-              ? status === "pending_payment" || status === "rejected"
-              : status === "queued",
-          config.mode === "temporal" ? "pending_payment or rejected" : "queued",
-        ),
-      ),
-  );
-
-  const pendingPaymentCheckouts =
-    config.mode === "temporal"
-      ? displayReadyResults.filter((result) => result.status === "pending_payment")
-      : [];
-  const paymentSignalRun =
-    config.mode === "temporal"
-      ? await runPaymentFailureSignals(pendingPaymentCheckouts, createdResults)
-      : { results: [], durationMs: 0 };
-  const paymentSignalResults = paymentSignalRun.results;
-  const signalDurationMs = paymentSignalRun.durationMs;
-
-  const cancelledResults =
-    config.mode === "temporal"
-      ? await Promise.all(
-          paymentSignalResults.map((signalResult) => {
-            const checkout = pendingPaymentCheckouts.find((entry) => {
-              const command = createdResults.find(
-                (result) => result.checkoutIntentId === entry.checkoutIntentId,
-              );
-              return command?.commandId === signalResult.commandId;
-            });
-
-            if (!checkout) {
-              throw new Error(`Missing checkout for payment signal command ${signalResult.commandId}.`);
-            }
-
-            return waitForCheckoutStatus(
-              checkout.checkoutIntentId,
-              signalResult.signaledAtMs,
-              (status) => status === "cancelled" || status === "expired",
-              "cancelled or expired",
-            );
-          }),
+    const displayReadyResults = await Promise.all(
+      createdResults
+        .filter(
+          (result) => typeof result.checkoutIntentId === "string" && result.checkoutIntentId.length > 0,
         )
-      : [];
+        .map((result) =>
+          waitForCheckoutStatus(
+            result.checkoutIntentId as string,
+            acceptedAtByCommandId.get(result.commandId) ?? performance.now(),
+            (status) =>
+              config.mode === "temporal"
+                ? status === "pending_payment" || status === "rejected"
+                : status === "queued",
+            config.mode === "temporal" ? "pending_payment or rejected" : "queued",
+          ),
+        ),
+    );
 
-  const natsSnapshot = await readNatsSnapshot();
-  const finishedAtIso = new Date().toISOString();
-
-  const report = {
-    schemaVersion: 1,
-    scenarioName: config.scenarioName,
-    runId: config.runId,
-    startedAt: new Date(Date.now() - Math.round(acceptDurationMs)).toISOString(),
-    finishedAt: finishedAtIso,
-    environment: {
-      runtime: process.version,
-      platform: `${os.platform()} ${os.arch()}`,
-      cpuCount: os.cpus().length,
-      cpuModel: os.cpus()[0]?.model ?? "unknown",
-      totalMemoryBytes: os.totalmem(),
-      appUrl: config.appUrl,
-      skuId: config.skuId,
-    },
-    conditions: {
-      requestedBuyIntents: config.requests,
-      effectiveBuyIntents: effectiveRequests,
-      httpConcurrency: config.httpConcurrency,
-      buyerPrefix: config.buyerPrefix,
-      unitPriceAmountMinor: config.unitPriceAmountMinor,
-      currency: config.currency,
-      startingInventoryAvailable: inventory.available,
-      mode: config.mode,
-    },
-    requestPath: {
-      accepted: accepted.length,
-      errors: acceptResults.length - accepted.length,
-      acceptDurationMs: Math.round(acceptDurationMs),
-      acceptRequestsPerSecond: ratePerSecond(accepted.length, acceptDurationMs),
-      acceptLatencyMs: summarizeLatencies(acceptResults.map((result) => result.latencyMs)),
-      errorDistribution: countBy(
-        acceptResults.filter((result) => !result.ok),
-        (result) => result.error ?? `HTTP ${result.status}`,
-      ),
-    },
-    commandLifecycle: {
-      created: createdResults.filter((result) => result.status === "created").length,
-      duplicates: createdResults.filter((result) => result.isDuplicate).length,
-      createdLatencyMs: summarizeLatencies(createdResults.map((result) => result.latencyMs)),
-      createdThroughputPerSecond: ratePerSecond(createdResults.length, Math.max(...createdResults.map((result) => result.latencyMs))),
-    },
-    checkoutLifecycle: {
-      displayReadyStatusDistribution: countBy(displayReadyResults, (result) => result.status),
-      displayReadyLatencyMs: summarizeLatencies(
-        displayReadyResults.map((result) => result.latencyMs),
-      ),
-      pendingPayment: displayReadyResults.filter((result) => result.status === "pending_payment").length,
-      rejected: displayReadyResults.filter((result) => result.status === "rejected").length,
-      queued: displayReadyResults.filter((result) => result.status === "queued").length,
-      paymentFailureSignals: paymentSignalResults.length,
-      paymentSignalDurationMs: Math.round(signalDurationMs),
-      paymentSignalRequestsPerSecond: ratePerSecond(paymentSignalResults.length, signalDurationMs),
-      paymentSignalLatencyMs: summarizeLatencies(paymentSignalResults.map((result) => result.latencyMs)),
-      resolved: cancelledResults.length,
-      resolvedStatusDistribution: countBy(cancelledResults, (result) => result.status),
-      resolutionLatencyMs: summarizeLatencies(cancelledResults.map((result) => result.latencyMs)),
-      resolutionThroughputPerSecond: ratePerSecond(
-        cancelledResults.length,
-        Math.max(...cancelledResults.map((result) => result.latencyMs), 1),
-      ),
-    },
-    nats: natsSnapshot,
-    notes: [
+    const pendingPaymentCheckouts =
       config.mode === "temporal"
-        ? "This benchmark measures the current async buy-intent + Temporal + pending_payment demo path."
-        : "This benchmark measures the async buy-intent path with Temporal orchestration bypassed and a Node merge loop instead.",
+        ? displayReadyResults.filter((result) => result.status === "pending_payment")
+        : [];
+    const paymentSignalRun =
       config.mode === "temporal"
-        ? "The benchmark intentionally uses payment failure signals so reserved inventory is released after each run."
-        : "Bypass mode stops at CheckoutIntentCreated and queued projection state, so no payment signal or reservation release work is included.",
-    ],
-  };
+        ? await runPaymentFailureSignals(pendingPaymentCheckouts, createdResults)
+        : { results: [], durationMs: 0 };
+    const paymentSignalResults = paymentSignalRun.results;
+    const signalDurationMs = paymentSignalRun.durationMs;
 
-  const artifactPath = await writeBenchmarkArtifact(report);
+    const cancelledResults =
+      config.mode === "temporal"
+        ? await Promise.all(
+            paymentSignalResults.map((signalResult) => {
+              const checkout = pendingPaymentCheckouts.find((entry) => {
+                const command = createdResults.find(
+                  (result) => result.checkoutIntentId === entry.checkoutIntentId,
+                );
+                return command?.commandId === signalResult.commandId;
+              });
 
-  console.log(JSON.stringify(report, null, 2));
-  console.log(`Benchmark artifact written to ${artifactPath}`);
+              if (!checkout) {
+                throw new Error(
+                  `Missing checkout for payment signal command ${signalResult.commandId}.`,
+                );
+              }
+
+              return waitForCheckoutStatus(
+                checkout.checkoutIntentId,
+                signalResult.signaledAtMs,
+                (status) => status === "cancelled" || status === "expired",
+                "cancelled or expired",
+              );
+            }),
+          )
+        : [];
+
+    const natsSnapshot = await readNatsSnapshot();
+    profiling = await maybeStopProfiling(profilingPlan, profiling);
+    const finishedAtIso = new Date().toISOString();
+
+    const report = {
+      schemaVersion: 1,
+      scenarioName: config.scenarioName,
+      runId: config.runId,
+      startedAt: new Date(Date.now() - Math.round(acceptDurationMs)).toISOString(),
+      finishedAt: finishedAtIso,
+      environment: {
+        runtime: process.version,
+        platform: `${os.platform()} ${os.arch()}`,
+        cpuCount: os.cpus().length,
+        cpuModel: os.cpus()[0]?.model ?? "unknown",
+        totalMemoryBytes: os.totalmem(),
+        appUrl: config.appUrl,
+        skuId: config.skuId,
+      },
+      conditions: {
+        workload: {
+          scenarioName: config.scenarioName,
+          architectureLane: config.mode === "temporal" ? "temporal" : "bypass",
+          workloadType: "buy_intent_temporal_flow",
+          requestedBuyClicks: config.requests,
+          httpConcurrency: config.httpConcurrency,
+          skuId: config.skuId,
+          quantityPerIntent: 1,
+          profilingEnabled: config.profilingEnabled,
+        },
+        requestedBuyIntents: config.requests,
+        effectiveBuyIntents: effectiveRequests,
+        httpConcurrency: config.httpConcurrency,
+        buyerPrefix: config.buyerPrefix,
+        unitPriceAmountMinor: config.unitPriceAmountMinor,
+        currency: config.currency,
+        startingInventoryAvailable: inventory.available,
+        mode: config.mode,
+      },
+      requestPath: {
+        accepted: accepted.length,
+        errors: acceptResults.length - accepted.length,
+        acceptDurationMs: Math.round(acceptDurationMs),
+        acceptRequestsPerSecond: ratePerSecond(accepted.length, acceptDurationMs),
+        acceptLatencyMs: summarizeLatencies(acceptResults.map((result) => result.latencyMs)),
+        errorDistribution: countBy(
+          acceptResults.filter((result) => !result.ok),
+          (result) => result.error ?? `HTTP ${result.status}`,
+        ),
+      },
+      commandLifecycle: {
+        created: createdResults.filter((result) => result.status === "created").length,
+        duplicates: createdResults.filter((result) => result.isDuplicate).length,
+        createdLatencyMs: summarizeLatencies(createdResults.map((result) => result.latencyMs)),
+        createdThroughputPerSecond: ratePerSecond(
+          createdResults.length,
+          Math.max(...createdResults.map((result) => result.latencyMs)),
+        ),
+      },
+      checkoutLifecycle: {
+        displayReadyStatusDistribution: countBy(displayReadyResults, (result) => result.status),
+        displayReadyLatencyMs: summarizeLatencies(displayReadyResults.map((result) => result.latencyMs)),
+        pendingPayment: displayReadyResults.filter((result) => result.status === "pending_payment")
+          .length,
+        rejected: displayReadyResults.filter((result) => result.status === "rejected").length,
+        queued: displayReadyResults.filter((result) => result.status === "queued").length,
+        paymentFailureSignals: paymentSignalResults.length,
+        paymentSignalDurationMs: Math.round(signalDurationMs),
+        paymentSignalRequestsPerSecond: ratePerSecond(paymentSignalResults.length, signalDurationMs),
+        paymentSignalLatencyMs: summarizeLatencies(
+          paymentSignalResults.map((result) => result.latencyMs),
+        ),
+        resolved: cancelledResults.length,
+        resolvedStatusDistribution: countBy(cancelledResults, (result) => result.status),
+        resolutionLatencyMs: summarizeLatencies(cancelledResults.map((result) => result.latencyMs)),
+        resolutionThroughputPerSecond: ratePerSecond(
+          cancelledResults.length,
+          Math.max(...cancelledResults.map((result) => result.latencyMs), 1),
+        ),
+      },
+      profiling,
+      nats: natsSnapshot,
+      notes: [
+        config.mode === "temporal"
+          ? "This benchmark measures the current async buy-intent + Temporal + pending_payment demo path."
+          : "This benchmark measures the async buy-intent path with Temporal orchestration bypassed and a Node merge loop instead.",
+        config.mode === "temporal"
+          ? "The benchmark intentionally uses payment failure signals so reserved inventory is released after each run."
+          : "Bypass mode stops at CheckoutIntentCreated and queued projection state, so no payment signal or reservation release work is included.",
+      ],
+    };
+
+    const artifactPath = await writeBenchmarkArtifact(report);
+
+    console.log(JSON.stringify(report, null, 2));
+    console.log(`Benchmark artifact written to ${artifactPath}`);
+  } catch (error) {
+    profiling = await maybeStopProfiling(profilingPlan, profiling);
+    throw error;
+  }
 }
 
 async function createBuyIntent(index: number): Promise<AcceptResult> {
@@ -568,11 +612,138 @@ async function writeBenchmarkArtifact(report: object) {
   return filePath;
 }
 
+function createProfilingPlan() {
+  const directory = path.join(config.resultsDir, config.scenarioName, "profiles");
+  const fileName = `${config.runId}.app.cpuprofile`;
+
+  return {
+    directory,
+    absolutePath: path.join(directory, fileName),
+    relativePath: path.join(config.scenarioName, "profiles", fileName),
+  };
+}
+
+async function maybeStartProfiling(): Promise<BenchmarkProfilingMetadata> {
+  if (!config.profilingEnabled) {
+    return {
+      enabled: false,
+      status: "disabled",
+    };
+  }
+
+  const response = await fetch(`${config.appUrl}/api/internal/benchmarks/profiling`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-request-id": `req_${config.runId}_profiling_start`,
+      "x-trace-id": `trace_${config.runId}`,
+    },
+    body: JSON.stringify({
+      action: "start",
+      runId: config.runId,
+      label: `${config.scenarioName} app cpu`,
+    }),
+  });
+
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { error?: string } | null;
+
+    return {
+      enabled: true,
+      status: "failed",
+      target: "nextjs-app-process",
+      scope: "buy-intent-benchmark",
+      error: body?.error ?? `HTTP ${response.status}`,
+    };
+  }
+
+  const body = (await response.json()) as {
+    startedAt: string;
+  };
+
+  return {
+    enabled: true,
+    status: "captured",
+    target: "nextjs-app-process",
+    scope: "buy-intent-benchmark",
+    startedAt: body.startedAt,
+    files: [],
+  };
+}
+
+async function maybeStopProfiling(
+  plan: ReturnType<typeof createProfilingPlan>,
+  current: BenchmarkProfilingMetadata,
+): Promise<BenchmarkProfilingMetadata> {
+  if (!config.profilingEnabled || current.status === "failed") {
+    return current;
+  }
+
+  try {
+    const response = await fetch(`${config.appUrl}/api/internal/benchmarks/profiling`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-request-id": `req_${config.runId}_profiling_stop`,
+        "x-trace-id": `trace_${config.runId}`,
+      },
+      body: JSON.stringify({
+        action: "stop",
+        runId: config.runId,
+      }),
+    });
+
+    if (!response.ok) {
+      const body = (await response.json().catch(() => null)) as { error?: string } | null;
+
+      return {
+        ...current,
+        status: "failed",
+        error: body?.error ?? `HTTP ${response.status}`,
+      };
+    }
+
+    const body = (await response.json()) as {
+      format: "cpuprofile";
+      profile: object;
+      startedAt: string;
+      stoppedAt: string;
+    };
+
+    await mkdir(plan.directory, { recursive: true });
+    await writeFile(plan.absolutePath, `${JSON.stringify(body.profile)}\n`, "utf8");
+
+    return {
+      enabled: true,
+      status: "captured",
+      target: "nextjs-app-process",
+      scope: "buy-intent-benchmark",
+      format: body.format,
+      startedAt: body.startedAt,
+      stoppedAt: body.stoppedAt,
+      files: [
+        {
+          kind: "cpu",
+          path: plan.relativePath,
+          label: "app CPU profile",
+        },
+      ],
+    };
+  } catch (error) {
+    return {
+      ...current,
+      status: "failed",
+      error: error instanceof Error ? error.message : "unknown profiling failure",
+    };
+  }
+}
+
 function readConfig(): BenchmarkConfig {
   return {
     appUrl: process.env.BENCHMARK_APP_URL ?? "http://localhost:3000",
     requests: readPositiveIntegerEnv("BENCHMARK_REQUESTS", 20),
     httpConcurrency: readPositiveIntegerEnv("BENCHMARK_HTTP_CONCURRENCY", 10),
+    profilingEnabled: process.env.BENCHMARK_PROFILE === "1",
     skuId: process.env.BENCHMARK_SKU_ID ?? "sku_hot_001",
     unitPriceAmountMinor: readPositiveIntegerEnv("BENCHMARK_UNIT_PRICE_MINOR", 1200),
     currency: process.env.BENCHMARK_CURRENCY ?? "TWD",

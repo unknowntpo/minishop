@@ -99,6 +99,13 @@ type BenchmarkReport = {
     p99LatencyMs?: number;
     maxLatencyMs?: number;
     requestsPerSecond?: number;
+    acceptRequestsPerSecond?: number;
+    acceptLatencyMs?: {
+      p50?: number;
+      p95?: number;
+      p99?: number;
+      max?: number;
+    };
     statusDistribution?: Record<string, number>;
     errorDistribution?: Record<string, number>;
     duplicateReplay?: {
@@ -113,6 +120,27 @@ type BenchmarkReport = {
     appendedEvents?: number;
     appendThroughputPerSecond?: number;
     eventTypeDistribution?: Record<string, number>;
+  };
+  commandLifecycle?: {
+    created?: number;
+    duplicates?: number;
+    createdThroughputPerSecond?: number;
+    createdLatencyMs?: {
+      p50?: number;
+      p95?: number;
+      p99?: number;
+      max?: number;
+    };
+  };
+  checkoutLifecycle?: {
+    displayReadyStatusDistribution?: Record<string, number>;
+    displayReadyLatencyMs?: {
+      p50?: number;
+      p95?: number;
+      p99?: number;
+      max?: number;
+    };
+    resolvedStatusDistribution?: Record<string, number>;
   };
   projections?: {
     checkpointLastEventId?: number;
@@ -440,7 +468,7 @@ export default async function InternalBenchmarksPage({
                     aria-expanded={isSelected}
                     aria-label={`${isSelected ? "Collapse" : "Expand"} ${scenario.name} run comparison`}
                   >
-                    <strong title={scenarioDescription(scenario.name)}>{scenario.name}</strong>
+                        <strong title={scenarioDescription(scenario.name)}>{scenario.name}</strong>
                     <span className="benchmark-scenario-badges">
                       <span className={`badge ${scenario.latestPass ? "success" : "danger"}`}>
                         {scenario.latestPass ? "latest pass" : "latest failed"}
@@ -604,12 +632,12 @@ export default async function InternalBenchmarksPage({
                       <td>{formatNumber(run.scenario?.requestedBuyClicks)}</td>
                       <td>{formatNumber(run.requestPath?.accepted)}</td>
                       <td>{formatNumber(run.requestPath?.errors)}</td>
-                      <td>{formatNumber(run.requestPath?.p95LatencyMs)}ms</td>
-                      <td>{formatNumber(run.eventStore?.appendThroughputPerSecond)}</td>
+                      <td>{formatNumber(readRequestP95(run))}ms</td>
+                      <td>{formatNumber(readAppendThroughputPerSecond(run))}</td>
                       <td>{formatNumber(readProjectionLagEvents(run))}</td>
                       <td>{renderProfilingEvidence(run)}</td>
                       <td>
-                        <StatusSummary values={run.projections?.checkoutStatusDistribution} />
+                        <StatusSummary values={readCheckoutStatusDistribution(run)} />
                       </td>
                     </tr>
                   ))}
@@ -706,7 +734,7 @@ function summarizeScenarios(runs: BenchmarkRun[]): ScenarioSummary[] {
       return {
         latestErrors: latest?.requestPath?.errors,
         latestFinishedAt: latest?.finishedAt,
-        latestP95LatencyMs: latest?.requestPath?.p95LatencyMs,
+        latestP95LatencyMs: latest ? readRequestP95(latest) : undefined,
         latestPass: latest?.pass,
         name,
         runCount: scenarioRuns.length,
@@ -780,7 +808,7 @@ function RunComparison({
           label="request/sec"
           runs={runs}
           unit="/s"
-          valueFor={(run) => run.requestPath?.requestsPerSecond ?? 0}
+          valueFor={(run) => readRequestsPerSecond(run)}
         />
         <ComparisonChart
           definition="95th percentile request latency for the checkout intent API path. This is ingress latency, not end-to-end reservation or payment latency."
@@ -789,7 +817,7 @@ function RunComparison({
           label="p95 latency"
           runs={runs}
           unit="ms"
-          valueFor={(run) => run.requestPath?.p95LatencyMs ?? 0}
+          valueFor={(run) => readRequestP95(run)}
         />
         <ComparisonChart
           definition="Durable event append throughput. It tracks how quickly accepted work became event_store facts."
@@ -798,7 +826,7 @@ function RunComparison({
           label="append/sec"
           runs={runs}
           unit="/s"
-          valueFor={(run) => run.eventStore?.appendThroughputPerSecond ?? 0}
+          valueFor={(run) => readAppendThroughputPerSecond(run)}
         />
         <ComparisonChart
           definition="Request failures observed by the benchmark client. HTTP status 0 usually means no response was received."
@@ -854,8 +882,8 @@ function SelectedRunPanel({
           requests: formatNumber(run.scenario?.requestedBuyClicks),
           accepted: formatNumber(run.requestPath?.accepted),
           errors: formatNumber(run.requestPath?.errors),
-          "p95 latency": `${formatNumber(run.requestPath?.p95LatencyMs)}ms`,
-          "append/sec": formatNumber(run.eventStore?.appendThroughputPerSecond),
+          "p95 latency": `${formatNumber(readRequestP95(run))}ms`,
+          "append/sec": formatNumber(readAppendThroughputPerSecond(run)),
           "projection lag": formatNumber(readProjectionLagEvents(run)),
           profiling: run.profiling?.status ?? "disabled",
         }}
@@ -984,7 +1012,7 @@ function RunEvidenceComparison({ runs }: { runs: BenchmarkRun[] }) {
               <td>{formatDistribution(run.requestPath?.statusDistribution)}</td>
               <td>{formatDistribution(run.requestPath?.errorDistribution)}</td>
               <td>{formatDistribution(run.eventStore?.eventTypeDistribution)}</td>
-              <td>{formatDistribution(run.projections?.checkoutStatusDistribution)}</td>
+              <td>{formatDistribution(readCheckoutStatusDistribution(run))}</td>
               <td>{formatInventorySummary(run)}</td>
               <td>{formatIdempotencySummary(run)}</td>
             </tr>
@@ -1203,6 +1231,26 @@ function readProjectionLagEvents(run: BenchmarkRun) {
   return run.projections?.checkpointLagEvents ?? run.projections?.projectionLagEvents;
 }
 
+function readRequestP95(run: BenchmarkRun) {
+  return run.requestPath?.p95LatencyMs ?? run.requestPath?.acceptLatencyMs?.p95 ?? 0;
+}
+
+function readRequestsPerSecond(run: BenchmarkRun) {
+  return run.requestPath?.requestsPerSecond ?? run.requestPath?.acceptRequestsPerSecond ?? 0;
+}
+
+function readAppendThroughputPerSecond(run: BenchmarkRun) {
+  return run.eventStore?.appendThroughputPerSecond ?? run.commandLifecycle?.createdThroughputPerSecond ?? 0;
+}
+
+function readCheckoutStatusDistribution(run: BenchmarkRun) {
+  return (
+    run.projections?.checkoutStatusDistribution ??
+    run.checkoutLifecycle?.resolvedStatusDistribution ??
+    run.checkoutLifecycle?.displayReadyStatusDistribution
+  );
+}
+
 function scenarioNameFor(run: BenchmarkRun) {
   return run.scenarioName ?? run.conditions?.workload?.scenarioName ?? "unknown";
 }
@@ -1259,13 +1307,13 @@ function buildArchitectureLanes(runs: BenchmarkRun[], scenarioName: string): Arc
     );
     const points = orderedRuns.map((run) => ({
       acceptedRate: readAcceptedRate(run),
-      appendPerSecond: run.eventStore?.appendThroughputPerSecond ?? 0,
+      appendPerSecond: readAppendThroughputPerSecond(run),
       concurrency: concurrencyFor(run),
       errors: run.requestPath?.errors ?? 0,
       lag: readProjectionLagEvents(run) ?? 0,
-      p95LatencyMs: run.requestPath?.p95LatencyMs ?? 0,
+      p95LatencyMs: readRequestP95(run),
       pass: run.pass ?? false,
-      requestsPerSecond: run.requestPath?.requestsPerSecond ?? 0,
+      requestsPerSecond: readRequestsPerSecond(run),
     }));
 
     return {
@@ -1293,10 +1341,25 @@ function scenarioDescription(name: string) {
     return "Multi-SKU cart checkout ingress benchmark. It measures mixed-cart acceptance, durable event append, projection catch-up, idempotency, and per-SKU inventory invariants without reservation processing.";
   }
 
+  if (name === "buy-intent-temporal-payment-fail") {
+    return "Async buy-intent benchmark with Go Temporal orchestration, pending payment wait, and demo payment failure signal to release inventory.";
+  }
+
+  if (name === "buy-intent-bypass-created") {
+    return "Async buy-intent benchmark with Temporal bypassed. The flow stops at CheckoutIntentCreated and queued projection state.";
+  }
+
   return "Benchmark scenario. Compare only with runs from the same scenario and compatible run conditions.";
 }
 
 function formatConditionSummary(run: BenchmarkRun) {
+  if (run.conditions?.workload?.workloadType === "buy_intent_temporal_flow") {
+    const lane = run.conditions?.workload?.architectureLane ?? "unknown";
+    const concurrency = formatNumber(run.conditions?.workload?.httpConcurrency);
+
+    return `${lane} · c ${concurrency}`;
+  }
+
   const mode = run.conditions?.software?.nextMode ?? "unknown mode";
   const appInstances = formatNumber(run.conditions?.services?.nextjs?.instanceCount ?? 1);
   const pgInstances = formatNumber(run.conditions?.services?.postgres?.instanceCount ?? 1);
