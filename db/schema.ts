@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  boolean,
   bigint,
   bigserial,
   check,
@@ -14,6 +15,8 @@ import {
 } from "drizzle-orm/pg-core";
 
 import { checkoutStatuses } from "@/src/domain/checkout/status";
+import { buyIntentCommandStatuses } from "@/src/domain/checkout-command/command-status";
+import { stagingIngestStatuses } from "@/src/domain/checkout-command/staging-status";
 import { eventTypes } from "@/src/domain/events/event-type";
 import { orderStatuses } from "@/src/domain/order/status";
 import { paymentStatuses } from "@/src/domain/payment/status";
@@ -169,3 +172,57 @@ export const projectionCheckpoint = pgTable("projection_checkpoint", {
   lastEventId: bigint("last_event_id", { mode: "number" }).notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+export const commandStatus = pgTable(
+  "command_status",
+  {
+    commandId: uuid("command_id").primaryKey(),
+    correlationId: uuid("correlation_id").notNull(),
+    idempotencyKey: text("idempotency_key"),
+    status: text("status").notNull(),
+    checkoutIntentId: uuid("checkout_intent_id"),
+    eventId: uuid("event_id"),
+    isDuplicate: boolean("is_duplicate").notNull().default(false),
+    failureCode: text("failure_code"),
+    failureMessage: text("failure_message"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("command_status_correlation_id_unique").on(table.correlationId),
+    index("command_status_status_idx").on(table.status, table.updatedAt),
+    check(
+      "command_status_status_check",
+      sql`${table.status} in (${sqlStringList(buyIntentCommandStatuses)})`,
+    ),
+  ],
+);
+
+export const stagingBuyIntentCommand = pgTable(
+  "staging_buy_intent_command",
+  {
+    stagingId: bigserial("staging_id", { mode: "number" }).primaryKey(),
+    commandId: uuid("command_id").notNull(),
+    correlationId: uuid("correlation_id").notNull(),
+    idempotencyKey: text("idempotency_key"),
+    aggregateType: text("aggregate_type").notNull(),
+    aggregateId: text("aggregate_id").notNull(),
+    payloadJson: jsonb("payload_json").notNull(),
+    metadataJson: jsonb("metadata_json").notNull(),
+    ingestStatus: text("ingest_status").notNull().default("pending"),
+    batchId: uuid("batch_id"),
+    retryCount: integer("retry_count").notNull().default(0),
+    receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+    claimedAt: timestamp("claimed_at", { withTimezone: true }),
+    processedAt: timestamp("processed_at", { withTimezone: true }),
+    lastErrorCode: text("last_error_code"),
+  },
+  (table) => [
+    index("staging_buy_intent_command_ingest_status_idx").on(table.ingestStatus, table.receivedAt),
+    index("staging_buy_intent_command_command_id_idx").on(table.commandId),
+    check(
+      "staging_buy_intent_command_ingest_status_check",
+      sql`${table.ingestStatus} in (${sqlStringList(stagingIngestStatuses)})`,
+    ),
+  ],
+);
