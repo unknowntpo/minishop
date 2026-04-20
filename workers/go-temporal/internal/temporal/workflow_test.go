@@ -1,10 +1,12 @@
 package temporal
 
 import (
+	"context"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/testsuite"
 
 	"minishop/workers/go-temporal/internal/contracts"
@@ -19,6 +21,12 @@ var _ = Describe("BuyIntentCommandWorkflow", func() {
 
 	BeforeEach(func() {
 		env = suite.NewTestWorkflowEnvironment()
+		env.RegisterActivityWithOptions(
+			func(ctx context.Context, input CompleteCheckoutInput) error {
+				return nil
+			},
+			activity.RegisterOptions{Name: "complete-demo-checkout"},
+		)
 		input = contracts.WorkflowInput{
 			CommandID:     "cmd-123",
 			CorrelationID: "corr-123",

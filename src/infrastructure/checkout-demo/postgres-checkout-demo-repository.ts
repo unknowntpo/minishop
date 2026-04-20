@@ -16,10 +16,6 @@ type InventoryRow = {
   on_hand: number;
 };
 
-type QueuedCheckoutIntentRow = {
-  checkout_intent_id: string;
-};
-
 export function createPostgresCheckoutDemoRepository(pool: Pool): CheckoutDemoRepository {
   return {
     async findCheckoutIntent(checkoutIntentId) {
@@ -59,21 +55,6 @@ export function createPostgresCheckoutDemoRepository(pool: Pool): CheckoutDemoRe
       );
 
       return result.rows[0]?.on_hand ?? null;
-    },
-
-    async listQueuedCheckoutIntentIds(limit) {
-      const result = await pool.query<QueuedCheckoutIntentRow>(
-        `
-          select checkout_intent_id
-          from checkout_intent_projection
-          where status = 'queued'
-          order by updated_at asc, checkout_intent_id asc
-          limit $1
-        `,
-        [limit],
-      );
-
-      return result.rows.map((row) => row.checkout_intent_id);
     },
   };
 }

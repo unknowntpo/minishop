@@ -55,7 +55,7 @@ async function main() {
   process.env.NATS_URL = natsUrl;
   process.env.NATS_BUY_INTENT_INGEST_CONTINUOUS = "1";
 
-  execSync("docker compose up -d --build --remove-orphans app worker-buy-intents-ingest worker-buy-intents-temporal worker-projections worker-checkout-intents", {
+  execSync("docker compose up -d --build --remove-orphans app worker-buy-intents-ingest worker-buy-intents-temporal worker-projections", {
     cwd: workdir,
     stdio: "inherit",
   });

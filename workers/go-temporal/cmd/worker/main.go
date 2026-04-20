@@ -6,14 +6,15 @@ import (
 	"syscall"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	sdkactivity "go.temporal.io/sdk/activity"
 	sdkclient "go.temporal.io/sdk/client"
 	sdkworker "go.temporal.io/sdk/worker"
 	sdkworkflow "go.temporal.io/sdk/workflow"
 	"go.uber.org/zap"
 
 	"minishop/workers/go-temporal/internal/config"
-	"minishop/workers/go-temporal/internal/merge"
 	"minishop/workers/go-temporal/internal/logging"
+	"minishop/workers/go-temporal/internal/merge"
 	workerworkflow "minishop/workers/go-temporal/internal/temporal"
 )
 
@@ -52,6 +53,10 @@ func main() {
 	tw.RegisterWorkflowWithOptions(workerworkflow.BuyIntentCommandWorkflow, sdkworkflow.RegisterOptions{
 		Name: "buy-intent-command-workflow",
 	})
+	tw.RegisterActivityWithOptions(
+		workerworkflow.NewCheckoutCompletionActivities(pool, logger).CompleteCheckout,
+		sdkactivity.RegisterOptions{Name: "complete-demo-checkout"},
+	)
 
 	if err := tw.Start(); err != nil {
 		logger.Fatal("temporal_worker_start_failed", zap.Error(err))
