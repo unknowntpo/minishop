@@ -1,5 +1,9 @@
 import type { Pool, PoolClient } from "pg";
 import { applyProjectionEvent } from "@/src/infrastructure/projections/postgres-projection-writer";
+import {
+  extractContextFromTraceCarrier,
+  withSpan,
+} from "@/src/infrastructure/telemetry/otel";
 import type { StoredEvent } from "@/src/ports/event-store";
 import type {
   ProjectionBatchResult,
@@ -49,7 +53,21 @@ export function createPostgresProjectionRepository(pool: Pool): ProjectionReposi
         let lastEventId = checkpoint;
 
         for (const event of events) {
-          await applyProjectionEvent(client, event);
+          await withSpan(
+            "projection.apply_event",
+            {
+              attributes: {
+                "projection.name": projectionName,
+                "event.id": event.eventId,
+                "event.type": event.event.type,
+                "event.aggregate_type": event.aggregateType,
+                "event.aggregate_id": event.aggregateId,
+                "event.store_id": event.id,
+              },
+            },
+            async () => applyProjectionEvent(client, event),
+            extractContextFromTraceCarrier(event.metadata),
+          );
           lastEventId = event.id;
         }
 

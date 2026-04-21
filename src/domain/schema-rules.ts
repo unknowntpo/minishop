@@ -67,7 +67,10 @@ export function isEventMetadataJson(value: unknown) {
     isNonEmptyString(value.request_id) &&
     isNonEmptyString(value.trace_id) &&
     ["web", "api", "worker", "benchmark"].includes(String(value.source)) &&
-    isNonEmptyString(value.actor_id)
+    isNonEmptyString(value.actor_id) &&
+    optionalNonEmptyString(value.traceparent) &&
+    optionalNonEmptyString(value.tracestate) &&
+    optionalNonEmptyString(value.baggage)
   );
 }
 

@@ -10,6 +10,7 @@ import {
   getRequestContext,
   logApiError,
 } from "@/src/presentation/api/request-context";
+import { injectTraceCarrier } from "@/src/infrastructure/telemetry/otel";
 
 type RouteParams = {
   params: Promise<{
@@ -30,6 +31,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           trace_id: context.traceId,
           source: "worker",
           actor_id: "demo-checkout-completer",
+          ...injectTraceCarrier(),
         },
       },
       {

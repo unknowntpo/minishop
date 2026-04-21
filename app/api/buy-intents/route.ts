@@ -17,6 +17,7 @@ import {
   getRequestContext,
   logApiError,
 } from "@/src/presentation/api/request-context";
+import { injectTraceCarrier } from "@/src/infrastructure/telemetry/otel";
 
 export async function POST(request: NextRequest) {
   const context = getRequestContext(request);
@@ -36,6 +37,7 @@ export async function POST(request: NextRequest) {
           trace_id: context.traceId,
           source: "web",
           actor_id: body.buyerId,
+          ...injectTraceCarrier(),
         },
       },
       {

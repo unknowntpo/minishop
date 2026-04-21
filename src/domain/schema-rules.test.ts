@@ -48,6 +48,9 @@ describe("schema rules", () => {
         trace_id: "trace_123",
         source: "web",
         actor_id: "buyer_1",
+        traceparent: "00-11111111111111111111111111111111-2222222222222222-01",
+        tracestate: "vendor=value",
+        baggage: "tenant=minishop",
       }),
     ).toBe(true);
 
