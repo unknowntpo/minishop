@@ -1,4 +1,5 @@
-import type { SeckillBuyIntentRequest } from "@/src/domain/seckill/seckill-buy-intent-request";
+import type { CheckoutItem } from "@/src/domain/checkout/item";
+import type { EventMetadata } from "@/src/domain/events/event-metadata";
 
 export type SeckillCommandResult = {
   commandId: string;
@@ -13,8 +14,17 @@ export type SeckillCommandResult = {
   duplicate: boolean;
 };
 
+export type SeckillCommandOutcomeRequest = {
+  commandId: string;
+  correlationId: string;
+  buyerId: string;
+  items: CheckoutItem[];
+  idempotencyKey?: string | null;
+  metadata: EventMetadata;
+};
+
 export type SeckillCommandOutcome = {
-  request: SeckillBuyIntentRequest;
+  request: SeckillCommandOutcomeRequest;
   result: SeckillCommandResult;
   processedAt: string;
 };

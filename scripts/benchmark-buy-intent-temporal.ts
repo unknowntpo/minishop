@@ -63,9 +63,7 @@ type CreatedResult = {
 
 type SeckillCommandOutcome = {
   request: {
-    command: {
-      command_id: string;
-    };
+    commandId: string;
   };
   result: {
     commandId: string;
@@ -565,7 +563,7 @@ async function startSeckillOutcomeCollector(config: BenchmarkConfig) {
       }
 
       const outcome = JSON.parse(message.value.toString("utf8")) as SeckillCommandOutcome;
-      const commandId = outcome.result.commandId || outcome.request.command.command_id;
+      const commandId = outcome.result.commandId || outcome.request.commandId;
       const completedAtMs =
         Number(message.timestamp) || Date.parse(outcome.processedAt || "") || Date.now();
 

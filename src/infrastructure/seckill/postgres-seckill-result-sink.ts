@@ -39,19 +39,19 @@ export function createPostgresSeckillResultSink(pool: Pool) {
               result.checkoutIntentId,
               JSON.stringify({
                 checkout_intent_id: result.checkoutIntentId,
-                buyer_id: request.command.buyer_id,
-                items: request.command.items,
-                ...(request.command.idempotency_key
-                  ? { idempotency_key: request.command.idempotency_key }
+                buyer_id: request.buyerId,
+                items: request.items,
+                ...(request.idempotencyKey
+                  ? { idempotency_key: request.idempotencyKey }
                   : {}),
               }),
               JSON.stringify({
-                request_id: request.command.metadata.request_id,
-                trace_id: request.command.metadata.trace_id,
-                source: request.command.metadata.source,
-                actor_id: request.command.metadata.actor_id,
+                request_id: request.metadata.request_id,
+                trace_id: request.metadata.trace_id,
+                source: request.metadata.source,
+                actor_id: request.metadata.actor_id,
               }),
-              request.command.idempotency_key ?? null,
+              request.idempotencyKey ?? null,
               outcome.processedAt,
             ],
           );
@@ -85,7 +85,7 @@ export function createPostgresSeckillResultSink(pool: Pool) {
             [
               result.commandId,
               result.correlationId,
-              request.command.idempotency_key ?? null,
+              request.idempotencyKey ?? null,
               result.checkoutIntentId,
               result.eventId,
               result.duplicate,
@@ -117,7 +117,7 @@ export function createPostgresSeckillResultSink(pool: Pool) {
             [
               result.commandId,
               result.correlationId,
-              request.command.idempotency_key ?? null,
+              request.idempotencyKey ?? null,
               result.duplicate,
               result.failureReason ?? "seckill_out_of_stock",
             ],

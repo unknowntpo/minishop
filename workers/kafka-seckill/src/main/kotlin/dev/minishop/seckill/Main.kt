@@ -30,10 +30,15 @@ import java.util.UUID
 import java.util.concurrent.CountDownLatch
 
 private val mapper = jacksonObjectMapper()
+private val requestReader = mapper.readerFor(SeckillBuyIntentRequest::class.java)
+private val requestWriter = mapper.writerFor(SeckillBuyIntentRequest::class.java)
+private val outcomeWriter = mapper.writerFor(SeckillCommandOutcome::class.java)
 private val logger = LoggerFactory.getLogger("minishop-seckill")
 
 private const val INVENTORY_STORE_NAME = "inventory-store"
 private const val DEDUPE_STORE_NAME = "dedupe-store"
+private const val RETRY_KEY_PREFIX = "retry|"
+private const val RESULT_KEY_PREFIX = "result|"
 
 fun main() {
     val config = AppConfig.fromEnv()
@@ -65,19 +70,17 @@ fun main() {
         )
         .split(Named.`as`("seckill-output-"))
         .branch(
-            { _, value -> parseTopologyOutput(value).kind == "retry" },
+            { key, _ -> key.startsWith(RETRY_KEY_PREFIX) },
             Branched.withConsumer { stream ->
                 stream
-                    .selectKey { _, value -> parseTopologyOutput(value).outputKey }
-                    .mapValues { value -> parseTopologyOutput(value).payload }
+                    .selectKey { key, _ -> stripRoutingPrefix(key) }
                     .to(config.requestTopic)
             }
         )
         .defaultBranch(
             Branched.withConsumer { stream ->
                 stream
-                    .selectKey { _, value -> parseTopologyOutput(value).outputKey }
-                    .mapValues { value -> parseTopologyOutput(value).payload }
+                    .selectKey { key, _ -> stripRoutingPrefix(key) }
                     .to(config.resultTopic)
             }
         )
@@ -204,9 +207,9 @@ class SeckillDecisionProcessor(
     }
 
     override fun process(record: Record<String, String>) {
-        val request = mapper.readValue<SeckillBuyIntentRequest>(record.value()).normalized()
+        val request = requestReader.readValue<SeckillBuyIntentRequest>(record.value()).normalized()
         val dedupeKey = request.command.idempotency_key ?: request.command.command_id
-        val storedResult = dedupeStore.get(dedupeKey)?.let { mapper.readValue<SeckillCommandResult>(it) }
+        val storedResult = dedupeStore.get(dedupeKey)?.let { decodeStoredResult(it, request) }
         val processedAt = Instant.now().toString()
 
         if (storedResult != null) {
@@ -220,7 +223,7 @@ class SeckillDecisionProcessor(
         }
 
         var state = inventoryStore.get(record.key())
-            ?.let { mapper.readValue<SeckillInventoryState>(it) }
+            ?.let { decodeInventoryState(request, it) }
             ?: bootstrapGateway.loadInitialState(
                 request.sku_id,
                 request.seckill_stock_limit,
@@ -273,8 +276,8 @@ class SeckillDecisionProcessor(
                     eventId = eventId,
                     duplicate = false,
                 )
-                inventoryStore.put(record.key(), mapper.writeValueAsString(state))
-                dedupeStore.put(dedupeKey, mapper.writeValueAsString(result))
+                inventoryStore.put(record.key(), encodeInventoryState(state))
+                dedupeStore.put(dedupeKey, encodeStoredResult(result))
                 forwardFinalOutcome(record, request, result, processedAt)
                 return
         }
@@ -302,7 +305,7 @@ class SeckillDecisionProcessor(
             eventId = null,
             duplicate = false,
         )
-        dedupeStore.put(dedupeKey, mapper.writeValueAsString(result))
+        dedupeStore.put(dedupeKey, encodeStoredResult(result))
         forwardFinalOutcome(record, request, result, processedAt)
     }
 
@@ -310,16 +313,8 @@ class SeckillDecisionProcessor(
         val processingKey = request.processing_key ?: buildProcessingKey(request.sku_id, request.bucket_id)
         context().forward(
             record
-                .withKey(processingKey)
-                .withValue(
-                    mapper.writeValueAsString(
-                        SeckillTopologyOutput(
-                            kind = "retry",
-                            outputKey = processingKey,
-                            payload = mapper.writeValueAsString(request),
-                        )
-                    )
-                )
+                .withKey("$RETRY_KEY_PREFIX$processingKey")
+                .withValue(requestWriter.writeValueAsString(request))
         )
     }
 
@@ -332,19 +327,20 @@ class SeckillDecisionProcessor(
         val processingKey = request.processing_key ?: buildProcessingKey(request.sku_id, request.bucket_id)
         context().forward(
             record
-                .withKey(processingKey)
+                .withKey("$RESULT_KEY_PREFIX$processingKey")
                 .withValue(
-                    mapper.writeValueAsString(
-                        SeckillTopologyOutput(
-                            kind = "result",
-                            outputKey = processingKey,
-                            payload = mapper.writeValueAsString(
-                                SeckillCommandOutcome(
-                                    request = request,
-                                    result = result,
-                                    processedAt = processedAt,
-                                )
+                    outcomeWriter.writeValueAsString(
+                        SeckillCommandOutcome(
+                            request = SeckillCommandOutcomeRequest(
+                                commandId = request.command.command_id,
+                                correlationId = request.command.correlation_id,
+                                buyerId = request.command.buyer_id,
+                                items = request.command.items,
+                                idempotencyKey = request.command.idempotency_key,
+                                metadata = request.command.metadata,
                             ),
+                            result = result,
+                            processedAt = processedAt,
                         )
                     )
                 )
@@ -433,22 +429,68 @@ data class SeckillCommandResult(
 )
 
 data class SeckillCommandOutcome(
-    val request: SeckillBuyIntentRequest,
+    val request: SeckillCommandOutcomeRequest,
     val result: SeckillCommandResult,
     val processedAt: String,
 )
 
-data class SeckillTopologyOutput(
-    val kind: String,
-    val outputKey: String,
-    val payload: String,
+data class SeckillCommandOutcomeRequest(
+    val commandId: String,
+    val correlationId: String,
+    val buyerId: String,
+    val items: List<CheckoutItem>,
+    val idempotencyKey: String? = null,
+    val metadata: EventMetadata,
 )
-
-private fun parseTopologyOutput(value: String): SeckillTopologyOutput =
-    mapper.readValue(value)
 
 private fun buildProcessingKey(skuId: String, bucketId: Int): String =
     "$skuId#${bucketId.toString().padStart(2, '0')}"
+
+private fun stripRoutingPrefix(key: String): String =
+    key.substringAfter('|', key)
+
+private fun encodeInventoryState(state: SeckillInventoryState): String =
+    "${state.projectionAvailableRemaining}|${state.configuredStockLimit}|${state.acceptedUnits}"
+
+private fun decodeInventoryState(request: SeckillBuyIntentRequest, encoded: String): SeckillInventoryState {
+    val parts = encoded.split('|', limit = 3)
+    require(parts.size == 3) { "Invalid inventory state encoding" }
+    return SeckillInventoryState(
+        skuId = request.sku_id,
+        bucketId = request.bucket_id,
+        projectionAvailableRemaining = parts[0].toInt(),
+        configuredStockLimit = parts[1].toInt(),
+        acceptedUnits = parts[2].toInt(),
+    )
+}
+
+private fun encodeStoredResult(result: SeckillCommandResult): String =
+    listOf(
+        result.skuId,
+        result.checkoutIntentId.orEmpty(),
+        result.status,
+        result.requestedQuantity.toString(),
+        result.seckillStockLimit.toString(),
+        result.failureReason.orEmpty(),
+        result.eventId.orEmpty(),
+    ).joinToString("|")
+
+private fun decodeStoredResult(encoded: String, request: SeckillBuyIntentRequest): SeckillCommandResult {
+    val parts = encoded.split('|', limit = 7)
+    require(parts.size == 7) { "Invalid dedupe result encoding" }
+    return SeckillCommandResult(
+        commandId = request.command.command_id,
+        correlationId = request.command.correlation_id,
+        skuId = parts[0],
+        checkoutIntentId = parts[1].ifEmpty { null },
+        status = parts[2],
+        requestedQuantity = parts[3].toInt(),
+        seckillStockLimit = parts[4].toInt(),
+        failureReason = parts[5].ifEmpty { null },
+        eventId = parts[6].ifEmpty { null },
+        duplicate = false,
+    )
+}
 
 private fun bucketLimitFor(totalStockLimit: Int, bucketCount: Int, bucketId: Int): Int {
     val base = totalStockLimit / bucketCount
