@@ -1,7 +1,10 @@
 import { type NextRequest, NextResponse } from "next/server";
 
 import { acceptBuyIntentCommand } from "@/src/application/checkout/accept-buy-intent-command";
-import { buyIntentCommandBus } from "@/src/infrastructure/checkout-command";
+import {
+  buyIntentCommandBus,
+  MixedCartWithSeckillNotSupportedError,
+} from "@/src/infrastructure/checkout-command";
 import { systemClock } from "@/src/ports/clock";
 import { cryptoIdGenerator } from "@/src/ports/id-generator";
 import {
@@ -57,6 +60,16 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     logApiError("buy_intent_accept_failed", context, error);
+
+    if (error instanceof MixedCartWithSeckillNotSupportedError) {
+      return NextResponse.json(apiErrorBody(error.message, context), {
+        status: 400,
+        headers: {
+          "x-request-id": context.requestId,
+          "x-trace-id": context.traceId,
+        },
+      });
+    }
 
     return NextResponse.json(
       apiErrorBody("Buy intent command could not be accepted. Please try again.", context),

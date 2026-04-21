@@ -28,6 +28,13 @@ type CachedSeckillSkuConfig = {
 
 const seckillSkuConfigCache = new Map<string, CachedSeckillSkuConfig>();
 
+export class MixedCartWithSeckillNotSupportedError extends Error {
+  constructor() {
+    super("Mixed cart with seckill SKU is not supported. Please checkout seckill items separately.");
+    this.name = "MixedCartWithSeckillNotSupportedError";
+  }
+}
+
 export function createRoutingBuyIntentCommandBus(options: RoutingBuyIntentCommandBusOptions): BuyIntentCommandBus {
   return {
     async publish(command: BuyIntentCommand) {
@@ -66,6 +73,16 @@ async function toSeckillRequest(
   seckillSkuConfigTtlMs: number,
 ) {
   if (command.items.length !== 1) {
+    const hasSeckillSku = await containsSeckillSku(
+      pool,
+      command.items.map((item) => item.sku_id),
+      seckillSkuConfigTtlMs,
+    );
+
+    if (hasSeckillSku) {
+      throw new MixedCartWithSeckillNotSupportedError();
+    }
+
     return null;
   }
 
@@ -125,6 +142,51 @@ async function readSeckillSkuConfig(pool: Pool, skuId: string, seckillSkuConfigT
   });
 
   return config;
+}
+
+async function containsSeckillSku(pool: Pool, skuIds: string[], seckillSkuConfigTtlMs: number) {
+  const uniqueSkuIds = [...new Set(skuIds)];
+
+  const uncachedSkuIds = uniqueSkuIds.filter((skuId) => {
+    const cached = seckillSkuConfigCache.get(skuId);
+    return !(cached && cached.expiresAtMs > Date.now());
+  });
+
+  if (uncachedSkuIds.length > 0) {
+    const result = await pool.query<SeckillSkuRow & { sku_id: string }>(
+      `
+        select sku_id, seckill_enabled, seckill_stock_limit
+        from sku
+        where sku_id = any($1::text[])
+      `,
+      [uncachedSkuIds],
+    );
+
+    const rowsBySkuId = new Map(
+      result.rows.map((row) => [
+        row.sku_id,
+        {
+          enabled: row.seckill_enabled,
+          stockLimit: row.seckill_stock_limit,
+        },
+      ]),
+    );
+
+    const now = Date.now();
+    for (const skuId of uncachedSkuIds) {
+      const config = rowsBySkuId.get(skuId) ?? {
+        enabled: false,
+        stockLimit: null,
+      };
+
+      seckillSkuConfigCache.set(skuId, {
+        ...config,
+        expiresAtMs: now + seckillSkuConfigTtlMs,
+      });
+    }
+  }
+
+  return uniqueSkuIds.some((skuId) => seckillSkuConfigCache.get(skuId)?.enabled === true);
 }
 
 function selectPrimaryBucket(stableKey: string, bucketCount: number) {
