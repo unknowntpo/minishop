@@ -1313,6 +1313,13 @@ button.design-preview {
   font-size: 11px;
 }
 
+.capacity-point-tooltip-runid {
+  color: var(--ms-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 10px;
+  font-weight: 800;
+}
+
 .capacity-point-group:is(:hover, :focus-visible) .capacity-point {
   r: 5.5;
 }

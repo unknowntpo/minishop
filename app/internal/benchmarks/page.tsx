@@ -935,7 +935,8 @@ function ComparisonChart({
                 <div className="capacity-point-tooltip-card">
                   <strong>{tickLabel}</strong>
                   <span>{formatPlotHoverValue(y, unit)}</span>
-                  <span>{displayRunShortName(run, index + 1)}</span>
+                  <span>{displayRunName(run)}</span>
+                  <span className="capacity-point-tooltip-runid">run {shortRunId(run.runId)}</span>
                   <span>{formatScenarioTags(run)}</span>
                 </div>
               </foreignObject>
