@@ -15,6 +15,15 @@ type BenchmarkReport = {
   scenarioName?: string;
   scenarioFamily?: string;
   scenarioTags?: Record<string, string | number | boolean>;
+  measurements?: Array<{
+    key?: string;
+    label?: string;
+    unit?: string;
+    value?: number;
+    definition?: string;
+    calculation?: string;
+    interpretation?: string;
+  }>;
   startedAt?: string;
   finishedAt?: string;
   pass?: boolean;
@@ -595,41 +604,16 @@ export default async function InternalBenchmarksPage({
               </div>
 
               <div className="capacity-chart-grid">
-                <LaneMetricChart
-                  description="How much of the intended burst the ingress path actually accepted."
-                  label="accepted rate"
-                  lanes={architectureLanes}
-                  unit="%"
-                  valueFor={(point) => point.acceptedRate * 100}
-                />
-                <LaneMetricChart
-                  description={ingressMetricDescription(capacityScenarioName)}
-                  label={ingressMetricLabel(capacityScenarioName)}
-                  lanes={architectureLanes}
-                  unit="/s"
-                  valueFor={(point) => point.requestsPerSecond}
-                />
-                <LaneMetricChart
-                  description="Tail latency at the checkout intent API boundary."
-                  label="p95 latency"
-                  lanes={architectureLanes}
-                  unit="ms"
-                  valueFor={(point) => point.p95LatencyMs}
-                />
-                <LaneMetricChart
-                  description={throughputMetricDescription(capacityScenarioName)}
-                  label={throughputMetricLabel(capacityScenarioName)}
-                  lanes={architectureLanes}
-                  unit="/s"
-                  valueFor={(point) => point.appendPerSecond}
-                />
-                <LaneMetricChart
-                  description="Projection distance from durable events after processing completes."
-                  label="projection lag"
-                  lanes={architectureLanes}
-                  unit="events"
-                  valueFor={(point) => point.lag}
-                />
+                {capacityMeasurementDefinitionsForScenario(selectedScenarioRuns).map((measurement) => (
+                  <LaneMetricChart
+                    key={measurement.key}
+                    description={measurement.definition ?? ""}
+                    label={measurement.label}
+                    lanes={architectureLanes}
+                    unit={measurement.unit}
+                    valueFor={(point) => readLaneMeasurementValue(point, measurement.key)}
+                  />
+                ))}
               </div>
             </section>
           ) : null}
@@ -839,60 +823,18 @@ function RunComparison({
       </div>
 
       <div className="benchmark-comparison-grid">
-        <ComparisonChart
-          definition="Accepted requests divided by requested Buy clicks. It tells you how much of the intended load was admitted by the API."
-          calculation="accepted / requestedBuyClicks * 100"
-          interpretation="Aim to stay close to 100%. A drop means the ingress path is rejecting or losing work before durable append and projection verification."
-          label="accepted rate"
-          runs={runs}
-          unit="%"
-          valueFor={(run) => Math.round(readAcceptedRate(run) * 100)}
-        />
-        <ComparisonChart
-          definition={ingressMetricDefinition(scenarioName)}
-          calculation={ingressMetricCalculation(scenarioName)}
-          interpretation={ingressMetricInterpretation(scenarioName)}
-          label={ingressMetricLabel(scenarioName)}
-          runs={runs}
-          unit="/s"
-          valueFor={(run) => readRequestsPerSecond(run)}
-        />
-        <ComparisonChart
-          definition="95th percentile request latency for the checkout intent API path. This is ingress latency, not end-to-end reservation or payment latency."
-          calculation="95th percentile of per-request latency samples"
-          interpretation="This shows the slow tail. Spikes usually indicate queueing, database pressure, or server saturation."
-          label="p95 latency"
-          runs={runs}
-          unit="ms"
-          valueFor={(run) => readRequestP95(run)}
-        />
-        <ComparisonChart
-          definition={throughputMetricDefinition(scenarioName)}
-          calculation={throughputMetricCalculation(scenarioName)}
-          interpretation={throughputMetricInterpretation(scenarioName)}
-          label={throughputMetricLabel(scenarioName)}
-          runs={runs}
-          unit="/s"
-          valueFor={(run) => readAppendThroughputPerSecond(run)}
-        />
-        <ComparisonChart
-          definition="Request failures observed by the benchmark client. HTTP status 0 usually means no response was received."
-          calculation="requestedBuyClicks - accepted"
-          interpretation="Use this with HTTP status and error distributions below to separate transport failure from application rejection."
-          label="errors"
-          runs={runs}
-          unit=""
-          valueFor={(run) => run.requestPath?.errors ?? 0}
-        />
-        <ComparisonChart
-          definition="Distance between event_store position and projection checkpoint after processing."
-          calculation="eventStoreLastEventId - checkpointLastEventId"
-          interpretation="Zero means projections caught up by the end of verification. Sustained non-zero lag means read models are behind writes."
-          label="projection lag"
-          runs={runs}
-          unit="events"
-          valueFor={(run) => readProjectionLagEvents(run) ?? 0}
-        />
+        {measurementDefinitionsForRuns(runs).map((measurement) => (
+          <ComparisonChart
+            key={measurement.key}
+            definition={measurement.definition ?? ""}
+            calculation={measurement.calculation ?? ""}
+            interpretation={measurement.interpretation ?? ""}
+            label={measurement.label}
+            runs={runs}
+            unit={measurement.unit}
+            valueFor={(run) => readMeasurementValue(run, measurement.key)}
+          />
+        ))}
       </div>
 
       <RunEvidenceComparison runs={runs} />
@@ -927,11 +869,12 @@ function SelectedRunPanel({
       <KeyValueList
         values={{
           requests: formatNumber(run.scenario?.requestedBuyClicks),
-          accepted: formatNumber(run.requestPath?.accepted),
-          errors: formatNumber(run.requestPath?.errors),
-          "p95 latency": `${formatNumber(readRequestP95(run))}ms`,
-          [throughputMetricLabelForRun(run)]: formatNumber(readAppendThroughputPerSecond(run)),
-          "projection lag": formatNumber(readProjectionLagEvents(run)),
+          ...Object.fromEntries(
+            measurementsForRun(run).map((measurement) => [
+              measurement.label,
+              formatMeasurementValue(measurement),
+            ]),
+          ),
           profiling: run.profiling?.status ?? "disabled",
         }}
       />
@@ -1381,6 +1324,175 @@ function StatusSummary({ values }: { values: Record<string, number> | undefined 
 
 function timestampFor(run: BenchmarkRun) {
   return Date.parse(run.finishedAt ?? run.startedAt ?? "") || 0;
+}
+
+function measurementsForRun(run: BenchmarkRun) {
+  if (run.measurements && run.measurements.length > 0) {
+    return run.measurements
+      .filter(
+        (measurement): measurement is NonNullable<BenchmarkRun["measurements"]>[number] =>
+          Boolean(measurement?.key && measurement?.label && typeof measurement?.value === "number"),
+      )
+      .map((measurement) => ({
+        key: measurement.key as string,
+        label: measurement.label as string,
+        unit: measurement.unit ?? "",
+        value: measurement.value as number,
+        definition: measurement.definition,
+        calculation: measurement.calculation,
+        interpretation: measurement.interpretation,
+      }));
+  }
+
+  return buildLegacyMeasurements(run);
+}
+
+function measurementDefinitionsForRuns(runs: BenchmarkRun[]) {
+  const definitions = new Map<
+    string,
+    {
+      key: string;
+      label: string;
+      unit: string;
+      definition?: string;
+      calculation?: string;
+      interpretation?: string;
+    }
+  >();
+
+  for (const run of runs) {
+    for (const measurement of measurementsForRun(run)) {
+      if (!definitions.has(measurement.key)) {
+        definitions.set(measurement.key, {
+          key: measurement.key,
+          label: measurement.label,
+          unit: measurement.unit,
+          definition: measurement.definition,
+          calculation: measurement.calculation,
+          interpretation: measurement.interpretation,
+        });
+      }
+    }
+  }
+
+  return [...definitions.values()];
+}
+
+function capacityMeasurementDefinitionsForScenario(runs: BenchmarkRun[]) {
+  const allowed = new Set([
+    "accepted_rate",
+    "ingress_throughput",
+    "ingress_p95_latency",
+    "result_throughput",
+    "projection_lag",
+  ]);
+
+  return measurementDefinitionsForRuns(runs).filter((measurement) => allowed.has(measurement.key));
+}
+
+function readMeasurementValue(run: BenchmarkRun, key: string) {
+  return measurementsForRun(run).find((measurement) => measurement.key === key)?.value ?? 0;
+}
+
+function readLaneMeasurementValue(point: CapacityPoint, key: string) {
+  switch (key) {
+    case "accepted_rate":
+      return point.acceptedRate * 100;
+    case "ingress_throughput":
+      return point.requestsPerSecond;
+    case "ingress_p95_latency":
+      return point.p95LatencyMs;
+    case "result_throughput":
+      return point.appendPerSecond;
+    case "projection_lag":
+      return point.lag;
+    default:
+      return 0;
+  }
+}
+
+function buildLegacyMeasurements(run: BenchmarkRun) {
+  return [
+    {
+      key: "accepted_rate",
+      label: "accepted rate",
+      unit: "%",
+      value: readAcceptedRate(run) * 100,
+      definition:
+        "Accepted requests divided by requested Buy clicks. It tells you how much of the intended load was admitted by the API.",
+      calculation: "accepted / requestedBuyClicks",
+      interpretation:
+        "Aim to stay close to 100%. A drop means the ingress path is rejecting or losing work before durable append and projection verification.",
+    },
+    {
+      key: "ingress_throughput",
+      label: ingressMetricLabel(scenarioNameFor(run)),
+      unit: "/s",
+      value: readRequestsPerSecond(run),
+      definition: ingressMetricDefinition(scenarioNameFor(run)),
+      calculation: ingressMetricCalculation(scenarioNameFor(run)),
+      interpretation: ingressMetricInterpretation(scenarioNameFor(run)),
+    },
+    {
+      key: "ingress_p95_latency",
+      label: "p95 latency",
+      unit: "ms",
+      value: readRequestP95(run),
+      definition:
+        "95th percentile request latency for the checkout intent API path. This is ingress latency, not end-to-end reservation or payment latency.",
+      calculation: "95th percentile of per-request latency samples",
+      interpretation:
+        "This shows the slow tail. Spikes usually indicate queueing, database pressure, or server saturation.",
+    },
+    {
+      key: "result_throughput",
+      label: throughputMetricLabel(scenarioNameFor(run)),
+      unit: "/s",
+      value: readAppendThroughputPerSecond(run),
+      definition: throughputMetricDefinition(scenarioNameFor(run)),
+      calculation: throughputMetricCalculation(scenarioNameFor(run)),
+      interpretation: throughputMetricInterpretation(scenarioNameFor(run)),
+    },
+    {
+      key: "errors",
+      label: "errors",
+      unit: "",
+      value: run.requestPath?.errors ?? 0,
+      definition: "Request failures observed by the benchmark client. HTTP status 0 usually means no response was received.",
+      calculation: "requestedBuyClicks - accepted",
+      interpretation:
+        "Use this with HTTP status and error distributions below to separate transport failure from application rejection.",
+    },
+    {
+      key: "projection_lag",
+      label: "projection lag",
+      unit: "events",
+      value: readProjectionLagEvents(run) ?? 0,
+      definition: "Distance between event_store position and projection checkpoint after processing.",
+      calculation: "eventStoreLastEventId - checkpointLastEventId",
+      interpretation:
+        "Zero means projections caught up by the end of verification. Sustained non-zero lag means read models are behind writes.",
+    },
+  ];
+}
+
+function formatMeasurementValue(measurement: {
+  value: number;
+  unit: string;
+}) {
+  if (!Number.isFinite(measurement.value)) {
+    return "n/a";
+  }
+
+  if (measurement.unit === "%") {
+    return `${formatNumber(Math.round(measurement.value))}%`;
+  }
+
+  if (measurement.unit === "") {
+    return formatNumber(measurement.value);
+  }
+
+  return `${formatNumber(measurement.value)}${measurement.unit}`;
 }
 
 function readProjectionLagEvents(run: BenchmarkRun) {
