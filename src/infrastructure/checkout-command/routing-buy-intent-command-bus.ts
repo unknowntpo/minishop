@@ -12,6 +12,7 @@ type RoutingBuyIntentCommandBusOptions = {
   pool: Pool;
   bucketCount: number;
   maxProbe: number;
+  seckillSkuConfigTtlMs: number;
 };
 
 type SeckillSkuRow = {
@@ -26,12 +27,17 @@ type CachedSeckillSkuConfig = {
 };
 
 const seckillSkuConfigCache = new Map<string, CachedSeckillSkuConfig>();
-const seckillSkuConfigTtlMs = 5_000;
 
 export function createRoutingBuyIntentCommandBus(options: RoutingBuyIntentCommandBusOptions): BuyIntentCommandBus {
   return {
     async publish(command: BuyIntentCommand) {
-      const seckillRequest = await toSeckillRequest(command, options.pool, options.bucketCount, options.maxProbe);
+      const seckillRequest = await toSeckillRequest(
+        command,
+        options.pool,
+        options.bucketCount,
+        options.maxProbe,
+        options.seckillSkuConfigTtlMs,
+      );
 
       if (seckillRequest) {
         await options.seckillBus.publish(seckillRequest);
@@ -57,13 +63,14 @@ async function toSeckillRequest(
   pool: Pool,
   bucketCount: number,
   maxProbe: number,
+  seckillSkuConfigTtlMs: number,
 ) {
   if (command.items.length !== 1) {
     return null;
   }
 
   const [item] = command.items;
-  const config = await readSeckillSkuConfig(pool, item.sku_id);
+  const config = await readSeckillSkuConfig(pool, item.sku_id, seckillSkuConfigTtlMs);
 
   if (!config.enabled || config.stockLimit === null) {
     return null;
@@ -86,7 +93,7 @@ async function toSeckillRequest(
   } satisfies SeckillBuyIntentRequest;
 }
 
-async function readSeckillSkuConfig(pool: Pool, skuId: string) {
+async function readSeckillSkuConfig(pool: Pool, skuId: string, seckillSkuConfigTtlMs: number) {
   const now = Date.now();
   const cached = seckillSkuConfigCache.get(skuId);
   if (cached && cached.expiresAtMs > now) {

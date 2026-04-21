@@ -91,6 +91,10 @@ function getRuntimeCommandBus() {
             readRuntimeEnv("KAFKA_SECKILL_MAX_PROBE") || "4",
             10,
           ),
+          seckillSkuConfigTtlMs: Number.parseInt(
+            readRuntimeEnv("KAFKA_SECKILL_CONFIG_CACHE_TTL_MS") || "60000",
+            10,
+          ),
         })
       : defaultBus;
 
