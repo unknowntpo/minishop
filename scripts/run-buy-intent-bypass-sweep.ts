@@ -57,7 +57,7 @@ const hotSkuUnits = readPositiveIntegerEnv("BENCHMARK_HOT_SKU_UNITS", 1000000);
 const concurrencies = readConcurrencyList(process.env.BENCHMARK_SWEEP_CONCURRENCIES ?? "50,100,200,400,800,1000");
 
 async function main() {
-  execSync("docker compose up -d postgres nats temporal", {
+  execSync("docker compose up -d postgres nats", {
     cwd: workdir,
     stdio: "inherit",
     env: process.env,
@@ -104,21 +104,14 @@ async function main() {
       },
     );
 
-    execSync("docker compose stop worker-buy-intents-temporal", {
-      cwd: workdir,
-      stdio: "inherit",
-      env: process.env,
-    });
-
     await assertAppReachable(appUrl);
 
     console.log(`[benchmark:sweep] running requests=${requests} concurrency=${concurrency}`);
-    execSync("pnpm --config.engine-strict=false benchmark:buy-intent:temporal", {
+    execSync("pnpm --config.engine-strict=false benchmark:buy-intent", {
       cwd: workdir,
       stdio: "inherit",
       env: {
         ...process.env,
-        BENCHMARK_TEMPORAL_MODE: "bypass",
         BENCHMARK_SCENARIO_NAME: scenarioName,
         BENCHMARK_REQUESTS: String(requests),
         BENCHMARK_HTTP_CONCURRENCY: String(concurrency),

@@ -145,6 +145,8 @@ export function CheckoutAction({
       });
 
       await processProjections();
+      await completeDemoCheckout(commandStatus.checkoutIntentId);
+      await processProjections();
       const completedStatus = await waitForCheckoutStatus(commandStatus.checkoutIntentId);
 
       setState({
@@ -222,6 +224,19 @@ async function processProjections() {
 
   if (!body.locked) {
     throw new Error("Projection processing is busy. Please try again.");
+  }
+}
+
+async function completeDemoCheckout(checkoutIntentId: string) {
+  const response = await fetch(`/api/internal/checkout-intents/${checkoutIntentId}/complete-demo`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(await readError(response));
   }
 }
 

@@ -309,11 +309,6 @@ worker-buy-intents-ingest
 
 worker-staged-buy-intents-process
   process staged buy intent commands
-  -> command_status + event_store              (bypass lane)
-
-worker-buy-intents-temporal
-  process staged buy intent commands
-  -> Temporal workflow
   -> command_status + event_store
 
 worker-projections

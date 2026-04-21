@@ -55,7 +55,7 @@ async function main() {
   process.env.NATS_URL = natsUrl;
   process.env.NATS_BUY_INTENT_INGEST_CONTINUOUS = "1";
 
-  execSync("docker compose up -d --build --remove-orphans app worker-buy-intents-ingest worker-buy-intents-temporal worker-projections", {
+  execSync("docker compose up -d --build --remove-orphans app worker-buy-intents-ingest worker-staged-buy-intents-process worker-projections", {
     cwd: workdir,
     stdio: "inherit",
   });
@@ -85,43 +85,30 @@ async function main() {
   }
 
   const checkoutIntentId = firstStatus.checkoutIntentId;
-  const checkoutStatus = await waitForCheckoutStatus(
-    appBaseUrl,
-    checkoutIntentId,
-    (status) => status !== "queued" && status !== "reserving",
-    "a display-ready status",
-  );
-
-  if (checkoutStatus.status !== "pending_payment") {
-    throw new Error(`Expected pending_payment checkout status, got ${checkoutStatus.status}.`);
-  }
-
-  const paymentSignalResponse = await fetch(
-    `${appBaseUrl}/api/internal/buy-intent-commands/${firstCommandId}/payment-demo`,
+  await processProjections(appBaseUrl);
+  const demoCompletionResponse = await fetch(
+    `${appBaseUrl}/api/internal/checkout-intents/${checkoutIntentId}/complete-demo`,
     {
       method: "POST",
       headers: {
         "content-type": "application/json",
       },
-      body: JSON.stringify({
-        outcome: "succeeded",
-      }),
     },
   );
 
-  if (!paymentSignalResponse.ok) {
-    throw new Error(`Expected payment signal to succeed, got ${paymentSignalResponse.status}.`);
+  if (!demoCompletionResponse.ok) {
+    throw new Error(`Expected demo checkout completion to succeed, got ${demoCompletionResponse.status}.`);
   }
 
-  const finalCheckoutStatus = await waitForCheckoutStatus(
+  const checkoutStatus = await waitForCheckoutStatus(
     appBaseUrl,
     checkoutIntentId,
-    (status) => status === "confirmed",
-    "confirmed",
+    (status) => status === "confirmed" || status === "rejected",
+    "a display-ready status",
   );
 
-  if (finalCheckoutStatus.status !== "confirmed") {
-    throw new Error(`Expected confirmed checkout status, got ${finalCheckoutStatus.status}.`);
+  if (checkoutStatus.status !== "confirmed") {
+    throw new Error(`Expected confirmed checkout status, got ${checkoutStatus.status}.`);
   }
 
   const completionPage = await fetch(`${appBaseUrl}/checkout-complete/${checkoutIntentId}`).then(
@@ -146,7 +133,7 @@ async function main() {
         firstCommandId,
         secondCommandId,
         checkoutIntentId,
-        checkoutStatus: finalCheckoutStatus.status,
+        checkoutStatus: checkoutStatus.status,
         firstEventId: firstStatus.eventId,
         secondEventId: secondStatus.eventId,
       },
@@ -245,20 +232,7 @@ async function waitForCheckoutStatus(
   const deadline = Date.now() + 30_000;
 
   while (Date.now() < deadline) {
-    const processResponse = await fetch(`${baseUrl}/api/internal/projections/process`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        projectionName: "main",
-        batchSize: 100,
-      }),
-    });
-
-    if (!processResponse.ok && processResponse.status !== 409) {
-      throw new Error(`Projection processing failed with ${processResponse.status}.`);
-    }
+    await processProjections(baseUrl);
 
     const response = await fetch(`${baseUrl}/api/checkout-intents/${checkoutIntentId}`);
 
@@ -278,6 +252,23 @@ async function waitForCheckoutStatus(
   throw new Error(
     `Checkout intent ${checkoutIntentId} did not reach ${expectedDescription} in time.`,
   );
+}
+
+async function processProjections(baseUrl: string) {
+  const processResponse = await fetch(`${baseUrl}/api/internal/projections/process`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      projectionName: "main",
+      batchSize: 100,
+    }),
+  });
+
+  if (!processResponse.ok && processResponse.status !== 409) {
+    throw new Error(`Projection processing failed with ${processResponse.status}.`);
+  }
 }
 
 async function waitForPostgres(connectionString: string) {

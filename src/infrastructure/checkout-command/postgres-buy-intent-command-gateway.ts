@@ -1,3 +1,7 @@
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+
+import { from as copyFrom } from "pg-copy-streams";
 import type { Pool, PoolClient } from "pg";
 
 import type { BuyIntentCommand } from "@/src/domain/checkout-command/buy-intent-command";
@@ -79,35 +83,7 @@ export function createPostgresBuyIntentCommandGateway(pool: Pool): BuyIntentComm
     },
 
     async stage(input) {
-      const command = input.command;
-      await pool.query(
-        `
-          insert into staged_buy_intent_command (
-            command_id,
-            correlation_id,
-            idempotency_key,
-            aggregate_type,
-            aggregate_id,
-            payload_json,
-            metadata_json,
-            traceparent,
-            tracestate,
-            baggage
-          )
-          values ($1, $2, $3, 'checkout', $4, $5::jsonb, $6::jsonb, $7, $8, $9)
-        `,
-        [
-          command.command_id,
-          command.correlation_id,
-          command.idempotency_key ?? null,
-          command.command_id,
-          JSON.stringify(command),
-          JSON.stringify(command.metadata),
-          input.traceCarrier?.traceparent ?? null,
-          input.traceCarrier?.tracestate ?? null,
-          input.traceCarrier?.baggage ?? null,
-        ],
-      );
+      await this.stageBatch([input]);
     },
 
     async stageBatch(inputs) {
@@ -115,57 +91,33 @@ export function createPostgresBuyIntentCommandGateway(pool: Pool): BuyIntentComm
         return;
       }
 
-      await pool.query(
-        `
-          insert into staged_buy_intent_command (
-            command_id,
-            correlation_id,
-            idempotency_key,
-            aggregate_type,
-            aggregate_id,
-            payload_json,
-            metadata_json,
-            traceparent,
-            tracestate,
-            baggage
-          )
-          select
-            entry.command_id,
-            entry.correlation_id,
-            entry.idempotency_key,
-            'checkout',
-            entry.command_id::text,
-            entry.payload_json::jsonb,
-            entry.metadata_json::jsonb,
-            entry.traceparent,
-            entry.tracestate,
-            entry.baggage
-          from jsonb_to_recordset($1::jsonb) as entry(
-            command_id uuid,
-            correlation_id uuid,
-            idempotency_key text,
-            payload_json jsonb,
-            metadata_json jsonb,
-            traceparent text,
-            tracestate text,
-            baggage text
-          )
-        `,
-        [
-          JSON.stringify(
-            inputs.map((input) => ({
-              command_id: input.command.command_id,
-              correlation_id: input.command.correlation_id,
-              idempotency_key: input.command.idempotency_key ?? null,
-              payload_json: input.command,
-              metadata_json: input.command.metadata,
-              traceparent: input.traceCarrier?.traceparent ?? null,
-              tracestate: input.traceCarrier?.tracestate ?? null,
-              baggage: input.traceCarrier?.baggage ?? null,
-            })),
-          ),
-        ],
-      );
+      const client = await pool.connect();
+
+      try {
+        const copyStream = (client as PoolClient & {
+          query(copyOperation: ReturnType<typeof copyFrom>): NodeJS.WritableStream;
+        }).query(
+          copyFrom(`
+            copy staged_buy_intent_command (
+              command_id,
+              correlation_id,
+              idempotency_key,
+              aggregate_type,
+              aggregate_id,
+              payload_json,
+              metadata_json,
+              traceparent,
+              tracestate,
+              baggage
+            )
+            from stdin with (format text)
+          `),
+        );
+
+        await pipeline(Readable.from(inputs.map((input) => formatStagedCommandCopyRow(input))), copyStream);
+      } finally {
+        client.release();
+      }
     },
 
     async ensureAcceptedBatch(commands) {
@@ -597,6 +549,39 @@ export function createPostgresBuyIntentCommandGateway(pool: Pool): BuyIntentComm
       }
     },
   };
+}
+
+function formatStagedCommandCopyRow(input: StagedBuyIntentCommandInput) {
+  const command = input.command;
+
+  return [
+    formatCopyText(command.command_id),
+    formatCopyText(command.correlation_id),
+    formatCopyNullableText(command.idempotency_key ?? null),
+    formatCopyText("checkout"),
+    formatCopyText(command.command_id),
+    formatCopyText(JSON.stringify(command)),
+    formatCopyText(JSON.stringify(command.metadata)),
+    formatCopyNullableText(input.traceCarrier?.traceparent ?? null),
+    formatCopyNullableText(input.traceCarrier?.tracestate ?? null),
+    formatCopyNullableText(input.traceCarrier?.baggage ?? null),
+  ].join("\t").concat("\n");
+}
+
+function formatCopyNullableText(value: string | null) {
+  if (value === null) {
+    return "\\N";
+  }
+
+  return formatCopyText(value);
+}
+
+function formatCopyText(value: string) {
+  return value
+    .replaceAll("\\", "\\\\")
+    .replaceAll("\t", "\\t")
+    .replaceAll("\n", "\\n")
+    .replaceAll("\r", "\\r");
 }
 
 function toTraceCarrier(

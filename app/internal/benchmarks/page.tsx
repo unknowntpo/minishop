@@ -1438,12 +1438,8 @@ function scenarioDescription(name: string) {
     return "Multi-SKU cart checkout ingress benchmark. It measures mixed-cart acceptance, durable event append, projection catch-up, idempotency, and per-SKU inventory invariants without reservation processing.";
   }
 
-  if (name === "buy-intent-temporal-payment-fail") {
-    return "Async buy-intent benchmark with Go Temporal orchestration, pending payment wait, and demo payment failure signal to release inventory.";
-  }
-
   if (name === "buy-intent-bypass-created") {
-    return "Async buy-intent benchmark with Temporal bypassed. The flow stops at CheckoutIntentCreated and queued projection state.";
+    return "Async buy-intent benchmark on the queue-first worker path. The flow stops at CheckoutIntentCreated and queued projection state.";
   }
 
   return "Benchmark scenario. Compare only with runs from the same scenario and compatible run conditions.";

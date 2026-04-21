@@ -3,7 +3,6 @@ import { createNatsBuyIntentCommandBus } from "@/src/infrastructure/checkout-com
 import { createNoopBuyIntentCommandOrchestrator } from "@/src/infrastructure/checkout-command/noop-buy-intent-command-orchestrator";
 import { createPostgresBuyIntentCommandBus } from "@/src/infrastructure/checkout-command/postgres-buy-intent-command-bus";
 import { createPostgresBuyIntentCommandGateway } from "@/src/infrastructure/checkout-command/postgres-buy-intent-command-gateway";
-import { createTemporalBuyIntentCommandOrchestrator } from "@/src/infrastructure/checkout-command/temporal-buy-intent-command-orchestrator";
 import type { BuyIntentCommandBus } from "@/src/ports/buy-intent-command-bus";
 import type {
   BuyIntentCommandGateway,
@@ -57,25 +56,7 @@ function getRuntimeOrchestrator() {
     return sharedOrchestrator;
   }
 
-  const orchestratorMode = readRuntimeEnv("BUY_INTENT_COMMAND_ORCHESTRATOR_MODE") || "auto";
-  const temporalAddress = readRuntimeEnv("TEMPORAL_ADDRESS");
-
-  if (orchestratorMode === "noop") {
-    sharedOrchestrator = createNoopBuyIntentCommandOrchestrator();
-    return sharedOrchestrator;
-  }
-
-  if (orchestratorMode === "temporal" || temporalAddress) {
-    sharedOrchestrator = createTemporalBuyIntentCommandOrchestrator({
-      address: temporalAddress,
-      namespace: readRuntimeEnv("TEMPORAL_NAMESPACE") || undefined,
-      taskQueue: readRuntimeEnv("TEMPORAL_BUY_INTENT_TASK_QUEUE") || undefined,
-    });
-    return sharedOrchestrator;
-  }
-
   sharedOrchestrator = createNoopBuyIntentCommandOrchestrator();
-
   return sharedOrchestrator;
 }
 

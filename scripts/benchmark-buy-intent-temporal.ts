@@ -19,7 +19,7 @@ type BenchmarkConfig = {
   runId: string;
   resultsDir: string;
   scenarioName: string;
-  mode: "temporal" | "bypass";
+  mode: "bypass";
   createdTimeoutMs: number;
   resetStateBeforeRun: boolean;
 };
@@ -142,62 +142,14 @@ async function main() {
         accepted.map((result) => [result.commandId, result.acceptedAtMs] as const),
       );
 
-      displayReadyResults =
-        config.mode === "temporal"
-          ? await Promise.all(
-              createdResults
-                .filter(
-                  (result) =>
-                    typeof result.checkoutIntentId === "string" && result.checkoutIntentId.length > 0,
-                )
-                .map((result) =>
-                  waitForCheckoutStatus(
-                    result.checkoutIntentId as string,
-                    acceptedAtByCommandId.get(result.commandId) ?? performance.now(),
-                    (status) => status === "pending_payment" || status === "rejected",
-                    "pending_payment or rejected",
-                  ),
-                ),
-            )
-          : [];
+      displayReadyResults = [];
 
-      const pendingPaymentCheckouts =
-        config.mode === "temporal"
-          ? displayReadyResults.filter((result) => result.status === "pending_payment")
-          : [];
-      const paymentSignalRun =
-        config.mode === "temporal"
-          ? await runPaymentFailureSignals(pendingPaymentCheckouts, createdResults)
-          : { results: [], durationMs: 0 };
+      const pendingPaymentCheckouts: CheckoutResult[] = [];
+      const paymentSignalRun = { results: [], durationMs: 0 };
       paymentSignalResults = paymentSignalRun.results;
       const signalDurationMs = paymentSignalRun.durationMs;
 
-      cancelledResults =
-        config.mode === "temporal"
-          ? await Promise.all(
-              paymentSignalResults.map((signalResult) => {
-                const checkout = pendingPaymentCheckouts.find((entry) => {
-                  const command = createdResults.find(
-                    (result) => result.checkoutIntentId === entry.checkoutIntentId,
-                  );
-                  return command?.commandId === signalResult.commandId;
-                });
-
-                if (!checkout) {
-                  throw new Error(
-                    `Missing checkout for payment signal command ${signalResult.commandId}.`,
-                  );
-                }
-
-                return waitForCheckoutStatus(
-                  checkout.checkoutIntentId,
-                  signalResult.signaledAtMs,
-                  (status) => status === "cancelled" || status === "expired",
-                  "cancelled or expired",
-                );
-              }),
-            )
-          : [];
+      cancelledResults = [];
 
       const intentCreation = await readIntentCreationMetrics(
         pool,
@@ -239,8 +191,8 @@ async function main() {
         conditions: {
           workload: {
             scenarioName: config.scenarioName,
-            architectureLane: config.mode === "temporal" ? "temporal" : "bypass",
-            workloadType: "buy_intent_temporal_flow",
+            architectureLane: "bypass",
+            workloadType: "buy_intent_created_flow",
             requestedBuyClicks: config.requests,
             httpConcurrency: config.httpConcurrency,
             skuId: config.skuId,
@@ -302,12 +254,8 @@ async function main() {
         profiling,
         nats: natsSnapshot,
         notes: [
-          config.mode === "temporal"
-            ? "This benchmark measures the current async buy-intent + Temporal + pending_payment demo path."
-            : "This benchmark measures the async buy-intent path with Temporal orchestration bypassed and stops at CheckoutIntentCreated.",
-          config.mode === "temporal"
-            ? "The benchmark intentionally uses payment failure signals so reserved inventory is released after each run."
-            : "Bypass mode does not wait for projection queued state, so inventory availability is not used to cap request volume.",
+          "This benchmark measures the async buy-intent path and stops at CheckoutIntentCreated.",
+          "Bypass mode does not wait for projection queued state, so inventory availability is not used to cap request volume.",
         ],
       };
 
@@ -355,8 +303,8 @@ async function main() {
         conditions: {
           workload: {
             scenarioName: config.scenarioName,
-            architectureLane: config.mode === "temporal" ? "temporal" : "bypass",
-            workloadType: "buy_intent_temporal_flow",
+            architectureLane: "bypass",
+            workloadType: "buy_intent_created_flow",
             requestedBuyClicks: config.requests,
             httpConcurrency: config.httpConcurrency,
             skuId: config.skuId,
@@ -437,7 +385,7 @@ async function main() {
           "This artifact was written from a failed benchmark run so the dashboard can still show partial progress and profiling evidence.",
           config.mode === "bypass"
             ? "Bypass mode failure happened after intent creation; created-only throughput remains the primary signal."
-            : "Temporal mode failure happened after intent creation; checkout progression needs separate analysis.",
+              : "Intent creation benchmark failure happened after partial progress; created-only throughput remains the primary signal.",
         ],
       });
       console.error(`Benchmark artifact written to ${artifactPath}`);
@@ -1067,13 +1015,11 @@ function readConfig(): BenchmarkConfig {
     skuId: process.env.BENCHMARK_SKU_ID ?? "sku_hot_001",
     unitPriceAmountMinor: readPositiveIntegerEnv("BENCHMARK_UNIT_PRICE_MINOR", 1200),
     currency: process.env.BENCHMARK_CURRENCY ?? "TWD",
-    buyerPrefix: process.env.BENCHMARK_BUYER_PREFIX ?? "benchmark_buyer_temporal",
+    buyerPrefix: process.env.BENCHMARK_BUYER_PREFIX ?? "benchmark_buyer",
     runId: process.env.BENCHMARK_RUN_ID ?? `bench_${Date.now()}`,
     resultsDir: process.env.BENCHMARK_RESULTS_DIR ?? "benchmark-results",
-    scenarioName:
-      process.env.BENCHMARK_SCENARIO_NAME ??
-      (readMode() === "temporal" ? "buy-intent-temporal-payment-fail" : "buy-intent-bypass-created"),
-    mode: readMode(),
+    scenarioName: process.env.BENCHMARK_SCENARIO_NAME ?? "buy-intent-bypass-created",
+    mode: "bypass",
     createdTimeoutMs: readPositiveIntegerEnv("BENCHMARK_CREATED_TIMEOUT_MS", 60_000),
     resetStateBeforeRun: readBooleanWithDefault("BENCHMARK_RESET_STATE", true),
   };
@@ -1087,20 +1033,6 @@ function requiredEnv(name: string) {
   }
 
   return raw;
-}
-
-function readMode(): "temporal" | "bypass" {
-  const raw = process.env.BENCHMARK_TEMPORAL_MODE?.trim();
-
-  if (!raw || raw === "temporal") {
-    return "temporal";
-  }
-
-  if (raw === "bypass") {
-    return "bypass";
-  }
-
-  throw new Error("BENCHMARK_TEMPORAL_MODE must be temporal or bypass.");
 }
 
 function readPositiveIntegerEnv(name: string, fallback: number) {
@@ -1133,8 +1065,8 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function resetBuyIntentBenchmarkState(pool: Pool, mode: "temporal" | "bypass") {
-  const aggregateTypes = mode === "temporal" ? ["checkout", "payment", "order"] : ["checkout"];
+async function resetBuyIntentBenchmarkState(pool: Pool, _mode: "bypass") {
+  const aggregateTypes = ["checkout"];
 
   await pool.query("begin");
 

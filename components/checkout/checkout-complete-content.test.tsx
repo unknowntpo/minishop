@@ -1,14 +1,7 @@
 import { render, screen } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import { CheckoutCompleteContent } from "@/components/checkout/checkout-complete-content";
-
-vi.mock("next/navigation", () => ({
-  useRouter: () => ({
-    push: vi.fn(),
-    refresh: vi.fn(),
-  }),
-}));
 
 describe("CheckoutCompleteContent", () => {
   beforeEach(() => {
@@ -44,7 +37,7 @@ describe("CheckoutCompleteContent", () => {
     expect(screen.getByText("created")).toBeInTheDocument();
   });
 
-  it("shows payment actions while checkout is waiting for payment", () => {
+  it("shows payment help while checkout is waiting for payment", () => {
     render(
       <CheckoutCompleteContent
         checkout={{
@@ -64,10 +57,8 @@ describe("CheckoutCompleteContent", () => {
 
     expect(
       screen.getByText(
-        "Payment was requested and is now waiting for the provider result. Use the demo buttons here to simulate success or failure.",
+        "Payment was requested and is now waiting for the provider result.",
       ),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Simulate payment success" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Simulate payment failure" })).toBeInTheDocument();
   });
 });
