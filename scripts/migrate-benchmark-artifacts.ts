@@ -237,7 +237,6 @@ function buildSeriesFromArtifact(artifact: BenchmarkArtifact): BenchmarkSeries[]
         x: concurrency,
         y: measurement.value,
         runId: artifact.runId,
-        pointLabel: artifact.runId,
       },
     ],
     definition: measurement.definition,

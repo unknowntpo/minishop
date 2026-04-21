@@ -1705,7 +1705,6 @@ function buildSeriesFromReport(report: {
         x: concurrency,
         y: measurement.value,
         runId: report.runId,
-        pointLabel: report.runId,
       },
     ],
     definition: measurement.definition,
