@@ -87,7 +87,7 @@ async function runLane(input: {
   );
 
   console.log(`[benchmark] starting services for ${input.mode}`);
-  execSync(`docker compose up -d --build ${input.services.join(" ")}`, {
+  execSync(`docker compose --profile benchmark up -d --build ${input.services.join(" ")}`, {
     cwd: workdir,
     stdio: "inherit",
     env: {

@@ -1,5 +1,6 @@
 import "dotenv/config";
 
+import { trace } from "@opentelemetry/api";
 import { headers, type JsMsg } from "nats";
 
 import { parseBuyIntentCommandContract } from "@/src/contracts/buy-intent-command-contract";
@@ -10,8 +11,15 @@ import {
   getNatsConnection,
 } from "@/src/infrastructure/checkout-command/nats-buy-intent-command-topology";
 import { postgresBuyIntentCommandGateway } from "@/src/infrastructure/checkout-command";
+import {
+  extractContextFromNatsHeaders,
+  injectTraceCarrier,
+  setSpanAttributes,
+  withSpan,
+} from "@/src/infrastructure/telemetry/otel";
 
 async function main() {
+  const tracer = trace.getTracer("minishop");
   const servers = readRequiredEnv("NATS_URL");
   const streamName = process.env.NATS_BUY_INTENT_STREAM?.trim() || "BUY_INTENT_COMMANDS";
   const subject = process.env.NATS_BUY_INTENT_SUBJECT?.trim() || "buy-intent.command";
@@ -54,19 +62,40 @@ async function main() {
     batchFetchCount += 1;
     const messages = js.fetch(streamName, durableConsumer, { batch: batchSize, expires: expiresMs });
     let emptyBatch = true;
-    const stagedBatch: Array<{ message: JsMsg; command: ReturnType<typeof parseBuyIntentCommandContract> }> = [];
+    const stagedBatch: Array<{
+      message: JsMsg;
+      command: ReturnType<typeof parseBuyIntentCommandContract>;
+      parentContext: ReturnType<typeof extractContextFromNatsHeaders>;
+      span: import("@opentelemetry/api").Span;
+    }> = [];
 
     for await (const message of messages) {
       emptyBatch = false;
       receivedCount += 1;
+      const parentContext = extractContextFromNatsHeaders(message.headers);
+      const span = tracer.startSpan(
+        "buy_intent.ingest_message",
+        {
+          attributes: {
+            "messaging.system": "nats",
+            "messaging.operation": "process",
+            "messaging.destination.name": message.subject,
+          },
+        },
+        parentContext,
+      );
 
       try {
-        stagedBatch.push({
-          message,
-          command: parseBuyIntentCommandContract(buyIntentCommandCodec.decode(message.data)),
+        const command = parseBuyIntentCommandContract(buyIntentCommandCodec.decode(message.data));
+        setSpanAttributes(span, {
+          "buy_intent.command_id": command.command_id,
+          "buy_intent.correlation_id": command.correlation_id,
         });
+        stagedBatch.push({ message, command, parentContext, span });
       } catch (error) {
         if (!isCodecError(error)) {
+          span.recordException(error instanceof Error ? error : new Error(String(error)));
+          span.end();
           throw error;
         }
 
@@ -78,15 +107,35 @@ async function main() {
         });
         message.ack();
         decodeFailedCount += 1;
+        span.recordException(error instanceof Error ? error : new Error(String(error)));
+        span.end();
       }
     }
 
     if (stagedBatch.length > 0) {
       try {
-        await postgresBuyIntentCommandGateway.stageBatch(stagedBatch.map((entry) => entry.command));
+        await withSpan(
+          "buy_intent.stage_batch",
+          {
+            attributes: {
+              "messaging.system": "postgres",
+              "messaging.destination.name": "staged_buy_intent_command",
+              "buy_intent.batch_size": stagedBatch.length,
+            },
+          },
+          async () => {
+            await postgresBuyIntentCommandGateway.stageBatch(
+              stagedBatch.map((entry) => ({
+                command: entry.command,
+                traceCarrier: injectTraceCarrier(entry.parentContext),
+              })),
+            );
+          },
+        );
         for (const entry of stagedBatch) {
           entry.message.ack();
           stagedCount += 1;
+          entry.span.end();
         }
       } catch (error) {
         for (const entry of stagedBatch) {
@@ -96,6 +145,8 @@ async function main() {
           } catch (nakError) {
             console.error("buy_intent_command_bus_nak_failed", nakError);
           }
+          entry.span.recordException(error instanceof Error ? error : new Error(String(error)));
+          entry.span.end();
         }
         console.error("buy_intent_command_bus_stage_batch_failed", error);
       }

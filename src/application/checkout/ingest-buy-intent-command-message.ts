@@ -1,8 +1,9 @@
 import type { BuyIntentCommand } from "@/src/domain/checkout-command/buy-intent-command";
+import type { StagedBuyIntentCommandInput } from "@/src/ports/buy-intent-command-gateway";
 
 export type IngestBuyIntentCommandMessageDeps = {
   decode(data: Uint8Array): BuyIntentCommand;
-  stage(command: BuyIntentCommand): Promise<void>;
+  stage(input: StagedBuyIntentCommandInput): Promise<void>;
   publishDlq(input: {
     reason: string;
     sourceSubject: string;
@@ -54,7 +55,7 @@ export async function ingestBuyIntentCommandMessage(
   }
 
   try {
-    await deps.stage(command);
+    await deps.stage({ command });
     return {
       outcome: "ack",
       staged: true,

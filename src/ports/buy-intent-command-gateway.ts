@@ -1,5 +1,6 @@
 import type { BuyIntentCommand } from "@/src/domain/checkout-command/buy-intent-command";
 import type { BuyIntentCommandStatus } from "@/src/domain/checkout-command/command-status";
+import type { TraceCarrier } from "@/src/ports/trace-carrier";
 
 export type BuyIntentCommandStatusView = {
   commandId: string;
@@ -20,13 +21,19 @@ export type StagedBuyIntentCommand = {
   correlationId: string;
   idempotencyKey?: string;
   payload: BuyIntentCommand;
+  traceCarrier?: TraceCarrier;
+};
+
+export type StagedBuyIntentCommandInput = {
+  command: BuyIntentCommand;
+  traceCarrier?: TraceCarrier;
 };
 
 export type BuyIntentCommandGateway = {
   readStatus(commandId: string): Promise<BuyIntentCommandStatusView | null>;
   readStatuses(commandIds: string[]): Promise<BuyIntentCommandStatusView[]>;
-  stage(command: BuyIntentCommand): Promise<void>;
-  stageBatch(commands: BuyIntentCommand[]): Promise<void>;
+  stage(input: StagedBuyIntentCommandInput): Promise<void>;
+  stageBatch(inputs: StagedBuyIntentCommandInput[]): Promise<void>;
   ensureAcceptedBatch(
     commands: Array<{
       commandId: string;

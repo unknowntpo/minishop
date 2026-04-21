@@ -56,6 +56,34 @@ services:
     ports:
       - "${MINISHOP_TEMPORAL_UI_PORT:-8081}:8080"
 
+  tempo:
+    image: grafana/tempo:2.8.2
+    container_name: minishop-tempo
+    restart: unless-stopped
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./observability/tempo.yaml:/etc/tempo.yaml:ro
+      - minishop_tempo_data:/var/tempo
+    ports:
+      - "${MINISHOP_TEMPO_PORT:-3200}:3200"
+      - "${MINISHOP_TEMPO_OTLP_HTTP_PORT:-4318}:4318"
+
+  grafana:
+    image: grafana/grafana:12.1.1
+    container_name: minishop-grafana
+    restart: unless-stopped
+    depends_on:
+      tempo:
+        condition: service_started
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "${MINISHOP_GRAFANA_PORT:-3002}:3000"
+
   app:
     build:
       context: .
@@ -87,6 +115,10 @@ services:
       TEMPORAL_BUY_INTENT_TASK_QUEUE: ${TEMPORAL_BUY_INTENT_TASK_QUEUE:-buy-intent-command-orchestration}
       BUY_INTENT_BATCH_SIZE: ${BUY_INTENT_BATCH_SIZE:-100}
       BUY_INTENT_PROCESS_POLL_INTERVAL_MS: ${BUY_INTENT_PROCESS_POLL_INTERVAL_MS:-1000}
+      OTEL_ENABLED: ${OTEL_ENABLED:-1}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://tempo:4318}
+      OTEL_SERVICE_NAME: minishop-app
+      NODE_OPTIONS: ${NODE_OPTIONS:---require=/app/instrumentation.node.cjs}
       NEXT_TELEMETRY_DISABLED: "1"
     ports:
       - "${MINISHOP_APP_PORT:-3000}:3000"
@@ -118,6 +150,10 @@ services:
       NATS_BUY_INTENT_INGEST_RETRY_DELAY_MS: ${NATS_BUY_INTENT_INGEST_RETRY_DELAY_MS:-1000}
       NATS_BUY_INTENT_ACK_WAIT_MS: ${NATS_BUY_INTENT_ACK_WAIT_MS:-30000}
       NATS_BUY_INTENT_INGEST_CONTINUOUS: ${NATS_BUY_INTENT_INGEST_CONTINUOUS:-1}
+      OTEL_ENABLED: ${OTEL_ENABLED:-1}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://tempo:4318}
+      OTEL_SERVICE_NAME: worker-buy-intents-ingest
+      NODE_OPTIONS: ${NODE_OPTIONS:---require=/app/instrumentation.node.cjs}
       NEXT_TELEMETRY_DISABLED: "1"
     command: ["pnpm", "worker:buy-intents:ingest:nats"]
 
@@ -142,6 +178,7 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
 
   worker-staged-buy-intents-process:
+    profiles: ["benchmark"]
     build:
       context: .
       dockerfile: Dockerfile.worker
@@ -157,10 +194,15 @@ services:
       BUY_INTENT_BATCH_SIZE: ${BUY_INTENT_PROCESS_BATCH_SIZE:-1000}
       BUY_INTENT_PROCESS_CONCURRENCY: ${BUY_INTENT_PROCESS_CONCURRENCY:-64}
       BUY_INTENT_PROCESS_POLL_INTERVAL_MS: ${BUY_INTENT_PROCESS_POLL_INTERVAL_MS:-10}
+      OTEL_ENABLED: ${OTEL_ENABLED:-1}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://tempo:4318}
+      OTEL_SERVICE_NAME: worker-staged-buy-intents-process
+      NODE_OPTIONS: ${NODE_OPTIONS:---require=/app/instrumentation.node.cjs}
       NEXT_TELEMETRY_DISABLED: "1"
     command: ["pnpm", "worker:staged-buy-intents:process:loop"]
 
   worker-staged-buy-intents-process-2:
+    profiles: ["benchmark"]
     build:
       context: .
       dockerfile: Dockerfile.worker
@@ -176,10 +218,15 @@ services:
       BUY_INTENT_BATCH_SIZE: ${BUY_INTENT_PROCESS_BATCH_SIZE:-1000}
       BUY_INTENT_PROCESS_CONCURRENCY: ${BUY_INTENT_PROCESS_CONCURRENCY:-64}
       BUY_INTENT_PROCESS_POLL_INTERVAL_MS: ${BUY_INTENT_PROCESS_POLL_INTERVAL_MS:-10}
+      OTEL_ENABLED: ${OTEL_ENABLED:-1}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://tempo:4318}
+      OTEL_SERVICE_NAME: worker-staged-buy-intents-process
+      NODE_OPTIONS: ${NODE_OPTIONS:---require=/app/instrumentation.node.cjs}
       NEXT_TELEMETRY_DISABLED: "1"
     command: ["pnpm", "worker:staged-buy-intents:process:loop"]
 
   worker-staged-buy-intents-process-3:
+    profiles: ["benchmark"]
     build:
       context: .
       dockerfile: Dockerfile.worker
@@ -195,6 +242,10 @@ services:
       BUY_INTENT_BATCH_SIZE: ${BUY_INTENT_PROCESS_BATCH_SIZE:-1000}
       BUY_INTENT_PROCESS_CONCURRENCY: ${BUY_INTENT_PROCESS_CONCURRENCY:-64}
       BUY_INTENT_PROCESS_POLL_INTERVAL_MS: ${BUY_INTENT_PROCESS_POLL_INTERVAL_MS:-10}
+      OTEL_ENABLED: ${OTEL_ENABLED:-1}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://tempo:4318}
+      OTEL_SERVICE_NAME: worker-staged-buy-intents-process
+      NODE_OPTIONS: ${NODE_OPTIONS:---require=/app/instrumentation.node.cjs}
       NEXT_TELEMETRY_DISABLED: "1"
     command: ["pnpm", "worker:staged-buy-intents:process:loop"]
 
@@ -213,6 +264,10 @@ services:
       PROJECTION_NAME: ${PROJECTION_NAME:-main}
       PROJECTION_BATCH_SIZE: ${PROJECTION_BATCH_SIZE:-100}
       PROJECTION_POLL_INTERVAL_MS: ${PROJECTION_POLL_INTERVAL_MS:-1000}
+      OTEL_ENABLED: ${OTEL_ENABLED:-1}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://tempo:4318}
+      OTEL_SERVICE_NAME: worker-projections
+      NODE_OPTIONS: ${NODE_OPTIONS:---require=/app/instrumentation.node.cjs}
       NEXT_TELEMETRY_DISABLED: "1"
     command: ["pnpm", "worker:projections"]
 
@@ -220,3 +275,4 @@ services:
 volumes:
   minishop_postgres_data:
   minishop_nats_data:
+  minishop_tempo_data:

@@ -188,7 +188,7 @@ describe("async buy-intent command flow integration", () => {
         ...(command.idempotency_key ? { idempotencyKey: command.idempotency_key } : {}),
       },
     ]);
-    await gateway.stage(command);
+    await gateway.stage({ command });
 
     await processStagedBuyIntentCommandBatch(
       {},
@@ -205,7 +205,7 @@ describe("async buy-intent command flow integration", () => {
       },
     );
 
-    await gateway.stage(command);
+    await gateway.stage({ command });
 
     const processed = await processStagedBuyIntentCommandBatch(
       {},

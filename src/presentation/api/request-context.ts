@@ -1,4 +1,5 @@
 import type { NextRequest } from "next/server";
+import { trace } from "@opentelemetry/api";
 
 export type RequestContext = {
   requestId: string;
@@ -7,7 +8,8 @@ export type RequestContext = {
 
 export function getRequestContext(request: NextRequest): RequestContext {
   const requestId = request.headers.get("x-request-id")?.trim() || crypto.randomUUID();
-  const traceId = request.headers.get("x-trace-id")?.trim() || requestId;
+  const activeTraceId = trace.getActiveSpan()?.spanContext().traceId;
+  const traceId = request.headers.get("x-trace-id")?.trim() || activeTraceId || requestId;
 
   return {
     requestId,

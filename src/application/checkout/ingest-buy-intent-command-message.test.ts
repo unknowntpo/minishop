@@ -2,10 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import { ingestBuyIntentCommandMessage } from "@/src/application/checkout/ingest-buy-intent-command-message";
 import type { BuyIntentCommand } from "@/src/domain/checkout-command/buy-intent-command";
+import type { StagedBuyIntentCommandInput } from "@/src/ports/buy-intent-command-gateway";
 
 describe("ingestBuyIntentCommandMessage", () => {
   it("stages a valid command and acks the message", async () => {
-    const staged: BuyIntentCommand[] = [];
+    const staged: StagedBuyIntentCommandInput[] = [];
 
     const result = await ingestBuyIntentCommandMessage(
       {
@@ -16,8 +17,8 @@ describe("ingestBuyIntentCommandMessage", () => {
         decode(data) {
           return JSON.parse(new TextDecoder().decode(data)) as BuyIntentCommand;
         },
-        async stage(command) {
-          staged.push(command);
+        async stage(input) {
+          staged.push(input);
         },
         async publishDlq() {
           throw new Error("dlq should not be called");
@@ -31,7 +32,7 @@ describe("ingestBuyIntentCommandMessage", () => {
       dlqPublished: false,
     });
     expect(staged).toHaveLength(1);
-    expect(staged[0]?.command_id).toBe("11111111-1111-4111-8111-111111111111");
+    expect(staged[0]?.command.command_id).toBe("11111111-1111-4111-8111-111111111111");
   });
 
   it("publishes invalid payloads to dlq and still acks", async () => {

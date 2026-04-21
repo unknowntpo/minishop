@@ -1,6 +1,7 @@
 import { assertCheckoutItems } from "@/src/domain/checkout/item";
 import type { BuyIntentCommand } from "@/src/domain/checkout-command/buy-intent-command";
 import { isEventMetadata } from "@/src/domain/events/event-metadata";
+import { withSpan } from "@/src/infrastructure/telemetry/otel";
 import type { Clock } from "@/src/ports/clock";
 import type { BuyIntentCommandBus } from "@/src/ports/buy-intent-command-bus";
 import type { IdGenerator } from "@/src/ports/id-generator";
@@ -32,13 +33,27 @@ export async function acceptBuyIntentCommand(
     issued_at: deps.clock.now().toISOString(),
   } satisfies BuyIntentCommand;
 
-  await deps.bus.publish(command);
+  return await withSpan(
+    "buy_intent.accept",
+    {
+      attributes: {
+        "buy_intent.command_id": command.command_id,
+        "buy_intent.correlation_id": command.correlation_id,
+        "buy_intent.buyer_id": command.buyer_id,
+        "buy_intent.item_count": command.items.length,
+        "buy_intent.idempotency_key_present": command.idempotency_key ? true : false,
+      },
+    },
+    async () => {
+      await deps.bus.publish(command);
 
-  return {
-    commandId: command.command_id,
-    correlationId: command.correlation_id,
-    status: "accepted" as const,
-  };
+      return {
+        commandId: command.command_id,
+        correlationId: command.correlation_id,
+        status: "accepted" as const,
+      };
+    },
+  );
 }
 
 function validateInput(input: {

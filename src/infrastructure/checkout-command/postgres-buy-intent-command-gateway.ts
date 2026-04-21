@@ -1,7 +1,13 @@
 import type { Pool, PoolClient } from "pg";
 
 import type { BuyIntentCommand } from "@/src/domain/checkout-command/buy-intent-command";
-import type { BuyIntentCommandGateway, BuyIntentCommandStatusView, StagedBuyIntentCommand } from "@/src/ports/buy-intent-command-gateway";
+import type {
+  BuyIntentCommandGateway,
+  BuyIntentCommandStatusView,
+  StagedBuyIntentCommand,
+  StagedBuyIntentCommandInput,
+} from "@/src/ports/buy-intent-command-gateway";
+import type { TraceCarrier } from "@/src/ports/trace-carrier";
 
 type CommandStatusRow = {
   command_id: string;
@@ -22,6 +28,9 @@ type StagingRow = {
   correlation_id: string;
   idempotency_key: string | null;
   payload_json: BuyIntentCommand;
+  traceparent: string | null;
+  tracestate: string | null;
+  baggage: string | null;
 };
 
 export function createPostgresBuyIntentCommandGateway(pool: Pool): BuyIntentCommandGateway {
@@ -69,7 +78,8 @@ export function createPostgresBuyIntentCommandGateway(pool: Pool): BuyIntentComm
       }));
     },
 
-    async stage(command) {
+    async stage(input) {
+      const command = input.command;
       await pool.query(
         `
           insert into staged_buy_intent_command (
@@ -79,9 +89,12 @@ export function createPostgresBuyIntentCommandGateway(pool: Pool): BuyIntentComm
             aggregate_type,
             aggregate_id,
             payload_json,
-            metadata_json
+            metadata_json,
+            traceparent,
+            tracestate,
+            baggage
           )
-          values ($1, $2, $3, 'checkout', $4, $5::jsonb, $6::jsonb)
+          values ($1, $2, $3, 'checkout', $4, $5::jsonb, $6::jsonb, $7, $8, $9)
         `,
         [
           command.command_id,
@@ -90,12 +103,15 @@ export function createPostgresBuyIntentCommandGateway(pool: Pool): BuyIntentComm
           command.command_id,
           JSON.stringify(command),
           JSON.stringify(command.metadata),
+          input.traceCarrier?.traceparent ?? null,
+          input.traceCarrier?.tracestate ?? null,
+          input.traceCarrier?.baggage ?? null,
         ],
       );
     },
 
-    async stageBatch(commands) {
-      if (commands.length === 0) {
+    async stageBatch(inputs) {
+      if (inputs.length === 0) {
         return;
       }
 
@@ -108,7 +124,10 @@ export function createPostgresBuyIntentCommandGateway(pool: Pool): BuyIntentComm
             aggregate_type,
             aggregate_id,
             payload_json,
-            metadata_json
+            metadata_json,
+            traceparent,
+            tracestate,
+            baggage
           )
           select
             entry.command_id,
@@ -117,23 +136,32 @@ export function createPostgresBuyIntentCommandGateway(pool: Pool): BuyIntentComm
             'checkout',
             entry.command_id::text,
             entry.payload_json::jsonb,
-            entry.metadata_json::jsonb
+            entry.metadata_json::jsonb,
+            entry.traceparent,
+            entry.tracestate,
+            entry.baggage
           from jsonb_to_recordset($1::jsonb) as entry(
             command_id uuid,
             correlation_id uuid,
             idempotency_key text,
             payload_json jsonb,
-            metadata_json jsonb
+            metadata_json jsonb,
+            traceparent text,
+            tracestate text,
+            baggage text
           )
         `,
         [
           JSON.stringify(
-            commands.map((command) => ({
-              command_id: command.command_id,
-              correlation_id: command.correlation_id,
-              idempotency_key: command.idempotency_key ?? null,
-              payload_json: command,
-              metadata_json: command.metadata,
+            inputs.map((input) => ({
+              command_id: input.command.command_id,
+              correlation_id: input.command.correlation_id,
+              idempotency_key: input.command.idempotency_key ?? null,
+              payload_json: input.command,
+              metadata_json: input.command.metadata,
+              traceparent: input.traceCarrier?.traceparent ?? null,
+              tracestate: input.traceCarrier?.tracestate ?? null,
+              baggage: input.traceCarrier?.baggage ?? null,
             })),
           ),
         ],
@@ -200,7 +228,10 @@ export function createPostgresBuyIntentCommandGateway(pool: Pool): BuyIntentComm
             staging.command_id,
             staging.correlation_id,
             staging.idempotency_key,
-            staging.payload_json
+            staging.payload_json,
+            staging.traceparent,
+            staging.tracestate,
+            staging.baggage
         `,
         [batchId, batchSize],
       );
@@ -211,6 +242,7 @@ export function createPostgresBuyIntentCommandGateway(pool: Pool): BuyIntentComm
         correlationId: row.correlation_id,
         idempotencyKey: row.idempotency_key ?? undefined,
         payload: row.payload_json,
+        traceCarrier: toTraceCarrier(row),
       }));
     },
 
@@ -564,6 +596,20 @@ export function createPostgresBuyIntentCommandGateway(pool: Pool): BuyIntentComm
         client.release();
       }
     },
+  };
+}
+
+function toTraceCarrier(
+  row: Pick<StagingRow, "traceparent" | "tracestate" | "baggage">,
+): TraceCarrier | undefined {
+  if (!row.traceparent && !row.tracestate && !row.baggage) {
+    return undefined;
+  }
+
+  return {
+    ...(row.traceparent ? { traceparent: row.traceparent } : {}),
+    ...(row.tracestate ? { tracestate: row.tracestate } : {}),
+    ...(row.baggage ? { baggage: row.baggage } : {}),
   };
 }
 

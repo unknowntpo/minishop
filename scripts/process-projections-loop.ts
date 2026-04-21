@@ -2,6 +2,7 @@ import "dotenv/config";
 
 import { processProjections } from "@/src/application/projections/process-projections";
 import { postgresProjectionRepository } from "@/src/infrastructure/projections";
+import { withSpan } from "@/src/infrastructure/telemetry/otel";
 
 async function main() {
   const projectionName = readStringEnv("PROJECTION_NAME", "main");
@@ -9,14 +10,24 @@ async function main() {
   const pollIntervalMs = readPositiveIntegerEnv("PROJECTION_POLL_INTERVAL_MS", 1000);
 
   while (true) {
-    const result = await processProjections(
+    const result = await withSpan(
+      "projection.process_worker_iteration",
       {
-        projectionName,
-        batchSize,
+        attributes: {
+          "projection.name": projectionName,
+          "projection.batch_size": batchSize,
+        },
       },
-      {
-        projectionRepository: postgresProjectionRepository,
-      },
+      async () =>
+        processProjections(
+          {
+            projectionName,
+            batchSize,
+          },
+          {
+            projectionRepository: postgresProjectionRepository,
+          },
+        ),
     );
 
     console.log(JSON.stringify(result, null, 2));

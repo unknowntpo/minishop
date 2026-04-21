@@ -52,6 +52,12 @@
     "benchmark:compose:cart": "docker compose -p minishop-benchmark -f docker-compose.yml -f docker-compose.benchmark.yml run --build --rm benchmark-runner pnpm benchmark:checkout:postgres:cart:reset"
   },
   "dependencies": {
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/auto-instrumentations-node": "^0.73.0",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.215.0",
+    "@opentelemetry/resources": "^2.7.0",
+    "@opentelemetry/sdk-node": "^0.215.0",
+    "@opentelemetry/semantic-conventions": "^1.40.0",
     "@temporalio/client": "1.13.0",
     "@temporalio/worker": "1.13.0",
     "@temporalio/workflow": "1.13.0",

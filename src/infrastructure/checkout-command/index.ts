@@ -86,11 +86,11 @@ export const postgresBuyIntentCommandGateway: BuyIntentCommandGateway = {
   readStatuses(commandIds): Promise<BuyIntentCommandStatusView[]> {
     return getPostgresGateway().readStatuses(commandIds);
   },
-  stage(command): Promise<void> {
-    return getPostgresGateway().stage(command);
+  stage(input): Promise<void> {
+    return getPostgresGateway().stage(input);
   },
-  stageBatch(commands): Promise<void> {
-    return getPostgresGateway().stageBatch(commands);
+  stageBatch(inputs): Promise<void> {
+    return getPostgresGateway().stageBatch(inputs);
   },
   ensureAcceptedBatch(commands): Promise<void> {
     return getPostgresGateway().ensureAcceptedBatch(commands);

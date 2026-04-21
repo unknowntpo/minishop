@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: minishop-observability
+    orgId: 1
+    folder: Minishop
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /etc/grafana/provisioning/dashboards/json

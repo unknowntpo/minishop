@@ -6,6 +6,7 @@ import {
   postgresBuyIntentCommandGateway,
 } from "@/src/infrastructure/checkout-command";
 import { postgresEventStore } from "@/src/infrastructure/event-store";
+import { withSpan } from "@/src/infrastructure/telemetry/otel";
 import { systemClock } from "@/src/ports/clock";
 import { cryptoIdGenerator } from "@/src/ports/id-generator";
 
@@ -15,15 +16,25 @@ async function main() {
   const pollIntervalMs = readPositiveIntegerEnv("BUY_INTENT_PROCESS_POLL_INTERVAL_MS", 1000);
 
   while (true) {
-    const result = await processStagedBuyIntentCommandBatch(
-      { batchSize, processConcurrency },
+    const result = await withSpan(
+      "buy_intent.process_worker_iteration",
       {
-        gateway: postgresBuyIntentCommandGateway,
-        orchestrator: buyIntentCommandOrchestrator,
-        eventStore: postgresEventStore,
-        idGenerator: cryptoIdGenerator,
-        clock: systemClock,
+        attributes: {
+          "buy_intent.batch_size": batchSize,
+          "buy_intent.process_concurrency": processConcurrency,
+        },
       },
+      async () =>
+        processStagedBuyIntentCommandBatch(
+          { batchSize, processConcurrency },
+          {
+            gateway: postgresBuyIntentCommandGateway,
+            orchestrator: buyIntentCommandOrchestrator,
+            eventStore: postgresEventStore,
+            idGenerator: cryptoIdGenerator,
+            clock: systemClock,
+          },
+        ),
     );
 
     console.log(JSON.stringify(result, null, 2));

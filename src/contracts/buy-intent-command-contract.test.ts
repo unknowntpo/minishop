@@ -6,6 +6,7 @@ import {
   assertValidBuyIntentCommandContract,
   parseBuyIntentCommandContract,
 } from "@/src/contracts/buy-intent-command-contract";
+import type { BuyIntentCommand } from "@/src/domain/checkout-command/buy-intent-command";
 
 const fixturesRoot = join(process.cwd(), "contracts", "fixtures", "buy-intent-command");
 
@@ -26,11 +27,12 @@ describe("BuyIntentCommand contract fixtures", () => {
 
   it("parses a valid fixture into the app contract shape", () => {
     const [fixture] = readFixtureGroup("valid");
+    const payload = fixture.payload as BuyIntentCommand;
 
-    expect(parseBuyIntentCommandContract(fixture.payload)).toMatchObject({
-      command_id: fixture.payload.command_id,
-      correlation_id: fixture.payload.correlation_id,
-      buyer_id: fixture.payload.buyer_id,
+    expect(parseBuyIntentCommandContract(payload)).toMatchObject({
+      command_id: payload.command_id,
+      correlation_id: payload.correlation_id,
+      buyer_id: payload.buyer_id,
     });
   });
 });

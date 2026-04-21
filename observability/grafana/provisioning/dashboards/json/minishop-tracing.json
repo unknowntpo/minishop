@@ -1,0 +1,104 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [
+    {
+      "icon": "external link",
+      "includeVars": false,
+      "keepTime": false,
+      "targetBlank": false,
+      "title": "Tempo Explore",
+      "type": "link",
+      "url": "/explore?orgId=1&left=%7B%22datasource%22%3A%22tempo%22%2C%22queries%22%3A%5B%7B%22query%22%3A%22%7B%20name%20%3D%20%5C%22buy_intent.accept%5C%22%20%7D%22%2C%22queryType%22%3A%22traceql%22%2C%22refId%22%3A%22A%22%2C%22limit%22%3A20%2C%22tableType%22%3A%22traces%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22now-15m%22%2C%22to%22%3A%22now%22%7D%7D"
+    }
+  ],
+  "panels": [
+    {
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "content": "<h2>Minishop tracing</h2><p>這頁先當 tracing landing page。資料源已經接到 Tempo，真正的 trace 查詢請直接跳 Explore。</p><ul><li><a href=\"/explore?orgId=1&left=%7B%22datasource%22%3A%22tempo%22%2C%22queries%22%3A%5B%7B%22query%22%3A%22%7B%20name%20%3D%20%5C%22buy_intent.accept%5C%22%20%7D%22%2C%22queryType%22%3A%22traceql%22%2C%22refId%22%3A%22A%22%2C%22limit%22%3A20%2C%22tableType%22%3A%22traces%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22now-15m%22%2C%22to%22%3A%22now%22%7D%7D\">查 buy_intent.accept</a></li><li><a href=\"/explore?orgId=1&left=%7B%22datasource%22%3A%22tempo%22%2C%22queries%22%3A%5B%7B%22query%22%3A%22%7B%20name%20%3D%20%5C%22buy_intent.ingest_message%5C%22%20%7D%22%2C%22queryType%22%3A%22traceql%22%2C%22refId%22%3A%22A%22%2C%22limit%22%3A20%2C%22tableType%22%3A%22traces%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22now-15m%22%2C%22to%22%3A%22now%22%7D%7D\">查 buy_intent.ingest_message</a></li><li><a href=\"/explore?orgId=1&left=%7B%22datasource%22%3A%22tempo%22%2C%22queries%22%3A%5B%7B%22query%22%3A%22%7B%20name%20%3D%20%5C%22buy_intent.process_staged_command%5C%22%20%7D%22%2C%22queryType%22%3A%22traceql%22%2C%22refId%22%3A%22A%22%2C%22limit%22%3A20%2C%22tableType%22%3A%22traces%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22now-15m%22%2C%22to%22%3A%22now%22%7D%7D\">查 buy_intent.process_staged_command</a></li><li><a href=\"/explore?orgId=1&left=%7B%22datasource%22%3A%22tempo%22%2C%22queries%22%3A%5B%7B%22query%22%3A%22%7B%20name%20%3D%20%5C%22projection.process_worker_iteration%5C%22%20%7D%22%2C%22queryType%22%3A%22traceql%22%2C%22refId%22%3A%22A%22%2C%22limit%22%3A20%2C%22tableType%22%3A%22traces%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22now-15m%22%2C%22to%22%3A%22now%22%7D%7D\">查 projection.process_worker_iteration</a></li></ul><p>若要追某一筆，先從 API response 或結果頁拿 <code>commandId</code>，再用 Explore 搜 <code>buy_intent.command_id</code>。</p><p>如果 Grafana 仍然開成左右兩塊，直接把右邊 pane 關掉即可；這些連結都只會先打開單一查詢 pane。</p>",
+        "mode": "html"
+      },
+      "pluginVersion": "12.1.1",
+      "title": "Tracing Entry",
+      "type": "text"
+    },
+    {
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 7
+      },
+      "id": 2,
+      "options": {
+        "content": "<h3>建議 TraceQL</h3><pre>{ name = \"buy_intent.accept\" }\n{ name = \"buy_intent.ingest_message\" }\n{ name = \"buy_intent.process_staged_batch\" }\n{ name = \"buy_intent.process_staged_command\" }</pre><p>這些連結都會開單一搜尋 pane；只有你點進單筆 trace 詳細內容時，Grafana 才可能在右邊再開一個 pane。</p>",
+        "mode": "html"
+      },
+      "pluginVersion": "12.1.1",
+      "title": "Span Queries",
+      "type": "text"
+    },
+    {
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 7
+      },
+      "id": 3,
+      "options": {
+        "content": "<h3>常用欄位</h3><pre>buy_intent.command_id\nbuy_intent.correlation_id\nbuy_intent.checkout_intent_id\nbuy_intent.event_id\nprojection.name\nbuy_intent.batch_id</pre><p>先用欄位縮小範圍，再點進單條 trace 看 waterfall。</p>",
+        "mode": "html"
+      },
+      "pluginVersion": "12.1.1",
+      "title": "Useful Attributes",
+      "type": "text"
+    }
+  ],
+  "preload": false,
+  "refresh": "",
+  "schemaVersion": 41,
+  "tags": [
+    "tempo",
+    "tracing",
+    "buy-intent"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Minishop Tracing",
+  "uid": "minishop-tracing",
+  "version": 1,
+  "weekStart": ""
+}
