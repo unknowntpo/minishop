@@ -26,7 +26,12 @@ export function ProductCard({ product, locale }: { product: Product; locale: Buy
       </span>
       <span className="product-card-body">
         <span>
-          <span className="product-card-title">{localizedProduct.name}</span>
+          <span className="product-card-title">
+            {localizedProduct.name}
+            {product.seckill?.enabled ? (
+              <span className="badge warning">{messages.catalogSeckillTag}</span>
+            ) : null}
+          </span>
           <span className="muted">{localizedProduct.summary}</span>
         </span>
         <span className="product-card-meta">

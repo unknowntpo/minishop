@@ -14,6 +14,13 @@ export type AdminProductView = {
   available: number | null;
   inventoryLastEventId: number | null;
   inventoryAggregateVersion: number | null;
+  seckillCandidate: boolean;
+  seckillEnabled: boolean;
+  seckillStockLimit: number | null;
+  seckillDefaultStock: number | null;
+  seckillReservedCount: number;
+  seckillRejectedCount: number;
+  seckillLastProcessedAt: string | null;
 };
 
 export type AdminCheckoutView = {

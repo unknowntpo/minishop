@@ -84,11 +84,25 @@ export const sku = pgTable(
     priceAmountMinor: bigint("price_amount_minor", { mode: "number" }).notNull(),
     currency: text("currency").notNull(),
     status: text("status").notNull(),
+    seckillCandidate: boolean("seckill_candidate").notNull().default(false),
+    seckillEnabled: boolean("seckill_enabled").notNull().default(false),
+    seckillStockLimit: integer("seckill_stock_limit"),
+    seckillDefaultStock: integer("seckill_default_stock"),
     attributes: jsonb("attributes").notNull().default({}),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [uniqueIndex("sku_sku_code_unique").on(table.skuCode)],
+  (table) => [
+    uniqueIndex("sku_sku_code_unique").on(table.skuCode),
+    check(
+      "sku_seckill_stock_limit_non_negative",
+      sql`${table.seckillStockLimit} is null or ${table.seckillStockLimit} >= 0`,
+    ),
+    check(
+      "sku_seckill_default_stock_non_negative",
+      sql`${table.seckillDefaultStock} is null or ${table.seckillDefaultStock} >= 0`,
+    ),
+  ],
 );
 
 export const checkoutIntentProjection = pgTable(
@@ -226,6 +240,37 @@ export const stagingBuyIntentCommand = pgTable(
     check(
       "staged_buy_intent_command_ingest_status_check",
       sql`${table.ingestStatus} in (${sqlStringList(stagingIngestStatuses)})`,
+    ),
+  ],
+);
+
+export const seckillCommandResult = pgTable(
+  "seckill_command_result",
+  {
+    commandId: uuid("command_id").primaryKey(),
+    correlationId: uuid("correlation_id").notNull(),
+    skuId: text("sku_id").notNull(),
+    checkoutIntentId: uuid("checkout_intent_id"),
+    status: text("status").notNull(),
+    requestedQuantity: integer("requested_quantity").notNull(),
+    seckillStockLimit: integer("seckill_stock_limit").notNull(),
+    failureReason: text("failure_reason"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("seckill_command_result_sku_idx").on(table.skuId, table.updatedAt),
+    check(
+      "seckill_command_result_status_check",
+      sql`${table.status} in ('reserved', 'rejected')`,
+    ),
+    check(
+      "seckill_command_result_requested_quantity_positive",
+      sql`${table.requestedQuantity} > 0`,
+    ),
+    check(
+      "seckill_command_result_stock_limit_non_negative",
+      sql`${table.seckillStockLimit} >= 0`,
     ),
   ],
 );

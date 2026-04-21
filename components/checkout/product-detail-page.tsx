@@ -349,7 +349,12 @@ function ProductDetailPageBody({ product, products }: { product: Product; produc
         <div className="purchase-stack">
           <section className="panel purchase-panel">
             <p className="eyebrow">{messages.productEyebrow}</p>
-            <h1 id="product-title">{localizedProduct.name}</h1>
+            <h1 id="product-title">
+              {localizedProduct.name}
+              {product.seckill?.enabled ? (
+                <span className="badge warning">{messages.catalogSeckillTag}</span>
+              ) : null}
+            </h1>
             <p className="muted">
               SKU {product.skuCode} · {localizedProduct.checkoutNote}
             </p>

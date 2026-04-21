@@ -69,9 +69,15 @@ CREATE TABLE "sku" (
 	"price_amount_minor" bigint NOT NULL,
 	"currency" text NOT NULL,
 	"status" text NOT NULL,
+	"seckill_candidate" boolean DEFAULT false NOT NULL,
+	"seckill_enabled" boolean DEFAULT false NOT NULL,
+	"seckill_stock_limit" integer,
+	"seckill_default_stock" integer,
 	"attributes" jsonb DEFAULT '{}'::jsonb NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "sku_seckill_stock_limit_non_negative" CHECK ("sku"."seckill_stock_limit" is null or "sku"."seckill_stock_limit" >= 0),
+	CONSTRAINT "sku_seckill_default_stock_non_negative" CHECK ("sku"."seckill_default_stock" is null or "sku"."seckill_default_stock" >= 0)
 );
 --> statement-breakpoint
 CREATE TABLE "sku_inventory_projection" (

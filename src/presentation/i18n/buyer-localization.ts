@@ -26,6 +26,7 @@ type BuyerMessages = {
   catalogTitle: string;
   catalogDescription: string;
   catalogAvailable: (available: number) => string;
+  catalogSeckillTag: string;
   productEyebrow: string;
   productInventoryAvailable: (available: number) => string;
   productInventoryState: {
@@ -115,6 +116,7 @@ const buyerMessages: Record<BuyerLocale, BuyerMessages> = {
     catalogDescription:
       "先挑選商品，再啟動 event-sourced buy flow。購物車結帳可以把多個商品一起送進同一筆 checkout intent，不把單一商品當成庫存邊界。",
     catalogAvailable: (available) => `可購買 ${formatBuyerNumber(available, "zh-TW")} 件`,
+    catalogSeckillTag: "秒殺活動",
     productEyebrow: "直接購買",
     productInventoryAvailable: (available) =>
       `目前可購買：${formatBuyerNumber(available, "zh-TW")}`,
@@ -209,6 +211,7 @@ const buyerMessages: Record<BuyerLocale, BuyerMessages> = {
     catalogDescription:
       "Select a product, then start the event-sourced buy flow. Cart checkout can reserve SKUs across multiple products without treating product as the inventory boundary.",
     catalogAvailable: (available) => `Available ${formatBuyerNumber(available, "en")}`,
+    catalogSeckillTag: "Seckill",
     productEyebrow: "Direct buy",
     productInventoryAvailable: (available) =>
       `Available now: ${formatBuyerNumber(available, "en")}`,

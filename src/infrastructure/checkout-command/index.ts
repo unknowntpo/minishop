@@ -3,6 +3,8 @@ import { createNatsBuyIntentCommandBus } from "@/src/infrastructure/checkout-com
 import { createNoopBuyIntentCommandOrchestrator } from "@/src/infrastructure/checkout-command/noop-buy-intent-command-orchestrator";
 import { createPostgresBuyIntentCommandBus } from "@/src/infrastructure/checkout-command/postgres-buy-intent-command-bus";
 import { createPostgresBuyIntentCommandGateway } from "@/src/infrastructure/checkout-command/postgres-buy-intent-command-gateway";
+import { createRoutingBuyIntentCommandBus } from "@/src/infrastructure/checkout-command/routing-buy-intent-command-bus";
+import { createKafkaSeckillCommandBus } from "@/src/infrastructure/seckill/kafka-seckill-command-bus";
 import type { BuyIntentCommandBus } from "@/src/ports/buy-intent-command-bus";
 import type {
   BuyIntentCommandGateway,
@@ -37,8 +39,12 @@ function getRuntimeCommandBus() {
   }
 
   const natsUrl = readRuntimeEnv("NATS_URL");
+  const kafkaBrokers = readRuntimeEnv("KAFKA_BROKERS")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
 
-  sharedBus = natsUrl
+  const defaultBus = natsUrl
     ? createNatsBuyIntentCommandBus({
         servers: natsUrl,
         streamName: readRuntimeEnv("NATS_BUY_INTENT_STREAM") || "BUY_INTENT_COMMANDS",
@@ -47,6 +53,22 @@ function getRuntimeCommandBus() {
         dlqSubject: readRuntimeEnv("NATS_BUY_INTENT_DLQ_SUBJECT") || "buy-intent.dlq",
       })
     : getPostgresBus();
+
+  sharedBus =
+    kafkaBrokers.length > 0
+        ? createRoutingBuyIntentCommandBus({
+          defaultBus,
+          seckillBus: createKafkaSeckillCommandBus({
+            brokers: kafkaBrokers,
+            requestTopic:
+              readRuntimeEnv("KAFKA_SECKILL_REQUEST_TOPIC") || "inventory.seckill.requested",
+            resultTopic:
+              readRuntimeEnv("KAFKA_SECKILL_RESULT_TOPIC") || "inventory.seckill.result",
+            clientId: readRuntimeEnv("KAFKA_CLIENT_ID") || "minishop-app",
+          }),
+          pool: getPool(),
+        })
+      : defaultBus;
 
   return sharedBus;
 }

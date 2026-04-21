@@ -28,6 +28,30 @@ services:
     volumes:
       - minishop_nats_data:/data
 
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.2.18
+    container_name: minishop-redpanda
+    restart: unless-stopped
+    command:
+      - redpanda
+      - start
+      - --overprovisioned
+      - --smp
+      - "1"
+      - --memory
+      - "1G"
+      - --reserve-memory
+      - "0M"
+      - --node-id
+      - "0"
+      - --check=false
+      - --kafka-addr
+      - PLAINTEXT://0.0.0.0:9092,OUTSIDE://0.0.0.0:19092
+      - --advertise-kafka-addr
+      - PLAINTEXT://redpanda:9092,OUTSIDE://localhost:19092
+    ports:
+      - "${MINISHOP_KAFKA_PORT:-19092}:19092"
+
   tempo:
     image: grafana/tempo:2.8.2
     container_name: minishop-tempo
@@ -66,6 +90,8 @@ services:
         condition: service_healthy
       nats:
         condition: service_started
+      redpanda:
+        condition: service_started
     environment:
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/minishop
       DATABASE_POOL_MAX: ${APP_DATABASE_POOL_MAX:-16}
@@ -80,6 +106,10 @@ services:
       NATS_BUY_INTENT_INGEST_RETRY_DELAY_MS: ${NATS_BUY_INTENT_INGEST_RETRY_DELAY_MS:-1000}
       NATS_BUY_INTENT_ACK_WAIT_MS: ${NATS_BUY_INTENT_ACK_WAIT_MS:-30000}
       NATS_BUY_INTENT_INGEST_CONTINUOUS: ${NATS_BUY_INTENT_INGEST_CONTINUOUS:-0}
+      KAFKA_BROKERS: ${KAFKA_BROKERS:-redpanda:9092}
+      KAFKA_CLIENT_ID: ${KAFKA_CLIENT_ID:-minishop-app}
+      KAFKA_SECKILL_REQUEST_TOPIC: ${KAFKA_SECKILL_REQUEST_TOPIC:-inventory.seckill.requested}
+      KAFKA_SECKILL_RESULT_TOPIC: ${KAFKA_SECKILL_RESULT_TOPIC:-inventory.seckill.result}
       BUY_INTENT_BATCH_SIZE: ${BUY_INTENT_BATCH_SIZE:-100}
       BUY_INTENT_PROCESS_POLL_INTERVAL_MS: ${BUY_INTENT_PROCESS_POLL_INTERVAL_MS:-1000}
       OTEL_ENABLED: ${OTEL_ENABLED:-1}
@@ -226,6 +256,29 @@ services:
       NEXT_TELEMETRY_DISABLED: "1"
     command: ["pnpm", "worker:projections"]
 
+  worker-seckill:
+    build:
+      context: .
+      dockerfile: Dockerfile.seckill-worker
+    container_name: minishop-worker-seckill
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redpanda:
+        condition: service_started
+    environment:
+      JDBC_DATABASE_URL: jdbc:postgresql://postgres:5432/minishop
+      DATABASE_USER: postgres
+      DATABASE_PASSWORD: postgres
+      KAFKA_BROKERS: ${KAFKA_BROKERS:-redpanda:9092}
+      KAFKA_SECKILL_APPLICATION_ID: ${KAFKA_SECKILL_APPLICATION_ID:-minishop-seckill-worker-v2}
+      KAFKA_SECKILL_REQUEST_TOPIC: ${KAFKA_SECKILL_REQUEST_TOPIC:-inventory.seckill.requested}
+      KAFKA_SECKILL_RESULT_TOPIC: ${KAFKA_SECKILL_RESULT_TOPIC:-inventory.seckill.result}
+      KAFKA_SECKILL_STATE_DIR: /var/lib/minishop-seckill/state
+    volumes:
+      - minishop_seckill_state:/var/lib/minishop-seckill/state
+
   benchmark-runner:
     profiles: ["benchmark"]
     build:
@@ -236,6 +289,8 @@ services:
       postgres:
         condition: service_healthy
       nats:
+        condition: service_started
+      redpanda:
         condition: service_started
       app:
         condition: service_started
@@ -258,3 +313,4 @@ volumes:
   minishop_postgres_data:
   minishop_nats_data:
   minishop_tempo_data:
+  minishop_seckill_state:

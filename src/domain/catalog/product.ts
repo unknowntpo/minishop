@@ -18,6 +18,12 @@ export type Product = {
     updatedAt: string | null;
     projectionLagMs: number | null;
   };
+  seckill?: {
+    candidate: boolean;
+    enabled: boolean;
+    stockLimit: number | null;
+    defaultStock: number | null;
+  };
   image: {
     src: string;
     alt: string;

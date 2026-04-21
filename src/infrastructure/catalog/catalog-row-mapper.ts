@@ -8,6 +8,10 @@ export type CatalogProductRow = {
   sku_code: string;
   price_amount_minor: string | number;
   currency: string;
+  seckill_candidate: boolean;
+  seckill_enabled: boolean;
+  seckill_stock_limit: number | null;
+  seckill_default_stock: number | null;
   on_hand: number | null;
   reserved: number | null;
   sold: number | null;
@@ -46,6 +50,12 @@ export function mapProductRow(row: CatalogProductRow): Product {
       projectionLagMs: row.inventory_updated_at
         ? Date.now() - row.inventory_updated_at.getTime()
         : null,
+    },
+    seckill: {
+      candidate: row.seckill_candidate,
+      enabled: row.seckill_enabled,
+      stockLimit: row.seckill_stock_limit,
+      defaultStock: row.seckill_default_stock,
     },
     image: {
       src: imageSrc,

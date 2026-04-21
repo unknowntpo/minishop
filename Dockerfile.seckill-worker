@@ -1,0 +1,17 @@
+FROM gradle:8.14.0-jdk21 AS build
+
+WORKDIR /workspace
+
+COPY workers/kafka-seckill ./workers/kafka-seckill
+
+WORKDIR /workspace/workers/kafka-seckill
+
+RUN gradle --no-daemon installDist
+
+FROM eclipse-temurin:21-jre
+
+WORKDIR /app
+
+COPY --from=build /workspace/workers/kafka-seckill/build/install/kafka-seckill-worker /app
+
+CMD ["/app/bin/kafka-seckill-worker"]

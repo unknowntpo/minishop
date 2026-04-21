@@ -6,4 +6,7 @@ export const postgresAdminDashboardRepository: AdminDashboardRepository = {
   getDashboard() {
     return createPostgresAdminDashboardRepository(getPool()).getDashboard();
   },
+  updateSeckillConfig(input) {
+    return createPostgresAdminDashboardRepository(getPool()).updateSeckillConfig(input);
+  },
 };

@@ -21,6 +21,8 @@ const catalogSeed = [
     priceAmountMinor: 100000,
     currency: "TWD",
     onHand: 100,
+    seckillCandidate: true,
+    seckillDefaultStock: 50,
     attributes: {
       slug: "limited-runner",
       image:
@@ -38,6 +40,8 @@ const catalogSeed = [
     priceAmountMinor: 68000,
     currency: "TWD",
     onHand: 240,
+    seckillCandidate: false,
+    seckillDefaultStock: null,
     attributes: {
       slug: "everyday-tee",
       image:
@@ -55,6 +59,8 @@ const catalogSeed = [
     priceAmountMinor: 42000,
     currency: "TWD",
     onHand: 160,
+    seckillCandidate: true,
+    seckillDefaultStock: 40,
     attributes: {
       slug: "travel-cap",
       image:
@@ -138,6 +144,10 @@ async function seedDevCatalog() {
         priceAmountMinor: item.priceAmountMinor,
         currency: item.currency,
         status: "active",
+        seckillCandidate: item.seckillCandidate,
+        seckillEnabled: false,
+        seckillStockLimit: null,
+        seckillDefaultStock: item.seckillDefaultStock,
         attributes: item.attributes,
       })
       .onConflictDoUpdate({
@@ -149,6 +159,10 @@ async function seedDevCatalog() {
           priceAmountMinor: item.priceAmountMinor,
           currency: item.currency,
           status: "active",
+          seckillCandidate: item.seckillCandidate,
+          seckillEnabled: false,
+          seckillStockLimit: null,
+          seckillDefaultStock: item.seckillDefaultStock,
           attributes: item.attributes,
           updatedAt: new Date(),
         },

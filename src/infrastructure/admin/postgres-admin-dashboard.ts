@@ -21,12 +21,19 @@ type ProductResultRow = {
   sku_status: string;
   price_amount_minor: string | number;
   currency: string;
+  seckill_candidate: boolean;
+  seckill_enabled: boolean;
+  seckill_stock_limit: number | null;
+  seckill_default_stock: number | null;
   on_hand: number | null;
   reserved: number | null;
   sold: number | null;
   available: number | null;
   inventory_last_event_id: string | number | null;
   inventory_aggregate_version: string | number | null;
+  seckill_reserved_count: string | number;
+  seckill_rejected_count: string | number;
+  seckill_last_processed_at: Date | null;
 };
 
 type CheckoutResultRow = {
@@ -74,6 +81,20 @@ export function createPostgresAdminDashboardRepository(pool: Pool): AdminDashboa
         checkpoints,
       };
     },
+
+    async updateSeckillConfig({ skuId, enabled, stockLimit }) {
+      await pool.query(
+        `
+          update sku
+          set
+            seckill_enabled = $2,
+            seckill_stock_limit = case when $2 then $3::integer else null end,
+            updated_at = now()
+          where sku_id = $1
+        `,
+        [skuId, enabled, stockLimit],
+      );
+    },
   };
 }
 
@@ -89,15 +110,30 @@ async function readProducts(pool: Pool): Promise<AdminProductRow[]> {
       sku.status as sku_status,
       sku.price_amount_minor,
       sku.currency,
+      sku.seckill_candidate,
+      sku.seckill_enabled,
+      sku.seckill_stock_limit,
+      sku.seckill_default_stock,
       sku_inventory_projection.on_hand,
       sku_inventory_projection.reserved,
       sku_inventory_projection.sold,
       sku_inventory_projection.available,
       sku_inventory_projection.last_event_id as inventory_last_event_id,
-      sku_inventory_projection.aggregate_version as inventory_aggregate_version
+      sku_inventory_projection.aggregate_version as inventory_aggregate_version,
+      coalesce(seckill_summary.reserved_count, 0) as seckill_reserved_count,
+      coalesce(seckill_summary.rejected_count, 0) as seckill_rejected_count,
+      seckill_summary.last_processed_at as seckill_last_processed_at
     from product
     join sku on sku.product_id = product.product_id
     left join sku_inventory_projection on sku_inventory_projection.sku_id = sku.sku_id
+    left join lateral (
+      select
+        count(*) filter (where status = 'reserved') as reserved_count,
+        count(*) filter (where status = 'rejected') as rejected_count,
+        max(updated_at) as last_processed_at
+      from seckill_command_result
+      where seckill_command_result.sku_id = sku.sku_id
+    ) as seckill_summary on true
     order by product.product_id, sku.sku_id
   `);
 
@@ -111,6 +147,10 @@ async function readProducts(pool: Pool): Promise<AdminProductRow[]> {
     skuStatus: row.sku_status,
     priceAmountMinor: Number(row.price_amount_minor),
     currency: row.currency,
+    seckillCandidate: row.seckill_candidate,
+    seckillEnabled: row.seckill_enabled,
+    seckillStockLimit: row.seckill_stock_limit,
+    seckillDefaultStock: row.seckill_default_stock,
     onHand: row.on_hand,
     reserved: row.reserved,
     sold: row.sold,
@@ -119,6 +159,9 @@ async function readProducts(pool: Pool): Promise<AdminProductRow[]> {
       row.inventory_last_event_id === null ? null : Number(row.inventory_last_event_id),
     inventoryAggregateVersion:
       row.inventory_aggregate_version === null ? null : Number(row.inventory_aggregate_version),
+    seckillReservedCount: Number(row.seckill_reserved_count),
+    seckillRejectedCount: Number(row.seckill_rejected_count),
+    seckillLastProcessedAt: row.seckill_last_processed_at?.toISOString() ?? null,
   }));
 }
 

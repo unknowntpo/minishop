@@ -14,6 +14,13 @@ export type AdminProductRow = {
   available: number | null;
   inventoryLastEventId: number | null;
   inventoryAggregateVersion: number | null;
+  seckillCandidate: boolean;
+  seckillEnabled: boolean;
+  seckillStockLimit: number | null;
+  seckillDefaultStock: number | null;
+  seckillReservedCount: number;
+  seckillRejectedCount: number;
+  seckillLastProcessedAt: string | null;
 };
 
 export type AdminCheckoutRow = {
@@ -55,4 +62,9 @@ export type AdminDashboard = {
 
 export type AdminDashboardRepository = {
   getDashboard(): Promise<AdminDashboard>;
+  updateSeckillConfig(input: {
+    skuId: string;
+    enabled: boolean;
+    stockLimit: number | null;
+  }): Promise<void>;
 };
