@@ -1,0 +1,9 @@
+startDelaySeconds: 0
+lowercaseOutputName: true
+lowercaseOutputLabelNames: true
+ssl: false
+whitelistObjectNames:
+  - "kafka.streams:*"
+  - "kafka.consumer:*"
+  - "kafka.producer:*"
+  - "java.lang:*"

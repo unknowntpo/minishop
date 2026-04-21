@@ -51,6 +51,7 @@ services:
       - PLAINTEXT://redpanda:9092,OUTSIDE://localhost:19092
     ports:
       - "${MINISHOP_KAFKA_PORT:-19092}:19092"
+      - "${MINISHOP_REDPANDA_METRICS_PORT:-9644}:9644"
 
   tempo:
     image: grafana/tempo:2.8.2
@@ -64,12 +65,24 @@ services:
       - "${MINISHOP_TEMPO_PORT:-3200}:3200"
       - "${MINISHOP_TEMPO_OTLP_HTTP_PORT:-4318}:4318"
 
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    container_name: minishop-prometheus
+    restart: unless-stopped
+    command: ["--config.file=/etc/prometheus/prometheus.yml"]
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "${MINISHOP_PROMETHEUS_PORT:-9090}:9090"
+
   grafana:
     image: grafana/grafana:12.1.1
     container_name: minishop-grafana
     restart: unless-stopped
     depends_on:
       tempo:
+        condition: service_started
+      prometheus:
         condition: service_started
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "true"
@@ -287,8 +300,11 @@ services:
       KAFKA_SECKILL_PROCESSING_EXCEPTION_HANDLER: ${KAFKA_SECKILL_PROCESSING_EXCEPTION_HANDLER:-org.apache.kafka.streams.errors.LogAndContinueProcessingExceptionHandler}
       KAFKA_SECKILL_PRODUCTION_EXCEPTION_HANDLER: ${KAFKA_SECKILL_PRODUCTION_EXCEPTION_HANDLER:-org.apache.kafka.streams.errors.DefaultProductionExceptionHandler}
       KAFKA_SECKILL_STATE_DIR: /var/lib/minishop-seckill/state
+      JAVA_TOOL_OPTIONS: ${WORKER_SECKILL_JAVA_TOOL_OPTIONS:--javaagent:/opt/jmx/jmx_prometheus_javaagent.jar=9404:/etc/jmx-exporter/kafka-streams.yml}
     volumes:
       - minishop_seckill_state:/var/lib/minishop-seckill/state
+    expose:
+      - "9404"
 
   worker-seckill-result-sink:
     build:

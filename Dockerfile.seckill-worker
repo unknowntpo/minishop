@@ -13,5 +13,7 @@ FROM eclipse-temurin:21-jre
 WORKDIR /app
 
 COPY --from=build /workspace/workers/kafka-seckill/build/install/kafka-seckill-worker /app
+ADD https://github.com/prometheus/jmx_exporter/releases/download/1.4.0/jmx_prometheus_javaagent-1.4.0.jar /opt/jmx/jmx_prometheus_javaagent.jar
+COPY observability/jmx/kafka-streams.yml /etc/jmx-exporter/kafka-streams.yml
 
 CMD ["/app/bin/kafka-seckill-worker"]

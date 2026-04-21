@@ -1,0 +1,249 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "content": "<h2>Kafka / Streams metrics</h2><p>這頁先看 runtime metrics，不看 benchmark artifact。Prometheus 會抓 Redpanda 與 Kafka Streams JVM metrics。</p><ul><li>Redpanda produce/fetch request rate 與 latency</li><li>Kafka Streams consume/send rate</li><li>Streams lag / alive threads / failed threads</li></ul>",
+        "mode": "markdown"
+      },
+      "pluginVersion": "12.1.1",
+      "title": "Overview",
+      "type": "text"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 4
+      },
+      "id": 2,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(rate(redpanda_kafka_handler_latency_seconds_count{handler=\"produce\"}[$__rate_interval]))",
+          "legendFormat": "produce req/sec",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(rate(redpanda_kafka_handler_latency_seconds_count{handler=\"fetch\"}[$__rate_interval]))",
+          "legendFormat": "fetch req/sec",
+          "refId": "B"
+        }
+      ],
+      "title": "Redpanda Request Rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 4
+      },
+      "id": 3,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "1000 * (sum(rate(redpanda_kafka_handler_latency_seconds_sum{handler=\"fetch\"}[$__rate_interval])) / clamp_min(sum(rate(redpanda_kafka_handler_latency_seconds_count{handler=\"fetch\"}[$__rate_interval])), 1))",
+          "legendFormat": "fetch latency avg",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "1000 * (sum(rate(redpanda_kafka_handler_latency_seconds_sum{handler=\"produce\"}[$__rate_interval])) / clamp_min(sum(rate(redpanda_kafka_handler_latency_seconds_count{handler=\"produce\"}[$__rate_interval])), 1))",
+          "legendFormat": "produce latency avg",
+          "refId": "B"
+        }
+      ],
+      "title": "Redpanda Request Latency",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 12
+      },
+      "id": 4,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(kafka_consumer_consumer_fetch_manager_metrics_records_consumed_rate{topic=\"inventory.seckill.requested\"})",
+          "legendFormat": "records consumed/sec",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(kafka_producer_producer_metrics_record_send_rate)",
+          "legendFormat": "records sent/sec",
+          "refId": "B"
+        }
+      ],
+      "title": "Kafka Streams Throughput",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 12
+      },
+      "id": 5,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max(kafka_consumer_consumer_fetch_manager_metrics_records_lag_max{topic=\"inventory.seckill.requested\"})",
+          "legendFormat": "request topic lag max",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max(kafka_streams_stream_metrics_alive_stream_threads)",
+          "legendFormat": "alive stream threads",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max(kafka_streams_stream_metrics_failed_stream_threads)",
+          "legendFormat": "failed stream threads",
+          "refId": "C"
+        }
+      ],
+      "title": "Lag and Worker Health",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 41,
+  "style": "dark",
+  "tags": [
+    "kafka",
+    "streams",
+    "metrics"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Minishop Kafka Streams Metrics",
+  "uid": "minishop-kafka-streams-metrics",
+  "version": 1
+}
