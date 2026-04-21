@@ -10,6 +10,7 @@ import type { SeckillBuyIntentRequest } from "@/src/domain/seckill/seckill-buy-i
 
 type BenchmarkConfig = {
   appUrl: string;
+  appUrls: string[];
   databaseUrl: string;
   kafkaBrokers: string[];
   scenarioFamily?: string;
@@ -167,7 +168,7 @@ async function main() {
     max: 4,
   });
   if (config.ingressSource === "http") {
-    await assertAppReachable(config.appUrl);
+    await assertAppsReachable(config.appUrls);
   }
   const kafkaBefore = await readKafkaBenchmarkSnapshot(config).catch(() => null);
   const seckillCollector =
@@ -727,9 +728,10 @@ async function startSeckillOutcomeCollector(config: BenchmarkConfig) {
 async function createBuyIntent(index: number): Promise<AcceptResult> {
   const requestStartedAtMs = performance.timeOrigin + performance.now();
   const startedAt = performance.now();
+  const appUrl = appUrlForIndex(index);
 
   try {
-    const response = await fetch(`${config.appUrl}/api/buy-intents`, {
+    const response = await fetch(`${appUrl}/api/buy-intents`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -1515,6 +1517,16 @@ async function assertAppReachable(appUrl: string) {
   }
 }
 
+async function assertAppsReachable(appUrls: string[]) {
+  for (const appUrl of appUrls) {
+    await assertAppReachable(appUrl);
+  }
+}
+
+function appUrlForIndex(index: number) {
+  return config.appUrls[index % config.appUrls.length] ?? config.appUrl;
+}
+
 function summarizeLatencies(values: number[]) {
   return {
     p50: percentile(values, 50),
@@ -1914,12 +1926,21 @@ async function maybeStopProfiling(
 
 function readConfig(): BenchmarkConfig {
   const scenarioName = process.env.BENCHMARK_SCENARIO_NAME ?? defaultScenarioName();
+  const appUrls = (
+    process.env.BENCHMARK_APP_URLS ??
+    process.env.BENCHMARK_APP_URL ??
+    "http://localhost:3000"
+  )
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
   const createdSource =
     (process.env.BENCHMARK_CREATED_SOURCE as BenchmarkConfig["createdSource"] | undefined) ??
     (scenarioName.includes("seckill") ? "kafka_seckill_result" : "postgres");
 
   return {
-    appUrl: process.env.BENCHMARK_APP_URL ?? "http://localhost:3000",
+    appUrl: appUrls[0] ?? "http://localhost:3000",
+    appUrls,
     databaseUrl: requiredEnv("DATABASE_URL"),
     scenarioFamily: process.env.BENCHMARK_SCENARIO_FAMILY?.trim() || undefined,
     kafkaBrokers: (process.env.BENCHMARK_KAFKA_BROKERS ?? "localhost:19092")
