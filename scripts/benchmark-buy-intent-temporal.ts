@@ -1066,15 +1066,22 @@ async function runSteadyStateSeckillBenchmark(
     };
   }
 
-  await runWithConcurrencyUntil(config.httpConcurrency, config.steadyStateWarmupMs, async (index) =>
-    createBuyIntent(index),
+  let nextIndex = 0;
+  const warmup = await runWithConcurrencyUntil(
+    config.httpConcurrency,
+    config.steadyStateWarmupMs,
+    async (index) => createBuyIntent(nextIndex + index),
   );
+  nextIndex += warmup.totalIssued;
 
   const windowStartedAtMs = performance.timeOrigin + performance.now();
-  const measured = await runWithConcurrencyUntil(config.httpConcurrency, config.steadyStateMeasureMs, async (index) =>
-    createBuyIntent(index),
+  const measured = await runWithConcurrencyUntil(
+    config.httpConcurrency,
+    config.steadyStateMeasureMs,
+    async (index) => createBuyIntent(nextIndex + index),
   );
   const windowEndedAtMs = performance.timeOrigin + performance.now();
+  nextIndex += measured.totalIssued;
 
   await sleep(config.steadyStateCooldownMs);
 
