@@ -850,9 +850,21 @@ function ComparisonChart({
 
       return String(left.x).localeCompare(String(right.x));
     });
-  const polyline = aggregatedPoints
-    .map(({ chartX, chartY }) => `${chartX},${chartY}`)
-    .join(" ");
+  const scatteredPoints = [...groupedPoints.values()].flatMap((group) => {
+    const spread = Math.min(18, Math.max(6, group.points.length * 4));
+
+    return group.points.map((point, index) => {
+      const offset =
+        group.points.length === 1
+          ? 0
+          : ((index / Math.max(group.points.length - 1, 1)) - 0.5) * spread;
+
+      return {
+        ...point,
+        chartX: point.chartX + offset,
+      };
+    });
+  });
 
   return (
     <article className="benchmark-comparison-card">
@@ -901,50 +913,35 @@ function ComparisonChart({
         <line className="capacity-axis" x1="44" y1="176" x2="348" y2="176" />
         <polyline className="capacity-axis-arrow" points="36,36 44,28 52,36" />
         <polyline className="capacity-axis-arrow" points="340,168 348,176 340,184" />
-        {plottedPoints.map(({ run, chartX, chartY, y, tickLabel }) => (
-          <circle
-            key={`raw-${run.artifactFile}`}
-            className={`capacity-point-raw${run.pass ? "" : " preview"}`}
-            cx={chartX}
-            cy={chartY}
-            fill={run.pass ? "#2e9462" : "#b75f4b"}
-            r={2.75}
-          >
-            <title>
-              {`${tickLabel} · ${formatPlotHoverValue(y, unit)}\n${displayRunName(run)}\n${run.runId}\n${formatScenarioTags(run)}`}
-            </title>
-          </circle>
-        ))}
-        <polyline className="capacity-line" points={polyline} stroke="#2e9462" />
-        {aggregatedPoints.map(({ chartX, chartY, count, maxValue, medianValue, minValue, tickLabel, x }) => {
+        {scatteredPoints.map(({ run, chartX, chartY, y, tickLabel, index }) => {
           const tooltipY = chartY < 92 ? Math.min(chartY + 12, 168) : Math.max(chartY - 86, 6);
 
           return (
-            <g className="capacity-point-group" key={`aggregate-${String(x)}`} tabIndex={0}>
+            <g className="capacity-point-group" key={`raw-${run.artifactFile}`} tabIndex={0}>
               <circle
-                className="capacity-point"
+                className={`capacity-point${run.pass ? "" : " preview"}`}
                 cx={chartX}
                 cy={chartY}
-                fill="#2e9462"
+                fill={run.pass ? "#2e9462" : "#b75f4b"}
                 r={4}
               />
               <foreignObject
                 className="capacity-point-tooltip"
-                height="78"
+                height="74"
                 width="132"
                 x={Math.min(Math.max(chartX - 54, 10), 214)}
                 y={tooltipY}
               >
                 <div className="capacity-point-tooltip-card">
                   <strong>{tickLabel}</strong>
-                  <span>median {formatPlotHoverValue(medianValue, unit)}</span>
-                  <span>
-                    {count} run{count === 1 ? "" : "s"} · min {formatPlotHoverValue(minValue, unit)}
-                  </span>
-                  <span>max {formatPlotHoverValue(maxValue, unit)}</span>
+                  <span>{formatPlotHoverValue(y, unit)}</span>
+                  <span>{displayRunShortName(run, index + 1)}</span>
+                  <span>{formatScenarioTags(run)}</span>
                 </div>
               </foreignObject>
-              <title>{`${tickLabel}: ${count} run${count === 1 ? "" : "s"}, median ${formatPlotHoverValue(medianValue, unit)}, min ${formatPlotHoverValue(minValue, unit)}, max ${formatPlotHoverValue(maxValue, unit)}`}</title>
+              <title>
+                {`${tickLabel} · ${formatPlotHoverValue(y, unit)}\n${displayRunName(run)}\n${run.runId}\n${formatScenarioTags(run)}`}
+              </title>
             </g>
           );
         })}

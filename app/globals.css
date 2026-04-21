@@ -1286,10 +1286,6 @@ button.design-preview {
     opacity 140ms ease;
 }
 
-.capacity-point-raw {
-  opacity: 0.32;
-}
-
 .capacity-point-tooltip {
   overflow: visible;
   opacity: 0;
