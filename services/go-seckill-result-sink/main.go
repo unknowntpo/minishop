@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -28,22 +29,22 @@ import (
 )
 
 type config struct {
-	databaseURL                    string
-	databasePoolMax                int
-	kafkaBrokers                   []string
-	kafkaResultTopic               string
-	kafkaGroupID                   string
-	kafkaClientID                  string
-	kafkaPartitionsConcurrently    int
-	serviceName                    string
-	otlpEndpoint                   string
-	otelEnabled                    bool
+	databaseURL                 string
+	databasePoolMax             int
+	kafkaBrokers                []string
+	kafkaResultTopic            string
+	kafkaGroupID                string
+	kafkaClientID               string
+	kafkaPartitionsConcurrently int
+	serviceName                 string
+	otlpEndpoint                string
+	otelEnabled                 bool
 }
 
 type seckillCommandOutcome struct {
-	Request seckillCommandOutcomeRequest `json:"request"`
-	Result  seckillCommandResult         `json:"result"`
-	ProcessedAt string                   `json:"processedAt"`
+	Request     seckillCommandOutcomeRequest `json:"request"`
+	Result      seckillCommandResult         `json:"result"`
+	ProcessedAt string                       `json:"processedAt"`
 }
 
 type seckillCommandOutcomeRequest struct {
@@ -237,9 +238,20 @@ func (a *app) handleMessage(ctx context.Context, message kafka.Message) error {
 		return nil
 	}
 
+	value := bytes.TrimLeft(message.Value, "\x00\r\n\t ")
+	if len(value) == 0 {
+		log.Printf("skip empty seckill result payload partition=%d offset=%d", message.Partition, message.Offset)
+		return nil
+	}
+	if value[0] != '{' && value[0] != '[' {
+		log.Printf("skip non-json seckill result payload partition=%d offset=%d first_byte=%q", message.Partition, message.Offset, value[0])
+		return nil
+	}
+
 	var outcome seckillCommandOutcome
-	if err := json.Unmarshal(message.Value, &outcome); err != nil {
-		return fmt.Errorf("decode outcome: %w", err)
+	if err := json.Unmarshal(value, &outcome); err != nil {
+		log.Printf("skip undecodable seckill result payload partition=%d offset=%d err=%v", message.Partition, message.Offset, err)
+		return nil
 	}
 
 	parentContext := extractParentContext(message.Headers)
