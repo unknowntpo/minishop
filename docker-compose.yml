@@ -60,7 +60,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.app
-    container_name: minishop-app
     restart: unless-stopped
     depends_on:
       postgres:
@@ -88,6 +87,17 @@ services:
       OTEL_SERVICE_NAME: minishop-app
       NODE_OPTIONS: ${NODE_OPTIONS:---require=/app/instrumentation.node.cjs}
       NEXT_TELEMETRY_DISABLED: "1"
+    expose:
+      - "3000"
+
+  app-lb:
+    image: nginx:1.27-alpine
+    container_name: minishop-app-lb
+    restart: unless-stopped
+    depends_on:
+      - app
+    volumes:
+      - ./ops/nginx/app-lb.conf:/etc/nginx/conf.d/default.conf:ro
     ports:
       - "${MINISHOP_APP_PORT:-3001}:3000"
 
@@ -215,6 +225,33 @@ services:
       NODE_OPTIONS: ${NODE_OPTIONS:---require=/app/instrumentation.node.cjs}
       NEXT_TELEMETRY_DISABLED: "1"
     command: ["pnpm", "worker:projections"]
+
+  benchmark-runner:
+    profiles: ["benchmark"]
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: minishop-benchmark-runner
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_started
+      app:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/minishop
+      BENCHMARK_APP_URL: ${BENCHMARK_APP_URL:-http://app:3000}
+      BENCHMARK_IN_CONTAINER: "1"
+      MINISHOP_ALLOWED_RESET_HOSTS: postgres
+      OTEL_ENABLED: ${OTEL_ENABLED:-1}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://tempo:4318}
+      OTEL_SERVICE_NAME: benchmark-runner
+      NODE_OPTIONS: ${NODE_OPTIONS:---require=/app/instrumentation.node.cjs}
+      NEXT_TELEMETRY_DISABLED: "1"
+    volumes:
+      - ./benchmark-results:/app/benchmark-results
+    command: ["pnpm", "benchmark:buy-intent:bypass:sweep"]
 
 
 volumes:

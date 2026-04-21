@@ -47,21 +47,25 @@ type BenchmarkArtifact = {
   };
 };
 
-const workdir = "/Users/unknowntpo/repo/unknowntpo/minishop/main";
-const appUrl = process.env.BENCHMARK_APP_URL ?? "http://localhost:3000";
+const workdir = process.cwd();
+const runningInContainer = process.env.BENCHMARK_IN_CONTAINER === "1";
+const appUrl = process.env.BENCHMARK_APP_URL ?? (runningInContainer ? "http://app:3000" : "http://localhost:3000");
 const scenarioName = process.env.BENCHMARK_SCENARIO_NAME ?? "buy-intent-bypass-created";
 const resultsRoot = process.env.BENCHMARK_RESULTS_DIR ?? "benchmark-results";
 const requests = readPositiveIntegerEnv("BENCHMARK_REQUESTS", 10000);
 const createdTimeoutMs = readPositiveIntegerEnv("BENCHMARK_CREATED_TIMEOUT_MS", 120000);
 const hotSkuUnits = readPositiveIntegerEnv("BENCHMARK_HOT_SKU_UNITS", 1000000);
+const appReplicas = readPositiveIntegerEnv("BENCHMARK_APP_REPLICAS", 1);
 const concurrencies = readConcurrencyList(process.env.BENCHMARK_SWEEP_CONCURRENCIES ?? "50,100,200,400,800,1000");
 
 async function main() {
-  execSync("docker compose up -d postgres nats", {
-    cwd: workdir,
-    stdio: "inherit",
-    env: process.env,
-  });
+  if (!runningInContainer) {
+    execSync("docker compose up -d postgres nats", {
+      cwd: workdir,
+      stdio: "inherit",
+      env: process.env,
+    });
+  }
 
   const summary: Array<{
     concurrency: number;
@@ -91,18 +95,20 @@ async function main() {
       },
     );
 
-    console.log(`[benchmark:sweep] starting production services for concurrency=${concurrency}`);
-    execSync(
-      "docker compose --profile benchmark up -d --build app worker-buy-intents-ingest worker-staged-buy-intents-process worker-projections",
-      {
-        cwd: workdir,
-        stdio: "inherit",
-        env: {
-          ...process.env,
-          BUY_INTENT_COMMAND_ORCHESTRATOR_MODE: "noop",
+    if (!runningInContainer) {
+      console.log(`[benchmark:sweep] starting production services for concurrency=${concurrency}`);
+      execSync(
+        `docker compose --profile benchmark up -d --build --scale app=${appReplicas} app app-lb worker-buy-intents-ingest worker-staged-buy-intents-process worker-projections`,
+        {
+          cwd: workdir,
+          stdio: "inherit",
+          env: {
+            ...process.env,
+            BUY_INTENT_COMMAND_ORCHESTRATOR_MODE: "noop",
+          },
         },
-      },
-    );
+      );
+    }
 
     await assertAppReachable(appUrl);
 
@@ -148,7 +154,11 @@ async function main() {
   const outDir = path.join(workdir, resultsRoot, "buy-intent-bypass-sweep");
   const outFile = path.join(outDir, `${new Date().toISOString().replace(/[:.]/g, "-")}_summary.json`);
   await mkdir(outDir, { recursive: true });
-  await writeFile(outFile, `${JSON.stringify({ requests, hotSkuUnits, concurrencies, summary }, null, 2)}\n`, "utf8");
+  await writeFile(
+    outFile,
+    `${JSON.stringify({ requests, hotSkuUnits, appReplicas, concurrencies, summary }, null, 2)}\n`,
+    "utf8",
+  );
 
   console.log("[benchmark:sweep] summary");
   console.table(
