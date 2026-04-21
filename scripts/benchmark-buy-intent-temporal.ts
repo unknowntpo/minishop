@@ -11,6 +11,8 @@ import type { SeckillBuyIntentRequest } from "@/src/domain/seckill/seckill-buy-i
 type BenchmarkConfig = {
   appUrl: string;
   appUrls: string[];
+  ingressAppUrl: string;
+  ingressAppUrls: string[];
   databaseUrl: string;
   kafkaBrokers: string[];
   scenarioFamily?: string;
@@ -45,6 +47,9 @@ type BenchmarkConfig = {
   steadyStateWarmupMs: number;
   steadyStateMeasureMs: number;
   steadyStateCooldownMs: number;
+  ingressImpl?: string;
+  benchmarkPath?: string;
+  ingressHealthPath: string;
 };
 
 type AcceptResult = {
@@ -168,7 +173,7 @@ async function main() {
     max: 4,
   });
   if (config.ingressSource === "http") {
-    await assertAppsReachable(config.appUrls);
+    await assertAppsReachable(config.ingressAppUrls, config.ingressHealthPath);
   }
   const kafkaBefore = await readKafkaBenchmarkSnapshot(config).catch(() => null);
   const seckillCollector =
@@ -1509,22 +1514,22 @@ async function readCommandStatusBatch(pool: Pool, commandIds: string[]) {
   return rows;
 }
 
-async function assertAppReachable(appUrl: string) {
-  const response = await fetch(`${appUrl}/products`);
+async function assertAppReachable(appUrl: string, healthPath: string) {
+  const response = await fetch(`${appUrl}${healthPath}`);
 
   if (!response.ok) {
-    throw new Error(`Benchmark app preflight failed: ${appUrl}/products returned ${response.status}.`);
+    throw new Error(`Benchmark app preflight failed: ${appUrl}${healthPath} returned ${response.status}.`);
   }
 }
 
-async function assertAppsReachable(appUrls: string[]) {
+async function assertAppsReachable(appUrls: string[], healthPath: string) {
   for (const appUrl of appUrls) {
-    await assertAppReachable(appUrl);
+    await assertAppReachable(appUrl, healthPath);
   }
 }
 
 function appUrlForIndex(index: number) {
-  return config.appUrls[index % config.appUrls.length] ?? config.appUrl;
+  return config.ingressAppUrls[index % config.ingressAppUrls.length] ?? config.ingressAppUrl;
 }
 
 function summarizeLatencies(values: number[]) {
@@ -1934,6 +1939,16 @@ function readConfig(): BenchmarkConfig {
     .split(",")
     .map((value) => value.trim())
     .filter(Boolean);
+  const ingressAppUrls = (
+    process.env.BENCHMARK_INGRESS_APP_URLS ??
+    process.env.BENCHMARK_APP_URLS ??
+    process.env.BENCHMARK_INGRESS_APP_URL ??
+    process.env.BENCHMARK_APP_URL ??
+    "http://localhost:3000"
+  )
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
   const createdSource =
     (process.env.BENCHMARK_CREATED_SOURCE as BenchmarkConfig["createdSource"] | undefined) ??
     (scenarioName.includes("seckill") ? "kafka_seckill_result" : "postgres");
@@ -1941,6 +1956,8 @@ function readConfig(): BenchmarkConfig {
   return {
     appUrl: appUrls[0] ?? "http://localhost:3000",
     appUrls,
+    ingressAppUrl: ingressAppUrls[0] ?? appUrls[0] ?? "http://localhost:3000",
+    ingressAppUrls,
     databaseUrl: requiredEnv("DATABASE_URL"),
     scenarioFamily: process.env.BENCHMARK_SCENARIO_FAMILY?.trim() || undefined,
     kafkaBrokers: (process.env.BENCHMARK_KAFKA_BROKERS ?? "localhost:19092")
@@ -1995,6 +2012,9 @@ function readConfig(): BenchmarkConfig {
     steadyStateWarmupMs: readPositiveIntegerEnv("BENCHMARK_STEADY_STATE_WARMUP_MS", 5_000),
     steadyStateMeasureMs: readPositiveIntegerEnv("BENCHMARK_STEADY_STATE_MEASURE_MS", 15_000),
     steadyStateCooldownMs: readPositiveIntegerEnv("BENCHMARK_STEADY_STATE_COOLDOWN_MS", 5_000),
+    ingressImpl: process.env.BENCHMARK_IMPL?.trim() || undefined,
+    benchmarkPath: process.env.BENCHMARK_PATH_TAG?.trim() || undefined,
+    ingressHealthPath: process.env.BENCHMARK_INGRESS_HEALTH_PATH?.trim() || "/products",
   };
 }
 
@@ -2020,6 +2040,12 @@ function buildScenarioTags(config: BenchmarkConfig) {
   if (config.scenarioName.includes("seckill")) {
     tags.bucket = config.seckillBucketCount;
     tags.maxProbe = config.seckillMaxProbe;
+  }
+  if (config.ingressImpl) {
+    tags.impl = config.ingressImpl;
+  }
+  if (config.benchmarkPath) {
+    tags.path = config.benchmarkPath;
   }
 
   if (config.benchmarkStyle === "steady_state") {
