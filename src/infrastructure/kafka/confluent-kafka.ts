@@ -52,6 +52,7 @@ export type KafkaConsumerLike = {
       message: {
         value: Buffer | null;
         timestamp: string;
+        headers?: Record<string, KafkaMessageHeaderValue>;
       };
     }) => Promise<void>;
   }): Promise<void>;

@@ -1,9 +1,14 @@
 import "dotenv/config";
 
+import type { KafkaMessageHeaderValue } from "@/src/infrastructure/kafka/confluent-kafka";
 import { getPool } from "@/db/client";
 import type { SeckillCommandOutcome } from "@/src/domain/seckill/seckill-command-outcome";
 import { loadConfluentKafkaJsCompat } from "@/src/infrastructure/kafka/confluent-kafka";
 import { createPostgresSeckillResultSink } from "@/src/infrastructure/seckill/postgres-seckill-result-sink";
+import {
+  extractContextFromTraceCarrier,
+  withSpan,
+} from "@/src/infrastructure/telemetry/otel";
 
 async function main() {
   const brokers = readRequiredEnv("KAFKA_BROKERS")
@@ -55,9 +60,66 @@ async function main() {
       }
 
       const outcome = JSON.parse(message.value.toString("utf8")) as SeckillCommandOutcome;
-      await sink.persistOutcome(outcome);
+      const parentContext = extractContextFromTraceCarrier(traceCarrierFromKafkaHeaders(message.headers));
+      await withSpan(
+        "inventory.seckill.result.persist",
+        {
+          attributes: {
+            "messaging.system": "kafka",
+            "messaging.destination.name": topic,
+            "buy_intent.command_id": outcome.result.commandId,
+            "buy_intent.correlation_id": outcome.result.correlationId,
+            "buy_intent.sku_id": outcome.result.skuId,
+            "seckill.result.status": outcome.result.status,
+          },
+        },
+        async () => {
+          await sink.persistOutcome(outcome);
+        },
+        parentContext,
+      );
     },
   });
+}
+
+function traceCarrierFromKafkaHeaders(
+  headers?: Record<string, KafkaMessageHeaderValue>,
+): { traceparent?: string; tracestate?: string; baggage?: string } | undefined {
+  if (!headers) {
+    return undefined;
+  }
+
+  const traceparent = decodeKafkaHeader(headers.traceparent);
+  const tracestate = decodeKafkaHeader(headers.tracestate);
+  const baggage = decodeKafkaHeader(headers.baggage);
+
+  if (!traceparent && !tracestate && !baggage) {
+    return undefined;
+  }
+
+  return {
+    ...(traceparent ? { traceparent } : {}),
+    ...(tracestate ? { tracestate } : {}),
+    ...(baggage ? { baggage } : {}),
+  };
+}
+
+function decodeKafkaHeader(value?: KafkaMessageHeaderValue): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const firstValue = Array.isArray(value) ? value[0] : value;
+
+  if (typeof firstValue === "string") {
+    return firstValue;
+  }
+
+  if (Buffer.isBuffer(firstValue)) {
+    return firstValue.toString("utf8");
+  }
+
+  return undefined;
 }
 
 function readRequiredEnv(name: string) {
