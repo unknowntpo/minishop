@@ -4,14 +4,17 @@ import { mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { Kafka, logLevel } from "kafkajs";
 import { Pool } from "pg";
+import { loadConfluentKafkaJsCompat } from "@/src/infrastructure/kafka/confluent-kafka";
+import type { SeckillBuyIntentRequest } from "@/src/domain/seckill/seckill-buy-intent-request";
 
 type BenchmarkConfig = {
   appUrl: string;
   databaseUrl: string;
   kafkaBrokers: string[];
+  seckillRequestTopic: string;
   seckillResultTopic: string;
+  seckillDlqTopic: string;
   requests: number;
   httpConcurrency: number;
   profilingEnabled: boolean;
@@ -23,10 +26,19 @@ type BenchmarkConfig = {
   resultsDir: string;
   scenarioName: string;
   mode: "bypass";
+  ingressSource: "http" | "direct_kafka";
   createdTimeoutMs: number;
   resetStateBeforeRun: boolean;
   createdSource: "postgres" | "kafka_seckill_result";
   ensureSeckillEnabled: boolean;
+  seckillBucketCount: number;
+  seckillMaxProbe: number;
+  directKafkaBatchSize: number;
+  kafkaClient: string;
+  appPublishBatchSize: number;
+  appPublishLingerMs: number;
+  producerLingerMs: number;
+  producerBatchNumMessages: number;
 };
 
 type AcceptResult = {
@@ -96,6 +108,12 @@ type BenchmarkProfilingMetadata = {
   }>;
 };
 
+type KafkaTopicSnapshot = {
+  topic: string;
+  partitions: number;
+  totalOffset: number;
+};
+
 const config = readConfig();
 
 async function main() {
@@ -104,25 +122,34 @@ async function main() {
     connectionString: config.databaseUrl,
     max: 4,
   });
-  await assertAppReachable(config.appUrl);
+  if (config.ingressSource === "http") {
+    await assertAppReachable(config.appUrl);
+  }
+  const kafkaBefore = await readKafkaBenchmarkSnapshot(config).catch(() => null);
   const seckillCollector =
     config.createdSource === "kafka_seckill_result"
       ? await startSeckillOutcomeCollector(config)
+      : null;
+  const directKafkaPublisher =
+    config.ingressSource === "direct_kafka"
+      ? await startDirectSeckillRequestPublisher(config)
       : null;
 
   try {
     if (config.ensureSeckillEnabled) {
       await ensureBenchmarkSeckillEnabled(pool, config);
-      // Seckill routing is cached in each app process. Let stale false entries expire
-      // before the run so the benchmark actually exercises the Kafka path.
-      await sleep(5_500);
+      if (config.ingressSource === "http") {
+        // Seckill routing is cached in each app process. Let stale false entries expire
+        // before the run so the benchmark actually exercises the Kafka path.
+        await sleep(5_500);
+      }
     }
 
     if (config.resetStateBeforeRun) {
       await resetBuyIntentBenchmarkState(pool, config.mode);
     }
 
-    const inventory = await readInventory(config.skuId);
+    const inventory = await readInventory(pool, config.skuId);
     const effectiveRequests =
       config.mode === "bypass" ? config.requests : Math.min(config.requests, inventory.available);
 
@@ -144,11 +171,18 @@ async function main() {
     let acceptDurationMs = 0;
 
     try {
-      acceptResults = await runWithConcurrency(
-        effectiveRequests,
-        config.httpConcurrency,
-        async (index) => createBuyIntent(index),
-      );
+      acceptResults =
+        config.ingressSource === "direct_kafka"
+          ? await publishSeckillRequestsDirectly(
+              directKafkaPublisher,
+              effectiveRequests,
+              config,
+            )
+          : await runWithConcurrency(
+              effectiveRequests,
+              config.httpConcurrency,
+              async (index) => createBuyIntent(index),
+            );
       acceptDurationMs = performance.now() - acceptStartedAt;
 
       accepted = acceptResults.filter(
@@ -167,12 +201,7 @@ async function main() {
           ? await waitForCreatedSeckillOutcomes(seckillCollector, accepted)
           : await waitForCreatedStatuses(pool, accepted);
       createdResults = createdBatch.results;
-
-      if (createdBatch.pendingCommandIds.length > 0) {
-        throw new Error(
-          `Commands did not reach terminal status in time: ${createdBatch.pendingCommandIds.slice(0, 10).join(", ")}${createdBatch.pendingCommandIds.length > 10 ? "..." : ""}`,
-        );
-      }
+      const pendingCreatedCommandIds = createdBatch.pendingCommandIds;
 
       const acceptedAtByCommandId = new Map(
         accepted.map((result) => [result.commandId, result.acceptedAtMs] as const),
@@ -215,12 +244,15 @@ async function main() {
             );
 
       const natsSnapshot = await readNatsSnapshot();
+      const kafkaAfter = await readKafkaBenchmarkSnapshot(config).catch(() => null);
       profiling = await maybeStopProfiling(profilingPlan, profiling);
       const finishedAtIso = new Date().toISOString();
 
       const report = {
         schemaVersion: 1,
-        pass: true,
+        pass:
+          acceptResults.length === accepted.length &&
+          pendingCreatedCommandIds.length === 0,
         scenarioName: config.scenarioName,
         runId: config.runId,
         startedAt: startedAtIso,
@@ -234,6 +266,12 @@ async function main() {
           appUrl: config.appUrl,
           skuId: config.skuId,
         },
+        scenario: {
+          requestedBuyClicks: config.requests,
+          skuId: config.skuId,
+          workloadType: "buy_intent_created_flow",
+          quantityPerIntent: 1,
+        },
         conditions: {
           workload: {
             scenarioName: config.scenarioName,
@@ -244,6 +282,7 @@ async function main() {
             skuId: config.skuId,
             quantityPerIntent: 1,
             profilingEnabled: config.profilingEnabled,
+            ingressSource: config.ingressSource,
           },
           requestedBuyIntents: config.requests,
           effectiveBuyIntents: effectiveRequests,
@@ -253,7 +292,9 @@ async function main() {
           currency: config.currency,
           startingInventoryAvailable: inventory.available,
           mode: config.mode,
+          ingressSource: config.ingressSource,
         },
+        kafka: buildKafkaReport(config, kafkaBefore, kafkaAfter),
         requestPath: {
           accepted: accepted.length,
           errors: acceptResults.length - accepted.length,
@@ -268,6 +309,7 @@ async function main() {
         intentCreation,
         commandLifecycle: {
           created: createdResults.filter((result) => result.status === "created").length,
+          pending: pendingCreatedCommandIds.length,
           duplicates: createdResults.filter((result) => result.isDuplicate).length,
           createdLatencyMs: summarizeLatencies(createdResults.map((result) => result.latencyMs)),
           createdThroughputPerSecond:
@@ -307,7 +349,20 @@ async function main() {
             ? "This benchmark measures the seckill Kafka path and treats durable output-topic results as the created boundary."
             : "This benchmark measures the async buy-intent path and stops at CheckoutIntentCreated.",
           "Bypass mode does not wait for projection queued state, so inventory availability is not used to cap request volume.",
+          ...(pendingCreatedCommandIds.length > 0
+            ? [
+                `Created boundary did not fully converge before timeout; ${pendingCreatedCommandIds.length} accepted commands were still pending.`,
+              ]
+            : []),
         ],
+        ...(pendingCreatedCommandIds.length > 0
+          ? {
+              failure: {
+                message: `Created boundary did not fully converge before timeout: ${pendingCreatedCommandIds.slice(0, 10).join(", ")}${pendingCreatedCommandIds.length > 10 ? "..." : ""}`,
+                stage: "created",
+              },
+            }
+          : {}),
       };
 
       const artifactPath = await writeBenchmarkArtifact(report);
@@ -317,6 +372,7 @@ async function main() {
     } catch (error) {
       profiling = await maybeStopProfiling(profilingPlan, profiling);
       const natsSnapshot = await readNatsSnapshot().catch(() => ({ available: false }));
+      const kafkaAfter = await readKafkaBenchmarkSnapshot(config).catch(() => null);
       const finishedAtIso = new Date().toISOString();
       const failureMessage = error instanceof Error ? error.message : "unknown benchmark failure";
       const intentCreation =
@@ -361,6 +417,12 @@ async function main() {
           appUrl: config.appUrl,
           skuId: config.skuId,
         },
+        scenario: {
+          requestedBuyClicks: config.requests,
+          skuId: config.skuId,
+          workloadType: "buy_intent_created_flow",
+          quantityPerIntent: 1,
+        },
         conditions: {
           workload: {
             scenarioName: config.scenarioName,
@@ -371,6 +433,7 @@ async function main() {
             skuId: config.skuId,
             quantityPerIntent: 1,
             profilingEnabled: config.profilingEnabled,
+            ingressSource: config.ingressSource,
           },
           requestedBuyIntents: config.requests,
           effectiveBuyIntents: effectiveRequests,
@@ -380,7 +443,9 @@ async function main() {
           currency: config.currency,
           startingInventoryAvailable: inventory.available,
           mode: config.mode,
+          ingressSource: config.ingressSource,
         },
+        kafka: buildKafkaReport(config, kafkaBefore, kafkaAfter),
         requestPath: {
           accepted: accepted.length,
           errors: Math.max(acceptResults.length - accepted.length, 0),
@@ -456,6 +521,7 @@ async function main() {
       throw error;
     }
   } finally {
+    await directKafkaPublisher?.stop();
     await seckillCollector?.stop();
     await pool.end();
   }
@@ -466,35 +532,30 @@ function createKafkaClientId() {
 }
 
 async function startSeckillOutcomeCollector(config: BenchmarkConfig) {
+  const { Kafka, logLevel } = await loadConfluentKafkaJsCompat();
   const kafka = new Kafka({
-    clientId: createKafkaClientId(),
-    brokers: config.kafkaBrokers,
-    logLevel: logLevel.NOTHING,
+    kafkaJS: {
+      clientId: createKafkaClientId(),
+      brokers: config.kafkaBrokers,
+      logLevel: logLevel.NOTHING,
+    },
   });
   const admin = kafka.admin();
   const consumer = kafka.consumer({
-    groupId: `${createKafkaClientId()}-group`,
+    kafkaJS: {
+      groupId: `${createKafkaClientId()}-group`,
+    },
   });
   const outcomes = new Map<string, CreatedResult>();
 
   await admin.connect();
+  await ensureKafkaTopics(admin, config);
   const startingOffsets = await admin.fetchTopicOffsets(config.seckillResultTopic);
   await admin.disconnect();
-
-  let resolveGroupJoin: (() => void) | null = null;
-  const groupJoined = new Promise<void>((resolve) => {
-    resolveGroupJoin = resolve;
-  });
-
-  const removeGroupJoinListener = consumer.on(consumer.events.GROUP_JOIN, () => {
-    resolveGroupJoin?.();
-    resolveGroupJoin = null;
-  });
 
   await consumer.connect();
   await consumer.subscribe({
     topic: config.seckillResultTopic,
-    fromBeginning: false,
   });
 
   await consumer.run({
@@ -520,8 +581,7 @@ async function startSeckillOutcomeCollector(config: BenchmarkConfig) {
     },
   });
 
-  await groupJoined;
-  removeGroupJoinListener();
+  await sleep(500);
 
   for (const partitionOffset of startingOffsets) {
     consumer.seek({
@@ -639,6 +699,137 @@ async function createBuyIntent(index: number): Promise<AcceptResult> {
       error: error instanceof Error ? error.message : "unknown_error",
     };
   }
+}
+
+async function publishSeckillRequestsDirectly(
+  publisher: Awaited<ReturnType<typeof startDirectSeckillRequestPublisher>> | null,
+  total: number,
+  config: BenchmarkConfig,
+): Promise<AcceptResult[]> {
+  if (!publisher) {
+    throw new Error("Direct Kafka publisher is not initialized.");
+  }
+
+  const results: AcceptResult[] = [];
+
+  for (const indices of chunked(
+    Array.from({ length: total }, (_, index) => index),
+    config.directKafkaBatchSize,
+  )) {
+    const requestStartedAtMs = performance.timeOrigin + performance.now();
+    const startedAt = performance.now();
+    const batchRequests = indices.map((index) => buildDirectSeckillRequest(index, config));
+
+    try {
+      await publisher.publish(batchRequests);
+      const acceptedAtMs = performance.timeOrigin + performance.now();
+
+      for (const request of batchRequests) {
+        results.push({
+          ok: true,
+          status: 202,
+          latencyMs: performance.now() - startedAt,
+          requestStartedAtMs,
+          commandId: request.command.command_id,
+          acceptedAtMs,
+        });
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "direct_kafka_publish_failed";
+
+      for (const request of batchRequests) {
+        results.push({
+          ok: false,
+          status: 0,
+          latencyMs: performance.now() - startedAt,
+          requestStartedAtMs,
+          commandId: request.command.command_id,
+          error: message,
+        });
+      }
+    }
+  }
+
+  return results;
+}
+
+function buildDirectSeckillRequest(index: number, config: BenchmarkConfig): SeckillBuyIntentRequest {
+  const commandId = crypto.randomUUID();
+  const stableKey = `${config.runId}-${index}`;
+  const primaryBucketId = selectPrimaryBucket(stableKey, config.seckillBucketCount);
+
+  return {
+    sku_id: config.skuId,
+    quantity: 1,
+    seckill_stock_limit: config.requests,
+    bucket_count: config.seckillBucketCount,
+    primary_bucket_id: primaryBucketId,
+    bucket_id: primaryBucketId,
+    attempt: 0,
+    max_probe: config.seckillMaxProbe,
+    processing_key: buildProcessingKey(config.skuId, primaryBucketId),
+    command: {
+      command_id: commandId,
+      correlation_id: crypto.randomUUID(),
+      buyer_id: `${config.buyerPrefix}_${index}`,
+      items: [
+        {
+          sku_id: config.skuId,
+          quantity: 1,
+          unit_price_amount_minor: config.unitPriceAmountMinor,
+          currency: config.currency,
+        },
+      ],
+      idempotency_key: stableKey,
+      metadata: {
+        request_id: crypto.randomUUID(),
+        trace_id: crypto.randomUUID(),
+        source: "benchmark",
+        actor_id: `${config.buyerPrefix}_${index}`,
+      },
+      issued_at: new Date().toISOString(),
+    },
+  };
+}
+
+async function startDirectSeckillRequestPublisher(config: BenchmarkConfig) {
+  const { Kafka, logLevel } = await loadConfluentKafkaJsCompat();
+  const kafka = new Kafka({
+    kafkaJS: {
+      clientId: `${createKafkaClientId()}-direct-publisher`,
+      brokers: config.kafkaBrokers,
+      logLevel: logLevel.NOTHING,
+    },
+  });
+  const admin = kafka.admin();
+  const producer = kafka.producer({
+    "linger.ms": config.producerLingerMs,
+    "batch.num.messages": config.producerBatchNumMessages,
+  });
+
+  await admin.connect();
+  await ensureKafkaTopics(admin, config);
+  await admin.disconnect();
+  await producer.connect();
+
+  return {
+    async publish(requests: SeckillBuyIntentRequest[]) {
+      await producer.sendBatch({
+        topicMessages: [
+          {
+            topic: config.seckillRequestTopic,
+            messages: requests.map((request) => ({
+              key: request.processing_key,
+              value: JSON.stringify(request),
+            })),
+          },
+        ],
+      });
+    },
+    async stop() {
+      await producer.disconnect().catch(() => undefined);
+    },
+  };
 }
 
 async function waitForCreatedStatuses(
@@ -804,19 +995,34 @@ async function runPaymentFailureSignals(
   };
 }
 
-async function readInventory(skuId: string) {
-  const response = await fetch(`${config.appUrl}/api/skus/${skuId}/inventory`);
-
-  if (!response.ok) {
-    throw new Error(`Inventory read failed with HTTP ${response.status} for ${skuId}.`);
-  }
-
-  return (await response.json()) as {
-    skuId: string;
+async function readInventory(pool: Pool, skuId: string) {
+  const result = await pool.query<{
+    sku_id: string;
     available: number;
-    onHand: number;
+    on_hand: number;
     reserved: number;
     sold: number;
+  }>(
+    `
+      select sku_id, available, on_hand, reserved, sold
+      from sku_inventory_projection
+      where sku_id = $1
+      limit 1
+    `,
+    [skuId],
+  );
+
+  const row = result.rows[0];
+  if (!row) {
+    throw new Error(`Inventory read failed for ${skuId}: projection row not found.`);
+  }
+
+  return {
+    skuId: row.sku_id,
+    available: row.available,
+    onHand: row.on_hand,
+    reserved: row.reserved,
+    sold: row.sold,
   };
 }
 
@@ -1265,10 +1471,18 @@ function readConfig(): BenchmarkConfig {
       .split(",")
       .map((value) => value.trim())
       .filter(Boolean),
+    seckillRequestTopic:
+      process.env.BENCHMARK_KAFKA_SECKILL_REQUEST_TOPIC ??
+      process.env.KAFKA_SECKILL_REQUEST_TOPIC ??
+      "inventory.seckill.requested",
     seckillResultTopic:
       process.env.BENCHMARK_KAFKA_SECKILL_RESULT_TOPIC ??
       process.env.KAFKA_SECKILL_RESULT_TOPIC ??
       "inventory.seckill.result",
+    seckillDlqTopic:
+      process.env.BENCHMARK_KAFKA_SECKILL_DLQ_TOPIC ??
+      process.env.KAFKA_SECKILL_DLQ_TOPIC ??
+      "inventory.seckill.dlq",
     requests: readPositiveIntegerEnv("BENCHMARK_REQUESTS", 20),
     httpConcurrency: readPositiveIntegerEnv("BENCHMARK_HTTP_CONCURRENCY", 10),
     profilingEnabled: process.env.BENCHMARK_PROFILE === "1",
@@ -1280,12 +1494,171 @@ function readConfig(): BenchmarkConfig {
     resultsDir: process.env.BENCHMARK_RESULTS_DIR ?? "benchmark-results",
     scenarioName,
     mode: "bypass",
+    ingressSource:
+      (process.env.BENCHMARK_INGRESS_SOURCE as BenchmarkConfig["ingressSource"] | undefined) ??
+      "http",
     createdTimeoutMs: readPositiveIntegerEnv("BENCHMARK_CREATED_TIMEOUT_MS", 60_000),
     resetStateBeforeRun: readBooleanWithDefault("BENCHMARK_RESET_STATE", true),
     createdSource,
     ensureSeckillEnabled:
       process.env.BENCHMARK_ENSURE_SECKILL_ENABLED === "1" ||
       (process.env.BENCHMARK_ENSURE_SECKILL_ENABLED !== "0" && scenarioName.includes("seckill")),
+    seckillBucketCount: readPositiveIntegerEnv("BENCHMARK_SECKILL_BUCKET_COUNT", 16),
+    seckillMaxProbe: readPositiveIntegerEnv("BENCHMARK_SECKILL_MAX_PROBE", 4),
+    directKafkaBatchSize: readPositiveIntegerEnv("BENCHMARK_DIRECT_KAFKA_BATCH_SIZE", 500),
+    kafkaClient: process.env.BENCHMARK_KAFKA_CLIENT ?? "confluent-kafka-javascript",
+    appPublishBatchSize: readPositiveIntegerEnv("KAFKA_SECKILL_PUBLISH_BATCH_SIZE", 64),
+    appPublishLingerMs: readPositiveIntegerEnv("KAFKA_SECKILL_PUBLISH_LINGER_MS", 2),
+    producerLingerMs: readPositiveIntegerEnv("KAFKA_SECKILL_CLIENT_LINGER_MS", 1),
+    producerBatchNumMessages: readPositiveIntegerEnv(
+      "KAFKA_SECKILL_CLIENT_BATCH_NUM_MESSAGES",
+      10000,
+    ),
+  };
+}
+
+async function readKafkaBenchmarkSnapshot(config: BenchmarkConfig) {
+  if (config.kafkaBrokers.length === 0) {
+    return null;
+  }
+
+  const { Kafka, logLevel } = await loadConfluentKafkaJsCompat();
+  const kafka = new Kafka({
+    kafkaJS: {
+      clientId: `${createKafkaClientId()}-admin`,
+      brokers: config.kafkaBrokers,
+      logLevel: logLevel.NOTHING,
+    },
+  });
+  const admin = kafka.admin();
+
+  await admin.connect();
+
+  try {
+    await ensureKafkaTopics(admin, config);
+    const [requestTopic, resultTopic, dlqTopic] = await Promise.all([
+      readKafkaTopicSnapshot(admin, config.seckillRequestTopic),
+      readKafkaTopicSnapshot(admin, config.seckillResultTopic),
+      readKafkaTopicSnapshot(admin, config.seckillDlqTopic),
+    ]);
+
+    return { requestTopic, resultTopic, dlqTopic };
+  } finally {
+    await admin.disconnect().catch(() => undefined);
+  }
+}
+
+async function readKafkaTopicSnapshot(
+  admin: { fetchTopicOffsets(topic: string): Promise<Array<{ partition: number; offset: string }>> },
+  topic: string,
+): Promise<KafkaTopicSnapshot> {
+  const offsets = await admin.fetchTopicOffsets(topic).catch(() => []);
+
+  return {
+    topic,
+    partitions: offsets.length,
+    totalOffset: offsets.reduce(
+      (sum, entry) => sum + Number.parseInt(entry.offset ?? "0", 10),
+      0,
+    ),
+  };
+}
+
+async function ensureKafkaTopics(
+  admin: {
+    createTopics(args: {
+      topics: Array<{ topic: string; numPartitions?: number; replicationFactor?: number }>;
+    }): Promise<boolean>;
+  },
+  config: BenchmarkConfig,
+) {
+  await admin.createTopics({
+    topics: [
+      {
+        topic: config.seckillRequestTopic,
+        numPartitions: 6,
+        replicationFactor: 1,
+      },
+      {
+        topic: config.seckillResultTopic,
+        numPartitions: 6,
+        replicationFactor: 1,
+      },
+      {
+        topic: config.seckillDlqTopic,
+        numPartitions: 6,
+        replicationFactor: 1,
+      },
+    ],
+  });
+}
+
+function buildKafkaReport(
+  config: BenchmarkConfig,
+  before: { requestTopic: KafkaTopicSnapshot; resultTopic: KafkaTopicSnapshot; dlqTopic: KafkaTopicSnapshot } | null,
+  after: { requestTopic: KafkaTopicSnapshot; resultTopic: KafkaTopicSnapshot; dlqTopic: KafkaTopicSnapshot } | null,
+) {
+  return {
+    client: config.kafkaClient,
+    brokers: config.kafkaBrokers,
+    ingressSource: config.ingressSource,
+    requestTopic: config.seckillRequestTopic,
+    resultTopic: config.seckillResultTopic,
+    dlqTopic: config.seckillDlqTopic,
+    createdBoundary: config.createdSource,
+    seckill: {
+      bucketCount: config.seckillBucketCount,
+      maxProbe: config.seckillMaxProbe,
+      directKafkaBatchSize:
+        config.ingressSource === "direct_kafka" ? config.directKafkaBatchSize : undefined,
+    },
+    appPublish: {
+      batchSize: config.appPublishBatchSize,
+      lingerMs: config.appPublishLingerMs,
+    },
+    producer: {
+      lingerMs: config.producerLingerMs,
+      batchNumMessages: config.producerBatchNumMessages,
+    },
+    requestTopicOffsets: formatKafkaTopicOffsets(before?.requestTopic, after?.requestTopic),
+    resultTopicOffsets: formatKafkaTopicOffsets(before?.resultTopic, after?.resultTopic),
+    dlqTopicOffsets: formatKafkaTopicOffsets(before?.dlqTopic, after?.dlqTopic),
+  };
+}
+
+function selectPrimaryBucket(stableKey: string, bucketCount: number) {
+  const hash = fnv1a32(stableKey);
+  return hash % bucketCount;
+}
+
+function buildProcessingKey(skuId: string, bucketId: number) {
+  return `${skuId}#${bucketId.toString().padStart(2, "0")}`;
+}
+
+function fnv1a32(value: string) {
+  let hash = 0x811c9dc5;
+
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+
+  return hash >>> 0;
+}
+
+function formatKafkaTopicOffsets(
+  before: KafkaTopicSnapshot | undefined,
+  after: KafkaTopicSnapshot | undefined,
+) {
+  if (!before || !after) {
+    return null;
+  }
+
+  return {
+    partitions: after.partitions,
+    startOffset: before.totalOffset,
+    endOffset: after.totalOffset,
+    delta: Math.max(0, after.totalOffset - before.totalOffset),
   };
 }
 

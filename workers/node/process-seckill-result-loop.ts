@@ -1,9 +1,8 @@
 import "dotenv/config";
 
-import { Kafka, logLevel } from "kafkajs";
-
 import { getPool } from "@/db/client";
 import type { SeckillCommandOutcome } from "@/src/domain/seckill/seckill-command-outcome";
+import { loadConfluentKafkaJsCompat } from "@/src/infrastructure/kafka/confluent-kafka";
 import { createPostgresSeckillResultSink } from "@/src/infrastructure/seckill/postgres-seckill-result-sink";
 
 async function main() {
@@ -21,16 +20,24 @@ async function main() {
     6,
   );
 
+  const { Kafka, logLevel } = await loadConfluentKafkaJsCompat();
   const kafka = new Kafka({
-    clientId,
-    brokers,
-    logLevel: logLevel.NOTHING,
+    kafkaJS: {
+      clientId,
+      brokers,
+      logLevel: logLevel.NOTHING,
+    },
   });
-  const consumer = kafka.consumer({ groupId });
+  const consumer = kafka.consumer({
+    kafkaJS: {
+      groupId,
+      fromBeginning: false,
+    },
+  });
   const sink = createPostgresSeckillResultSink(getPool());
 
   await consumer.connect();
-  await consumer.subscribe({ topic, fromBeginning: false });
+  await consumer.subscribe({ topic });
 
   const shutdown = async () => {
     await consumer.disconnect().catch(() => undefined);

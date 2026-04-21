@@ -27,6 +27,40 @@ type BenchmarkReport = {
     redis?: string;
     paymentProvider?: string;
   };
+  kafka?: {
+    client?: string;
+    brokers?: string[];
+    requestTopic?: string;
+    resultTopic?: string;
+    dlqTopic?: string;
+    createdBoundary?: string;
+    appPublish?: {
+      batchSize?: number;
+      lingerMs?: number;
+    };
+    producer?: {
+      lingerMs?: number;
+      batchNumMessages?: number;
+    };
+    requestTopicOffsets?: {
+      partitions?: number;
+      startOffset?: number;
+      endOffset?: number;
+      delta?: number;
+    } | null;
+    resultTopicOffsets?: {
+      partitions?: number;
+      startOffset?: number;
+      endOffset?: number;
+      delta?: number;
+    } | null;
+    dlqTopicOffsets?: {
+      partitions?: number;
+      startOffset?: number;
+      endOffset?: number;
+      delta?: number;
+    } | null;
+  };
   conditions?: {
     hardware?: {
       platform?: string;
@@ -899,6 +933,15 @@ function SelectedRunPanel({
         }}
       />
 
+      {run.kafka ? (
+        <>
+          <p className="eyebrow" style={{ marginTop: "1.5rem" }}>
+            Kafka
+          </p>
+          <KeyValueList values={flattenDetailValues(run.kafka)} />
+        </>
+      ) : null}
+
       <div className="benchmark-selected-run-actions">
         {profileFile ? (
           <Link
@@ -1220,6 +1263,71 @@ function KeyValueList({ values }: { values: Record<string, string> }) {
   );
 }
 
+function flattenDetailValues(
+  value: unknown,
+  path: string[] = [],
+  result: Record<string, string> = {},
+): Record<string, string> {
+  if (value === null || typeof value === "undefined") {
+    if (path.length > 0) {
+      result[formatDetailLabel(path)] = "n/a";
+    }
+    return result;
+  }
+
+  if (typeof value === "string") {
+    result[formatDetailLabel(path)] = value || "n/a";
+    return result;
+  }
+
+  if (typeof value === "number") {
+    result[formatDetailLabel(path)] = formatPrimitiveDetailValue(path, value);
+    return result;
+  }
+
+  if (typeof value === "boolean") {
+    result[formatDetailLabel(path)] = value ? "true" : "false";
+    return result;
+  }
+
+  if (Array.isArray(value)) {
+    result[formatDetailLabel(path)] =
+      value.length === 0 ? "n/a" : value.map((entry) => String(entry)).join(", ");
+    return result;
+  }
+
+  if (typeof value === "object") {
+    for (const [key, nestedValue] of Object.entries(value)) {
+      flattenDetailValues(nestedValue, [...path, key], result);
+    }
+  }
+
+  return result;
+}
+
+function formatDetailLabel(path: string[]) {
+  return path
+    .flatMap((segment) =>
+      segment
+        .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+        .replace(/[_-]+/g, " ")
+        .split(" "),
+    )
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
+
+function formatPrimitiveDetailValue(path: string[], value: number) {
+  const label = path[path.length - 1] ?? "";
+
+  if (label === "lingerMs") {
+    return formatMilliseconds(value);
+  }
+
+  return formatNumber(value);
+}
+
 function StatusSummary({ values }: { values: Record<string, number> | undefined }) {
   const entries = Object.entries(values ?? {});
 
@@ -1458,8 +1566,17 @@ function formatConditionSummary(run: BenchmarkRun) {
   const pgInstances = formatNumber(run.conditions?.services?.postgres?.instanceCount ?? 1);
   const pgPool = formatNumber(run.conditions?.services?.postgres?.poolMax);
   const concurrency = formatNumber(run.conditions?.workload?.httpConcurrency);
+  const kafkaClient = run.kafka?.client ? ` · kafka ${run.kafka.client}` : "";
 
-  return `${mode} · app ${appInstances} · pg ${pgInstances} · pool ${pgPool} · c ${concurrency}`;
+  return `${mode} · app ${appInstances} · pg ${pgInstances} · pool ${pgPool} · c ${concurrency}${kafkaClient}`;
+}
+
+function formatMilliseconds(value: number | undefined) {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return "n/a";
+  }
+
+  return `${formatNumber(value)}ms`;
 }
 
 function formatDistribution(values: Record<string, number> | undefined) {

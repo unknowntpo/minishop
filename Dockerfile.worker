@@ -9,7 +9,7 @@ RUN corepack enable
 WORKDIR /app
 
 COPY package.json pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile
+RUN pnpm install --frozen-lockfile --config.ignore-scripts=false
 
 COPY . .
 

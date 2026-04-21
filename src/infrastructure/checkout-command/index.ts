@@ -73,6 +73,14 @@ function getRuntimeCommandBus() {
               10,
             ),
             clientId: readRuntimeEnv("KAFKA_CLIENT_ID") || "minishop-app",
+            producerLingerMs: Number.parseInt(
+              readRuntimeEnv("KAFKA_SECKILL_CLIENT_LINGER_MS") || "1",
+              10,
+            ),
+            producerBatchNumMessages: Number.parseInt(
+              readRuntimeEnv("KAFKA_SECKILL_CLIENT_BATCH_NUM_MESSAGES") || "10000",
+              10,
+            ),
           }),
           pool: getPool(),
           bucketCount: Number.parseInt(

@@ -6,6 +6,14 @@
   "engines": {
     "node": ">=24 <25"
   },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@confluentinc/kafka-javascript",
+      "esbuild",
+      "protobufjs",
+      "sharp"
+    ]
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -48,6 +56,7 @@
     "benchmark:compose:cart": "docker compose -p minishop-benchmark -f docker-compose.yml -f docker-compose.benchmark.yml run --build --rm benchmark-runner pnpm benchmark:checkout:postgres:cart:reset"
   },
   "dependencies": {
+    "@confluentinc/kafka-javascript": "^1.9.0",
     "@opentelemetry/api": "^1.9.1",
     "@opentelemetry/auto-instrumentations-node": "^0.73.0",
     "@opentelemetry/exporter-trace-otlp-http": "^0.215.0",
@@ -56,7 +65,6 @@
     "@opentelemetry/semantic-conventions": "^1.40.0",
     "ajv": "^8.17.1",
     "drizzle-orm": "^0.45.2",
-    "kafkajs": "^2.2.4",
     "nats": "^2.29.3",
     "next": "16.2.4",
     "pg": "^8.20.0",

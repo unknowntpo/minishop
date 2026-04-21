@@ -3,7 +3,11 @@ package dev.minishop.seckill
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
+import org.apache.kafka.clients.admin.Admin
+import org.apache.kafka.clients.admin.AdminClientConfig
+import org.apache.kafka.clients.admin.NewTopic
 import org.apache.kafka.clients.consumer.ConsumerConfig
+import org.apache.kafka.common.errors.TopicExistsException
 import org.apache.kafka.common.serialization.Serdes
 import org.apache.kafka.streams.KafkaStreams
 import org.apache.kafka.streams.StreamsConfig
@@ -33,6 +37,7 @@ private const val DEDUPE_STORE_NAME = "dedupe-store"
 
 fun main() {
     val config = AppConfig.fromEnv()
+    ensureTopics(config)
     val bootstrapGateway = PostgresBootstrapGateway(config)
 
     val builder = StreamsBuilder()
@@ -157,11 +162,11 @@ data class AppConfig(
                 dlqTopic = optionalEnv("KAFKA_SECKILL_DLQ_TOPIC"),
                 deserializationExceptionHandler = env(
                     "KAFKA_SECKILL_DESERIALIZATION_EXCEPTION_HANDLER",
-                    "org.apache.kafka.streams.errors.LogAndFailExceptionHandler",
+                    "org.apache.kafka.streams.errors.LogAndContinueExceptionHandler",
                 ),
                 processingExceptionHandler = env(
                     "KAFKA_SECKILL_PROCESSING_EXCEPTION_HANDLER",
-                    "org.apache.kafka.streams.errors.LogAndFailProcessingExceptionHandler",
+                    "org.apache.kafka.streams.errors.LogAndContinueProcessingExceptionHandler",
                 ),
                 productionExceptionHandler = env(
                     "KAFKA_SECKILL_PRODUCTION_EXCEPTION_HANDLER",
@@ -199,7 +204,7 @@ class SeckillDecisionProcessor(
     }
 
     override fun process(record: Record<String, String>) {
-        val request = mapper.readValue<SeckillBuyIntentRequest>(record.value())
+        val request = mapper.readValue<SeckillBuyIntentRequest>(record.value()).normalized()
         val dedupeKey = request.command.idempotency_key ?: request.command.command_id
         val storedResult = dedupeStore.get(dedupeKey)?.let { mapper.readValue<SeckillCommandResult>(it) }
         val processedAt = Instant.now().toString()
@@ -302,14 +307,15 @@ class SeckillDecisionProcessor(
     }
 
     private fun forwardRetry(record: Record<String, String>, request: SeckillBuyIntentRequest) {
+        val processingKey = request.processing_key ?: buildProcessingKey(request.sku_id, request.bucket_id)
         context().forward(
             record
-                .withKey(request.processing_key)
+                .withKey(processingKey)
                 .withValue(
                     mapper.writeValueAsString(
                         SeckillTopologyOutput(
                             kind = "retry",
-                            outputKey = request.processing_key,
+                            outputKey = processingKey,
                             payload = mapper.writeValueAsString(request),
                         )
                     )
@@ -323,14 +329,15 @@ class SeckillDecisionProcessor(
         result: SeckillCommandResult,
         processedAt: String,
     ) {
+        val processingKey = request.processing_key ?: buildProcessingKey(request.sku_id, request.bucket_id)
         context().forward(
             record
-                .withKey(request.processing_key)
+                .withKey(processingKey)
                 .withValue(
                     mapper.writeValueAsString(
                         SeckillTopologyOutput(
                             kind = "result",
-                            outputKey = request.processing_key,
+                            outputKey = processingKey,
                             payload = mapper.writeValueAsString(
                                 SeckillCommandOutcome(
                                     request = request,
@@ -350,14 +357,32 @@ data class SeckillBuyIntentRequest(
     val sku_id: String,
     val quantity: Int,
     val seckill_stock_limit: Int,
-    val bucket_count: Int,
-    val primary_bucket_id: Int,
-    val bucket_id: Int,
-    val attempt: Int,
-    val max_probe: Int,
-    val processing_key: String,
+    val bucket_count: Int = 1,
+    val primary_bucket_id: Int = 0,
+    val bucket_id: Int = 0,
+    val attempt: Int = 0,
+    val max_probe: Int = 1,
+    val processing_key: String? = null,
     val command: BuyIntentCommand,
 )
+
+fun SeckillBuyIntentRequest.normalized(): SeckillBuyIntentRequest {
+    val normalizedBucketCount = bucket_count.coerceAtLeast(1)
+    val normalizedBucketId = bucket_id.coerceIn(0, normalizedBucketCount - 1)
+    val normalizedPrimaryBucketId = primary_bucket_id.coerceIn(0, normalizedBucketCount - 1)
+    val normalizedAttempt = attempt.coerceAtLeast(0)
+    val normalizedMaxProbe = max_probe.coerceAtLeast(1)
+    val normalizedProcessingKey = processing_key ?: buildProcessingKey(sku_id, normalizedBucketId)
+
+    return copy(
+        bucket_count = normalizedBucketCount,
+        primary_bucket_id = normalizedPrimaryBucketId,
+        bucket_id = normalizedBucketId,
+        attempt = normalizedAttempt,
+        max_probe = normalizedMaxProbe,
+        processing_key = normalizedProcessingKey,
+    )
+}
 
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class BuyIntentCommand(
@@ -473,7 +498,31 @@ class PostgresBootstrapGateway(private val config: AppConfig) {
                 }
             }
         }
+    
 
     private fun connection() =
         DriverManager.getConnection(config.jdbcUrl, config.jdbcUser, config.jdbcPassword)
+}
+
+fun ensureTopics(config: AppConfig) {
+    val properties = Properties().apply {
+        put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, config.brokers)
+    }
+    Admin.create(properties).use { admin ->
+        val topics = mutableListOf(
+            NewTopic(config.requestTopic, 6, 1),
+            NewTopic(config.resultTopic, 6, 1),
+        )
+        if (!config.dlqTopic.isNullOrBlank()) {
+            topics.add(NewTopic(config.dlqTopic, 6, 1))
+        }
+        try {
+            admin.createTopics(topics).all().get()
+        } catch (error: Exception) {
+            val cause = error.cause
+            if (cause !is TopicExistsException && error !is TopicExistsException) {
+                throw error
+            }
+        }
+    }
 }
