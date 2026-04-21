@@ -294,7 +294,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (bucket) (rate(minishop_seckill_bucket_primary_requests_total[5m]))",
+          "expr": "sum by (bucket) (irate(minishop_seckill_bucket_primary_requests_total[5m]))",
           "legendFormat": "primary bucket {{bucket}}",
           "refId": "A"
         },
@@ -303,7 +303,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (bucket) (rate(minishop_seckill_bucket_retried_requests_total[5m]))",
+          "expr": "sum by (bucket) (irate(minishop_seckill_bucket_retried_requests_total[5m]))",
           "legendFormat": "retried bucket {{bucket}}",
           "refId": "B"
         },
@@ -312,7 +312,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (bucket) (rate(minishop_seckill_bucket_result_total[5m]))",
+          "expr": "sum by (bucket) (irate(minishop_seckill_bucket_result_total[5m]))",
           "legendFormat": "result bucket {{bucket}}",
           "refId": "C"
         }
@@ -400,7 +400,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "((sum by (bucket) (rate(minishop_seckill_bucket_retried_requests_total[1m])) / sum by (bucket) (rate(minishop_seckill_bucket_primary_requests_total[1m]) + rate(minishop_seckill_bucket_retried_requests_total[1m]))) unless (sum by (bucket) (rate(minishop_seckill_bucket_primary_requests_total[1m]) + rate(minishop_seckill_bucket_retried_requests_total[1m])) < 0.05)",
+          "expr": "((sum by (bucket) (irate(minishop_seckill_bucket_retried_requests_total[10s])) / sum by (bucket) (irate(minishop_seckill_bucket_primary_requests_total[10s]) + irate(minishop_seckill_bucket_retried_requests_total[10s]))) unless (sum by (bucket) (irate(minishop_seckill_bucket_primary_requests_total[10s]) + irate(minishop_seckill_bucket_retried_requests_total[10s])) < 0.05)",
           "legendFormat": "retry ratio {{bucket}}",
           "refId": "A"
         },
@@ -409,7 +409,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "((sum by (bucket) (rate(minishop_seckill_bucket_result_total[1m])) / sum by (bucket) (rate(minishop_seckill_bucket_primary_requests_total[1m]) + rate(minishop_seckill_bucket_retried_requests_total[1m]))) unless (sum by (bucket) (rate(minishop_seckill_bucket_primary_requests_total[1m]) + rate(minishop_seckill_bucket_retried_requests_total[1m])) < 0.05)",
+          "expr": "((sum by (bucket) (irate(minishop_seckill_bucket_result_total[10s])) / sum by (bucket) (irate(minishop_seckill_bucket_primary_requests_total[10s]) + irate(minishop_seckill_bucket_retried_requests_total[10s]))) unless (sum by (bucket) (irate(minishop_seckill_bucket_primary_requests_total[10s]) + irate(minishop_seckill_bucket_retried_requests_total[10s])) < 0.05)",
           "legendFormat": "result ratio {{bucket}}",
           "refId": "B"
         }
