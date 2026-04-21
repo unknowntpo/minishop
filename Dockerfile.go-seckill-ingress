@@ -1,0 +1,22 @@
+FROM golang:1.24.3-alpine AS build
+
+WORKDIR /src
+
+COPY services/go-seckill-ingress/go.mod ./services/go-seckill-ingress/go.mod
+COPY services/go-seckill-ingress/go.sum ./services/go-seckill-ingress/go.sum
+
+WORKDIR /src/services/go-seckill-ingress
+
+RUN go mod download
+
+COPY services/go-seckill-ingress/. .
+
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/go-seckill-ingress .
+
+FROM alpine:3.22
+
+WORKDIR /app
+
+COPY --from=build /out/go-seckill-ingress /app/go-seckill-ingress
+
+CMD ["/app/go-seckill-ingress"]
