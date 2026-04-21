@@ -376,7 +376,8 @@
       "fieldConfig": {
         "defaults": {
           "unit": "percentunit",
-          "min": 0
+          "min": 0,
+          "max": 1
         },
         "overrides": []
       },
@@ -399,7 +400,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (bucket) (rate(minishop_seckill_bucket_retried_requests_total[5m])) / clamp_min(sum by (bucket) (rate(minishop_seckill_bucket_primary_requests_total[5m]) + rate(minishop_seckill_bucket_retried_requests_total[5m])), 0.0001)",
+          "expr": "((sum by (bucket) (rate(minishop_seckill_bucket_retried_requests_total[1m])) / sum by (bucket) (rate(minishop_seckill_bucket_primary_requests_total[1m]) + rate(minishop_seckill_bucket_retried_requests_total[1m]))) unless (sum by (bucket) (rate(minishop_seckill_bucket_primary_requests_total[1m]) + rate(minishop_seckill_bucket_retried_requests_total[1m])) < 0.05)",
           "legendFormat": "retry ratio {{bucket}}",
           "refId": "A"
         },
@@ -408,13 +409,14 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (bucket) (rate(minishop_seckill_bucket_result_total[5m])) / clamp_min(sum by (bucket) (rate(minishop_seckill_bucket_primary_requests_total[5m]) + rate(minishop_seckill_bucket_retried_requests_total[5m])), 0.0001)",
+          "expr": "((sum by (bucket) (rate(minishop_seckill_bucket_result_total[1m])) / sum by (bucket) (rate(minishop_seckill_bucket_primary_requests_total[1m]) + rate(minishop_seckill_bucket_retried_requests_total[1m]))) unless (sum by (bucket) (rate(minishop_seckill_bucket_primary_requests_total[1m]) + rate(minishop_seckill_bucket_retried_requests_total[1m])) < 0.05)",
           "legendFormat": "result ratio {{bucket}}",
           "refId": "B"
         }
       ],
       "title": "Per-Bucket Retry and Finalization Ratios",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "Only shows ratios while bucket traffic is materially above zero; hides end-of-run fake spikes."
     },
     {
       "datasource": {
