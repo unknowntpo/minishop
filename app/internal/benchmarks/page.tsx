@@ -196,6 +196,7 @@ type BenchmarkReport = {
   commandLifecycle?: {
     created?: number;
     duplicates?: number;
+    pending?: number;
     createdThroughputPerSecond?: number;
     createdLatencyMs?: {
       p50?: number;
@@ -885,46 +886,161 @@ function ComparisonChart({
 }
 
 function RunEvidenceComparison({ runs }: { runs: BenchmarkRun[] }) {
+  const columns = evidenceColumnsForRuns(runs);
+
+  if (columns.length === 0) {
+    return null;
+  }
+
   return (
     <div className="admin-table-wrap benchmark-evidence-compare">
       <div className="benchmark-evidence-purpose">
         <strong>Diagnostic evidence matrix</strong>
         <span>
-          These are categorical distributions and invariant checks, so a compact table explains the
-          plots better than another chart.
+          Same-scenario runs stacked into one table. Columns appear only when at least one run has
+          a meaningful value, so different projects or schema versions can coexist without forcing
+          empty placeholders.
         </span>
       </div>
       <table className="admin-table benchmark-evidence-table">
         <thead>
           <tr>
             <th>Run</th>
-            <th>HTTP status</th>
-            <th>Errors</th>
-            <th>Event types</th>
-            <th>Checkout status</th>
-            <th>Inventory</th>
-            <th>Idempotency</th>
+            {columns.map((column) => (
+              <th key={column.key}>{column.label}</th>
+            ))}
           </tr>
         </thead>
         <tbody>
-          {runs.map((run, index) => (
-            <tr key={run.artifactFile}>
-              <td>
-                <strong>{displayRunShortName(run, index + 1)}</strong>
-                <span className="muted mono">{shortRunId(run.runId)}</span>
-              </td>
-              <td>{formatDistribution(run.requestPath?.statusDistribution)}</td>
-              <td>{formatDistribution(run.requestPath?.errorDistribution)}</td>
-              <td>{formatDistribution(run.eventStore?.eventTypeDistribution)}</td>
-              <td>{formatDistribution(readCheckoutStatusDistribution(run))}</td>
-              <td>{formatInventorySummary(run)}</td>
-              <td>{formatIdempotencySummary(run)}</td>
-            </tr>
-          ))}
+          {runs.map((run, index) => {
+            const evidence = new Map(evidenceEntriesForRun(run).map((entry) => [entry.key, entry]));
+
+            return (
+              <tr key={run.artifactFile}>
+                <td>
+                  <strong>{displayRunShortName(run, index + 1)}</strong>
+                  <span className="muted mono">{shortRunId(run.runId)}</span>
+                </td>
+                {columns.map((column) => (
+                  <td key={column.key}>{evidence.get(column.key)?.value ?? "n/a"}</td>
+                ))}
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
   );
+}
+
+function evidenceColumnsForRuns(runs: BenchmarkRun[]) {
+  const columns = new Map<string, { key: string; label: string; count: number }>();
+
+  for (const run of runs) {
+    for (const entry of evidenceEntriesForRun(run)) {
+      const current = columns.get(entry.key) ?? { key: entry.key, label: entry.label, count: 0 };
+      current.count += 1;
+      columns.set(entry.key, current);
+    }
+  }
+
+  return sortEvidenceEntries([...columns.values()].filter((entry) => entry.count > 0));
+}
+
+function evidenceEntriesForRun(run: BenchmarkRun) {
+  const entries = [
+    evidenceEntry("http_status", "HTTP status", formatDistribution(run.requestPath?.statusDistribution)),
+    evidenceEntry("errors", "Errors", formatDistribution(run.requestPath?.errorDistribution)),
+    evidenceEntry("event_types", "Event types", formatDistribution(run.eventStore?.eventTypeDistribution)),
+    evidenceEntry("checkout_status", "Checkout status", formatDistribution(readCheckoutStatusDistribution(run))),
+    evidenceEntry("inventory", "Inventory", formatInventorySummary(run)),
+    evidenceEntry("idempotency", "Idempotency", formatIdempotencySummary(run)),
+    evidenceEntry("created_boundary", "Created boundary", run.kafka?.createdBoundary ?? "n/a"),
+    evidenceEntry(
+      "request_topic_delta",
+      "Request topic delta",
+      typeof run.kafka?.requestTopicOffsets?.delta === "number"
+        ? formatNumber(run.kafka.requestTopicOffsets.delta)
+        : "n/a",
+    ),
+    evidenceEntry(
+      "result_topic_delta",
+      "Result topic delta",
+      typeof run.kafka?.resultTopicOffsets?.delta === "number"
+        ? formatNumber(run.kafka.resultTopicOffsets.delta)
+        : "n/a",
+    ),
+    evidenceEntry(
+      "dlq_topic_delta",
+      "DLQ delta",
+      typeof run.kafka?.dlqTopicOffsets?.delta === "number"
+        ? formatNumber(run.kafka.dlqTopicOffsets.delta)
+        : "n/a",
+    ),
+    evidenceEntry(
+      "duplicates",
+      "Duplicates",
+      typeof run.commandLifecycle?.duplicates === "number"
+        ? formatNumber(run.commandLifecycle.duplicates)
+        : "n/a",
+    ),
+    evidenceEntry(
+      "pending",
+      "Pending",
+      typeof run.commandLifecycle?.pending === "number"
+        ? formatNumber(run.commandLifecycle.pending)
+        : "n/a",
+    ),
+  ];
+
+  return entries.filter(
+    (entry): entry is { key: string; label: string; value: string } =>
+      Boolean(entry && entry.value && entry.value !== "n/a"),
+  );
+}
+
+function evidenceEntry(key: string, label: string, value: string) {
+  if (!value || value === "n/a") {
+    return null;
+  }
+
+  return { key, label, value };
+}
+
+function sortEvidenceEntries<T extends { key: string }>(entries: T[]) {
+  const order = [
+    "http_status",
+    "errors",
+    "event_types",
+    "checkout_status",
+    "inventory",
+    "idempotency",
+    "created_boundary",
+    "request_topic_delta",
+    "result_topic_delta",
+    "dlq_topic_delta",
+    "duplicates",
+    "pending",
+  ];
+
+  return [...entries].sort((left, right) => {
+    const leftIndex = order.indexOf(left.key);
+    const rightIndex = order.indexOf(right.key);
+
+    if (leftIndex === -1 && rightIndex === -1) {
+      return left.key.localeCompare(right.key);
+    }
+
+    if (leftIndex === -1) {
+      return 1;
+    }
+
+    if (rightIndex === -1) {
+      return -1;
+    }
+
+    return leftIndex - rightIndex;
+  });
 }
 
 function axisLabelForUnit(unit: string) {

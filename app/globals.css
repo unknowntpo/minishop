@@ -1645,12 +1645,13 @@ button.design-preview {
 
 .benchmark-evidence-compare {
   margin-top: 16px;
+  padding: 18px 18px 12px;
 }
 
 .benchmark-evidence-purpose {
   display: grid;
   gap: 4px;
-  margin-bottom: 10px;
+  margin-bottom: 12px;
   color: var(--ms-muted);
   font-size: 14px;
   line-height: 1.5;
@@ -1664,6 +1665,7 @@ button.design-preview {
 
 .benchmark-evidence-table {
   min-width: 1180px;
+  margin-top: 0;
 }
 
 .benchmark-status-summary {
