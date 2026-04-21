@@ -1,0 +1,335 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "content": "<h2>Seckill Runtime Drilldown</h2><pre>inventory.seckill.requested\n  -> source consumer (read input)\n  -> FixedKeyProcessor\n  -> RocksDB inventory-store / dedupe-store\n  -> retry path: write back to inventory.seckill.requested\n  -> final path: write to inventory.seckill.result\n  -> changelog: dedupe/inventory store changelog topics</pre><p><strong>Metric mapping</strong></p><ul><li><code>input consumed/sec</code>: worker 從 request topic 吃進來</li><li><code>retry writes/sec</code>: worker 自己寫回 request topic，代表 reroute/probe</li><li><code>result writes/sec</code>: final outcome 寫到 result topic</li><li><code>changelog writes/sec</code>: RocksDB state 變更寫回 changelog</li><li><code>partition lag</code>: request topic 各 partition 堆積</li><li><code>bytes by task/sink</code>: 哪些 task / sink topic 比較熱</li></ul>",
+        "mode": "markdown"
+      },
+      "pluginVersion": "12.1.1",
+      "title": "Topology and Reading Guide",
+      "type": "text"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 7
+      },
+      "id": 2,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(kafka_consumer_consumer_fetch_manager_metrics_records_consumed_rate{topic=\"inventory.seckill.requested\"})",
+          "legendFormat": "input consumed/sec",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(kafka_producer_producer_topic_metrics_record_send_rate{topic=\"inventory.seckill.requested\"})",
+          "legendFormat": "retry writes/sec",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(kafka_producer_producer_topic_metrics_record_send_rate{topic=\"inventory.seckill.result\"})",
+          "legendFormat": "result writes/sec",
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(kafka_producer_producer_topic_metrics_record_send_rate{topic=~\"minishop-seckill-worker-v2-.*-changelog\"})",
+          "legendFormat": "changelog writes/sec",
+          "refId": "D"
+        }
+      ],
+      "title": "Request vs Retry vs Result vs Changelog",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 7
+      },
+      "id": 3,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (partition) (kafka_consumer_consumer_fetch_manager_metrics_records_lag{topic=\"inventory.seckill.requested\"})",
+          "legendFormat": "partition {{partition}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Request Topic Partition Lag",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 15
+      },
+      "id": 4,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (task_id) (kafka_streams_stream_topic_metrics_bytes_consumed{topic=\"inventory.seckill.requested\"})",
+          "legendFormat": "task {{task_id}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Input Bytes by Task",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "decbytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 15
+      },
+      "id": 5,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (topic) (kafka_streams_stream_topic_metrics_bytes_produced{topic=~\"inventory\\.seckill\\.(requested|result)|minishop-seckill-worker-v2-.*-changelog\"})",
+          "legendFormat": "{{topic}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Output Bytes by Sink Topic",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 23
+      },
+      "id": 6,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(kafka_streams_stream_thread_metrics_process_rate)",
+          "legendFormat": "stream thread process/sec",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(kafka_streams_stream_task_metrics_dropped_records_rate)",
+          "legendFormat": "dropped records/sec",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(kafka_producer_producer_topic_metrics_record_retry_rate{topic=~\"inventory\\.seckill\\.(requested|result)|minishop-seckill-worker-v2-.*-changelog\"})",
+          "legendFormat": "producer retry/sec",
+          "refId": "C"
+        }
+      ],
+      "title": "Processing Health",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 23
+      },
+      "id": 7,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max(kafka_streams_stream_metrics_alive_stream_threads)",
+          "legendFormat": "alive stream threads",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max(kafka_streams_stream_metrics_failed_stream_threads)",
+          "legendFormat": "failed stream threads",
+          "refId": "B"
+        }
+      ],
+      "title": "Thread Health",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 41,
+  "style": "dark",
+  "tags": [
+    "kafka",
+    "streams",
+    "seckill",
+    "drilldown"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Seckill Runtime Drilldown",
+  "uid": "minishop-seckill-runtime-drilldown",
+  "version": 1
+}
