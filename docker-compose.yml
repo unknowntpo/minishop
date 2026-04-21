@@ -156,7 +156,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.go-seckill-ingress
-    container_name: minishop-go-seckill-ingress
     restart: unless-stopped
     depends_on:
       postgres:
@@ -180,6 +179,17 @@ services:
       OTEL_ENABLED: ${OTEL_ENABLED:-1}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://tempo:4318}
       OTEL_SERVICE_NAME: ${GO_SECKILL_INGRESS_OTEL_SERVICE_NAME:-go-seckill-ingress}
+    expose:
+      - "3000"
+
+  go-seckill-ingress-lb:
+    image: nginx:1.27-alpine
+    container_name: minishop-go-seckill-ingress-lb
+    restart: unless-stopped
+    depends_on:
+      - go-seckill-ingress
+    volumes:
+      - ./ops/nginx/go-seckill-ingress-lb.conf:/etc/nginx/conf.d/default.conf:ro
     ports:
       - "${MINISHOP_GO_SECKILL_INGRESS_PORT:-3004}:3000"
 
