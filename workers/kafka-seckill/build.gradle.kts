@@ -9,7 +9,7 @@ repositories {
 
 dependencies {
     implementation(kotlin("stdlib"))
-    implementation("org.apache.kafka:kafka-streams:3.9.1")
+    implementation("org.apache.kafka:kafka-streams:4.2.0")
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.18.3")
     implementation("org.postgresql:postgresql:42.7.5")
     implementation("org.slf4j:slf4j-simple:2.0.17")

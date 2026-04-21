@@ -21,6 +21,8 @@ describe("createRoutingBuyIntentCommandBus", () => {
       defaultBus,
       seckillBus,
       pool: pool as never,
+      bucketCount: 16,
+      maxProbe: 4,
     });
 
     await bus.publish({
@@ -48,6 +50,12 @@ describe("createRoutingBuyIntentCommandBus", () => {
       expect.objectContaining({
         sku_id: "sku_hot_001",
         seckill_stock_limit: 25,
+        bucket_count: 16,
+        primary_bucket_id: expect.any(Number),
+        bucket_id: expect.any(Number),
+        attempt: 0,
+        max_probe: 4,
+        processing_key: expect.stringMatching(/^sku_hot_001#\d{2}$/),
       }),
     );
     expect(defaultBus.publish).not.toHaveBeenCalled();
@@ -60,6 +68,8 @@ describe("createRoutingBuyIntentCommandBus", () => {
       defaultBus,
       seckillBus,
       pool: { query: vi.fn() } as never,
+      bucketCount: 16,
+      maxProbe: 4,
     });
 
     const command = {

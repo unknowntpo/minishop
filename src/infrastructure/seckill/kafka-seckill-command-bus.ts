@@ -26,6 +26,7 @@ function getKafka(options: KafkaSeckillCommandBusOptions) {
 
 async function getProducer(options: KafkaSeckillCommandBusOptions) {
   if (sharedProducer) {
+    await sharedProducer.connect();
     return sharedProducer;
   }
 
@@ -35,6 +36,20 @@ async function getProducer(options: KafkaSeckillCommandBusOptions) {
   await sharedProducer.connect();
 
   return sharedProducer;
+}
+
+async function resetProducer() {
+  const producer = sharedProducer;
+  sharedProducer = null;
+  if (!producer) {
+    return;
+  }
+
+  try {
+    await producer.disconnect();
+  } catch {
+    // Ignore disconnect races while replacing a stale shared producer.
+  }
 }
 
 async function getAdmin(options: KafkaSeckillCommandBusOptions) {
@@ -101,17 +116,31 @@ export function createKafkaSeckillCommandBus(options: KafkaSeckillCommandBusOpti
         },
         async () => {
           await ensureTopics(options);
-          const producer = await getProducer(options);
-          await producer.send({
-            topic: options.requestTopic,
-            messages: [
-              {
-                key: request.sku_id,
-                value: JSON.stringify(request),
-                headers: toKafkaHeaders(),
-              },
-            ],
-          });
+          const send = async () => {
+            const producer = await getProducer(options);
+            await producer.send({
+              topic: options.requestTopic,
+              messages: [
+                {
+                  key: request.processing_key,
+                  value: JSON.stringify(request),
+                  headers: toKafkaHeaders(),
+                },
+              ],
+            });
+          };
+
+          try {
+            await send();
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            if (!message.toLowerCase().includes("disconnected")) {
+              throw error;
+            }
+
+            await resetProducer();
+            await send();
+          }
         },
       );
     },

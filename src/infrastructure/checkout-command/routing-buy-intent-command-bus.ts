@@ -10,6 +10,8 @@ type RoutingBuyIntentCommandBusOptions = {
     publish(request: SeckillBuyIntentRequest): Promise<void>;
   };
   pool: Pool;
+  bucketCount: number;
+  maxProbe: number;
 };
 
 type SeckillSkuRow = {
@@ -20,7 +22,7 @@ type SeckillSkuRow = {
 export function createRoutingBuyIntentCommandBus(options: RoutingBuyIntentCommandBusOptions): BuyIntentCommandBus {
   return {
     async publish(command: BuyIntentCommand) {
-      const seckillRequest = await toSeckillRequest(command, options.pool);
+      const seckillRequest = await toSeckillRequest(command, options.pool, options.bucketCount, options.maxProbe);
 
       if (seckillRequest) {
         await options.seckillBus.publish(seckillRequest);
@@ -32,7 +34,12 @@ export function createRoutingBuyIntentCommandBus(options: RoutingBuyIntentComman
   };
 }
 
-async function toSeckillRequest(command: BuyIntentCommand, pool: Pool) {
+async function toSeckillRequest(
+  command: BuyIntentCommand,
+  pool: Pool,
+  bucketCount: number,
+  maxProbe: number,
+) {
   if (command.items.length !== 1) {
     return null;
   }
@@ -55,10 +62,39 @@ async function toSeckillRequest(command: BuyIntentCommand, pool: Pool) {
     return null;
   }
 
+  const stableKey = command.idempotency_key ?? command.command_id;
+  const primaryBucketId = selectPrimaryBucket(stableKey, bucketCount);
+
   return {
     sku_id: item.sku_id,
     quantity: item.quantity,
     seckill_stock_limit: row.seckill_stock_limit,
+    bucket_count: bucketCount,
+    primary_bucket_id: primaryBucketId,
+    bucket_id: primaryBucketId,
+    attempt: 0,
+    max_probe: maxProbe,
+    processing_key: buildProcessingKey(item.sku_id, primaryBucketId),
     command,
   } satisfies SeckillBuyIntentRequest;
+}
+
+function selectPrimaryBucket(stableKey: string, bucketCount: number) {
+  const hash = fnv1a32(stableKey);
+  return hash % bucketCount;
+}
+
+function buildProcessingKey(skuId: string, bucketId: number) {
+  return `${skuId}#${bucketId.toString().padStart(2, "0")}`;
+}
+
+function fnv1a32(value: string) {
+  let hash = 0x811c9dc5;
+
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+
+  return hash >>> 0;
 }

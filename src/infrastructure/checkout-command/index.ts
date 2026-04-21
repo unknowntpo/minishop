@@ -67,6 +67,14 @@ function getRuntimeCommandBus() {
             clientId: readRuntimeEnv("KAFKA_CLIENT_ID") || "minishop-app",
           }),
           pool: getPool(),
+          bucketCount: Number.parseInt(
+            readRuntimeEnv("KAFKA_SECKILL_BUCKET_COUNT") || "16",
+            10,
+          ),
+          maxProbe: Number.parseInt(
+            readRuntimeEnv("KAFKA_SECKILL_MAX_PROBE") || "4",
+            10,
+          ),
         })
       : defaultBus;
 

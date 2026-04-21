@@ -110,6 +110,8 @@ services:
       KAFKA_CLIENT_ID: ${KAFKA_CLIENT_ID:-minishop-app}
       KAFKA_SECKILL_REQUEST_TOPIC: ${KAFKA_SECKILL_REQUEST_TOPIC:-inventory.seckill.requested}
       KAFKA_SECKILL_RESULT_TOPIC: ${KAFKA_SECKILL_RESULT_TOPIC:-inventory.seckill.result}
+      KAFKA_SECKILL_BUCKET_COUNT: ${KAFKA_SECKILL_BUCKET_COUNT:-16}
+      KAFKA_SECKILL_MAX_PROBE: ${KAFKA_SECKILL_MAX_PROBE:-4}
       BUY_INTENT_BATCH_SIZE: ${BUY_INTENT_BATCH_SIZE:-100}
       BUY_INTENT_PROCESS_POLL_INTERVAL_MS: ${BUY_INTENT_PROCESS_POLL_INTERVAL_MS:-1000}
       OTEL_ENABLED: ${OTEL_ENABLED:-1}
@@ -275,9 +277,39 @@ services:
       KAFKA_SECKILL_APPLICATION_ID: ${KAFKA_SECKILL_APPLICATION_ID:-minishop-seckill-worker-v2}
       KAFKA_SECKILL_REQUEST_TOPIC: ${KAFKA_SECKILL_REQUEST_TOPIC:-inventory.seckill.requested}
       KAFKA_SECKILL_RESULT_TOPIC: ${KAFKA_SECKILL_RESULT_TOPIC:-inventory.seckill.result}
+      KAFKA_SECKILL_DLQ_TOPIC: ${KAFKA_SECKILL_DLQ_TOPIC:-}
+      KAFKA_SECKILL_DESERIALIZATION_EXCEPTION_HANDLER: ${KAFKA_SECKILL_DESERIALIZATION_EXCEPTION_HANDLER:-org.apache.kafka.streams.errors.LogAndFailExceptionHandler}
+      KAFKA_SECKILL_PROCESSING_EXCEPTION_HANDLER: ${KAFKA_SECKILL_PROCESSING_EXCEPTION_HANDLER:-org.apache.kafka.streams.errors.LogAndFailProcessingExceptionHandler}
+      KAFKA_SECKILL_PRODUCTION_EXCEPTION_HANDLER: ${KAFKA_SECKILL_PRODUCTION_EXCEPTION_HANDLER:-org.apache.kafka.streams.errors.DefaultProductionExceptionHandler}
       KAFKA_SECKILL_STATE_DIR: /var/lib/minishop-seckill/state
     volumes:
       - minishop_seckill_state:/var/lib/minishop-seckill/state
+
+  worker-seckill-result-sink:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: minishop-worker-seckill-result-sink
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redpanda:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/minishop
+      DATABASE_POOL_MAX: ${SECKILL_RESULT_SINK_DATABASE_POOL_MAX:-8}
+      KAFKA_BROKERS: ${KAFKA_BROKERS:-redpanda:9092}
+      KAFKA_SECKILL_RESULT_TOPIC: ${KAFKA_SECKILL_RESULT_TOPIC:-inventory.seckill.result}
+      KAFKA_SECKILL_RESULT_SINK_GROUP_ID: ${KAFKA_SECKILL_RESULT_SINK_GROUP_ID:-minishop-seckill-result-sink}
+      KAFKA_SECKILL_RESULT_SINK_CLIENT_ID: ${KAFKA_SECKILL_RESULT_SINK_CLIENT_ID:-minishop-seckill-result-sink}
+      KAFKA_SECKILL_RESULT_SINK_PARTITIONS_CONCURRENTLY: ${KAFKA_SECKILL_RESULT_SINK_PARTITIONS_CONCURRENTLY:-6}
+      OTEL_ENABLED: ${OTEL_ENABLED:-1}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://tempo:4318}
+      OTEL_SERVICE_NAME: worker-seckill-result-sink
+      NODE_OPTIONS: ${NODE_OPTIONS:---require=/app/instrumentation.node.cjs}
+      NEXT_TELEMETRY_DISABLED: "1"
+    command: ["pnpm", "worker:seckill:result-sink"]
 
   benchmark-runner:
     profiles: ["benchmark"]

@@ -6,19 +6,20 @@ import com.fasterxml.jackson.module.kotlin.readValue
 import org.apache.kafka.clients.consumer.ConsumerConfig
 import org.apache.kafka.common.serialization.Serdes
 import org.apache.kafka.streams.KafkaStreams
-import org.apache.kafka.streams.errors.StreamsUncaughtExceptionHandler
-import org.apache.kafka.streams.KeyValue
-import org.apache.kafka.streams.StreamsBuilder
 import org.apache.kafka.streams.StreamsConfig
-import org.apache.kafka.streams.kstream.Transformer
-import org.apache.kafka.streams.kstream.TransformerSupplier
+import org.apache.kafka.streams.errors.StreamsUncaughtExceptionHandler
+import org.apache.kafka.streams.StreamsBuilder
+import org.apache.kafka.streams.kstream.Branched
+import org.apache.kafka.streams.kstream.Named
+import org.apache.kafka.streams.processor.api.ContextualProcessor
+import org.apache.kafka.streams.processor.api.ProcessorContext
+import org.apache.kafka.streams.processor.api.ProcessorSupplier
+import org.apache.kafka.streams.processor.api.Record
 import org.apache.kafka.streams.state.KeyValueStore
 import org.apache.kafka.streams.state.Stores
 import org.slf4j.LoggerFactory
 import java.net.URI
-import java.sql.Connection
 import java.sql.DriverManager
-import java.sql.Timestamp
 import java.time.Instant
 import java.util.Properties
 import java.util.UUID
@@ -32,7 +33,7 @@ private const val DEDUPE_STORE_NAME = "dedupe-store"
 
 fun main() {
     val config = AppConfig.fromEnv()
-    val gateway = PostgresGateway(config)
+    val bootstrapGateway = PostgresBootstrapGateway(config)
 
     val builder = StreamsBuilder()
     val inventoryStore = Stores.keyValueStoreBuilder(
@@ -50,14 +51,31 @@ fun main() {
     builder.addStateStore(dedupeStore)
 
     builder.stream<String, String>(config.requestTopic)
-        .transform(
-            TransformerSupplier {
-                SeckillDecisionTransformer(config, gateway)
+        .process(
+            ProcessorSupplier {
+                SeckillDecisionProcessor(bootstrapGateway)
             },
             INVENTORY_STORE_NAME,
             DEDUPE_STORE_NAME
         )
-        .to(config.resultTopic)
+        .split(Named.`as`("seckill-output-"))
+        .branch(
+            { _, value -> parseTopologyOutput(value).kind == "retry" },
+            Branched.withConsumer { stream ->
+                stream
+                    .selectKey { _, value -> parseTopologyOutput(value).outputKey }
+                    .mapValues { value -> parseTopologyOutput(value).payload }
+                    .to(config.requestTopic)
+            }
+        )
+        .defaultBranch(
+            Branched.withConsumer { stream ->
+                stream
+                    .selectKey { _, value -> parseTopologyOutput(value).outputKey }
+                    .mapValues { value -> parseTopologyOutput(value).payload }
+                    .to(config.resultTopic)
+            }
+        )
 
     val streams = KafkaStreams(builder.build(), config.streamProperties())
     val shutdownLatch = CountDownLatch(1)
@@ -92,6 +110,10 @@ data class AppConfig(
     val applicationId: String,
     val requestTopic: String,
     val resultTopic: String,
+    val dlqTopic: String?,
+    val deserializationExceptionHandler: String,
+    val processingExceptionHandler: String,
+    val productionExceptionHandler: String,
     val stateDir: String,
     val jdbcUrl: String,
     val jdbcUser: String,
@@ -107,6 +129,21 @@ data class AppConfig(
             put(StreamsConfig.PROCESSING_GUARANTEE_CONFIG, StreamsConfig.EXACTLY_ONCE_V2)
             put(StreamsConfig.STATE_DIR_CONFIG, stateDir)
             put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest")
+            put(
+                StreamsConfig.DEFAULT_DESERIALIZATION_EXCEPTION_HANDLER_CLASS_CONFIG,
+                deserializationExceptionHandler,
+            )
+            put(
+                StreamsConfig.PROCESSING_EXCEPTION_HANDLER_CLASS_CONFIG,
+                processingExceptionHandler,
+            )
+            put(
+                StreamsConfig.PRODUCTION_EXCEPTION_HANDLER_CLASS_CONFIG,
+                productionExceptionHandler,
+            )
+            if (!dlqTopic.isNullOrBlank()) {
+                put("errors.deadletterqueue.topic.name", dlqTopic)
+            }
         }
 
     companion object {
@@ -117,12 +154,28 @@ data class AppConfig(
                 applicationId = env("KAFKA_SECKILL_APPLICATION_ID", "minishop-seckill-worker"),
                 requestTopic = env("KAFKA_SECKILL_REQUEST_TOPIC", "inventory.seckill.requested"),
                 resultTopic = env("KAFKA_SECKILL_RESULT_TOPIC", "inventory.seckill.result"),
+                dlqTopic = optionalEnv("KAFKA_SECKILL_DLQ_TOPIC"),
+                deserializationExceptionHandler = env(
+                    "KAFKA_SECKILL_DESERIALIZATION_EXCEPTION_HANDLER",
+                    "org.apache.kafka.streams.errors.LogAndFailExceptionHandler",
+                ),
+                processingExceptionHandler = env(
+                    "KAFKA_SECKILL_PROCESSING_EXCEPTION_HANDLER",
+                    "org.apache.kafka.streams.errors.LogAndFailProcessingExceptionHandler",
+                ),
+                productionExceptionHandler = env(
+                    "KAFKA_SECKILL_PRODUCTION_EXCEPTION_HANDLER",
+                    "org.apache.kafka.streams.errors.DefaultProductionExceptionHandler",
+                ),
                 stateDir = env("KAFKA_SECKILL_STATE_DIR", "/var/lib/minishop-seckill/state"),
                 jdbcUrl = jdbcUrl,
                 jdbcUser = env("DATABASE_USER", "postgres"),
                 jdbcPassword = env("DATABASE_PASSWORD", "postgres"),
             )
         }
+
+        private fun optionalEnv(name: String): String? =
+            System.getenv(name)?.trim()?.takeIf { it.isNotEmpty() }
 
         private fun env(name: String, default: String? = null): String =
             System.getenv(name)?.trim()?.takeIf { it.isNotEmpty() }
@@ -131,42 +184,63 @@ data class AppConfig(
     }
 }
 
-class SeckillDecisionTransformer(
-    private val config: AppConfig,
-    private val gateway: PostgresGateway,
-) : Transformer<String, String, KeyValue<String, String>> {
+class SeckillDecisionProcessor(
+    private val bootstrapGateway: PostgresBootstrapGateway,
+) : ContextualProcessor<String, String, String, String>() {
     private lateinit var inventoryStore: KeyValueStore<String, String>
     private lateinit var dedupeStore: KeyValueStore<String, String>
 
-    override fun init(context: org.apache.kafka.streams.processor.ProcessorContext) {
+    override fun init(context: ProcessorContext<String, String>) {
+        super.init(context)
         @Suppress("UNCHECKED_CAST")
         inventoryStore = context.getStateStore(INVENTORY_STORE_NAME) as KeyValueStore<String, String>
         @Suppress("UNCHECKED_CAST")
         dedupeStore = context.getStateStore(DEDUPE_STORE_NAME) as KeyValueStore<String, String>
     }
 
-    override fun transform(key: String, value: String): KeyValue<String, String>? {
-        val request = mapper.readValue<SeckillBuyIntentRequest>(value)
+    override fun process(record: Record<String, String>) {
+        val request = mapper.readValue<SeckillBuyIntentRequest>(record.value())
         val dedupeKey = request.command.idempotency_key ?: request.command.command_id
         val storedResult = dedupeStore.get(dedupeKey)?.let { mapper.readValue<SeckillCommandResult>(it) }
+        val processedAt = Instant.now().toString()
 
         if (storedResult != null) {
-            gateway.persistForDuplicateCommand(request, storedResult)
-            return KeyValue.pair(key, mapper.writeValueAsString(storedResult))
+            val duplicateResult = storedResult.copy(
+                commandId = request.command.command_id,
+                correlationId = request.command.correlation_id,
+                duplicate = true,
+            )
+            forwardFinalOutcome(record, request, duplicateResult, processedAt)
+            return
         }
 
-        var state = inventoryStore.get(request.sku_id)
+        var state = inventoryStore.get(record.key())
             ?.let { mapper.readValue<SeckillInventoryState>(it) }
-            ?: gateway.loadInitialState(request.sku_id, request.seckill_stock_limit)
+            ?: bootstrapGateway.loadInitialState(
+                request.sku_id,
+                request.seckill_stock_limit,
+                request.bucket_id,
+                request.bucket_count,
+            )
             ?: SeckillInventoryState(
                 skuId = request.sku_id,
+                bucketId = request.bucket_id,
                 projectionAvailableRemaining = 0,
-                configuredStockLimit = request.seckill_stock_limit,
+                configuredStockLimit = bucketLimitFor(
+                    request.seckill_stock_limit,
+                    request.bucket_count,
+                    request.bucket_id,
+                ),
                 acceptedUnits = 0,
             )
 
-        if (state.configuredStockLimit != request.seckill_stock_limit) {
-            state = state.copy(configuredStockLimit = request.seckill_stock_limit)
+        val bucketStockLimit = bucketLimitFor(
+            request.seckill_stock_limit,
+            request.bucket_count,
+            request.bucket_id,
+        )
+        if (state.configuredStockLimit != bucketStockLimit) {
+            state = state.copy(configuredStockLimit = bucketStockLimit)
         }
 
         val effectiveRemaining = minOf(
@@ -174,8 +248,7 @@ class SeckillDecisionTransformer(
             (state.configuredStockLimit - state.acceptedUnits).coerceAtLeast(0),
         )
 
-        val result =
-            if (request.quantity <= effectiveRemaining) {
+        if (request.quantity <= effectiveRemaining) {
                 val checkoutIntentId = UUID.randomUUID().toString()
                 val eventId = UUID.randomUUID().toString()
                 val acceptedState = state.copy(
@@ -183,7 +256,7 @@ class SeckillDecisionTransformer(
                     acceptedUnits = state.acceptedUnits + request.quantity,
                 )
                 state = acceptedState
-                SeckillCommandResult(
+                val result = SeckillCommandResult(
                     commandId = request.command.command_id,
                     correlationId = request.command.correlation_id,
                     skuId = request.sku_id,
@@ -194,33 +267,82 @@ class SeckillDecisionTransformer(
                     failureReason = null,
                     eventId = eventId,
                     duplicate = false,
-                ).also {
-                    gateway.persistCreated(request, it)
-                }
-            } else {
-                SeckillCommandResult(
-                    commandId = request.command.command_id,
-                    correlationId = request.command.correlation_id,
-                    skuId = request.sku_id,
-                    checkoutIntentId = null,
-                    status = "rejected",
-                    requestedQuantity = request.quantity,
-                    seckillStockLimit = request.seckill_stock_limit,
-                    failureReason = "seckill_out_of_stock",
-                    eventId = null,
-                    duplicate = false,
-                ).also {
-                    gateway.persistRejected(request, it)
-                }
-            }
+                )
+                inventoryStore.put(record.key(), mapper.writeValueAsString(state))
+                dedupeStore.put(dedupeKey, mapper.writeValueAsString(result))
+                forwardFinalOutcome(record, request, result, processedAt)
+                return
+        }
 
-        inventoryStore.put(request.sku_id, mapper.writeValueAsString(state))
+        if (request.attempt + 1 < request.max_probe && request.bucket_count > 1) {
+            val nextBucketId = (request.primary_bucket_id + request.attempt + 1) % request.bucket_count
+            val retryRequest = request.copy(
+                bucket_id = nextBucketId,
+                attempt = request.attempt + 1,
+                processing_key = buildProcessingKey(request.sku_id, nextBucketId),
+            )
+            forwardRetry(record, retryRequest)
+            return
+        }
+
+        val result = SeckillCommandResult(
+            commandId = request.command.command_id,
+            correlationId = request.command.correlation_id,
+            skuId = request.sku_id,
+            checkoutIntentId = null,
+            status = "rejected",
+            requestedQuantity = request.quantity,
+            seckillStockLimit = request.seckill_stock_limit,
+            failureReason = "seckill_out_of_stock",
+            eventId = null,
+            duplicate = false,
+        )
         dedupeStore.put(dedupeKey, mapper.writeValueAsString(result))
-
-        return KeyValue.pair(key, mapper.writeValueAsString(result))
+        forwardFinalOutcome(record, request, result, processedAt)
     }
 
-    override fun close() = Unit
+    private fun forwardRetry(record: Record<String, String>, request: SeckillBuyIntentRequest) {
+        context().forward(
+            record
+                .withKey(request.processing_key)
+                .withValue(
+                    mapper.writeValueAsString(
+                        SeckillTopologyOutput(
+                            kind = "retry",
+                            outputKey = request.processing_key,
+                            payload = mapper.writeValueAsString(request),
+                        )
+                    )
+                )
+        )
+    }
+
+    private fun forwardFinalOutcome(
+        record: Record<String, String>,
+        request: SeckillBuyIntentRequest,
+        result: SeckillCommandResult,
+        processedAt: String,
+    ) {
+        context().forward(
+            record
+                .withKey(request.processing_key)
+                .withValue(
+                    mapper.writeValueAsString(
+                        SeckillTopologyOutput(
+                            kind = "result",
+                            outputKey = request.processing_key,
+                            payload = mapper.writeValueAsString(
+                                SeckillCommandOutcome(
+                                    request = request,
+                                    result = result,
+                                    processedAt = processedAt,
+                                )
+                            ),
+                        )
+                    )
+                )
+        )
+    }
 }
 
 @JsonIgnoreProperties(ignoreUnknown = true)
@@ -228,6 +350,12 @@ data class SeckillBuyIntentRequest(
     val sku_id: String,
     val quantity: Int,
     val seckill_stock_limit: Int,
+    val bucket_count: Int,
+    val primary_bucket_id: Int,
+    val bucket_id: Int,
+    val attempt: Int,
+    val max_probe: Int,
+    val processing_key: String,
     val command: BuyIntentCommand,
 )
 
@@ -260,6 +388,7 @@ data class EventMetadata(
 
 data class SeckillInventoryState(
     val skuId: String,
+    val bucketId: Int,
     val projectionAvailableRemaining: Int,
     val configuredStockLimit: Int,
     val acceptedUnits: Int,
@@ -278,8 +407,37 @@ data class SeckillCommandResult(
     val duplicate: Boolean,
 )
 
-class PostgresGateway(private val config: AppConfig) {
-    fun loadInitialState(skuId: String, stockLimit: Int): SeckillInventoryState? =
+data class SeckillCommandOutcome(
+    val request: SeckillBuyIntentRequest,
+    val result: SeckillCommandResult,
+    val processedAt: String,
+)
+
+data class SeckillTopologyOutput(
+    val kind: String,
+    val outputKey: String,
+    val payload: String,
+)
+
+private fun parseTopologyOutput(value: String): SeckillTopologyOutput =
+    mapper.readValue(value)
+
+private fun buildProcessingKey(skuId: String, bucketId: Int): String =
+    "$skuId#${bucketId.toString().padStart(2, '0')}"
+
+private fun bucketLimitFor(totalStockLimit: Int, bucketCount: Int, bucketId: Int): Int {
+    val base = totalStockLimit / bucketCount
+    val remainder = totalStockLimit % bucketCount
+    return base + if (bucketId < remainder) 1 else 0
+}
+
+class PostgresBootstrapGateway(private val config: AppConfig) {
+    fun loadInitialState(
+        skuId: String,
+        stockLimit: Int,
+        bucketId: Int,
+        bucketCount: Int,
+    ): SeckillInventoryState? =
         connection().use { connection ->
             connection.prepareStatement(
                 """
@@ -299,10 +457,16 @@ class PostgresGateway(private val config: AppConfig) {
                     if (!result.next()) {
                         null
                     } else {
+                        val effectiveStockLimit = minOf(
+                            result.getInt("available"),
+                            result.getInt("seckill_stock_limit"),
+                        )
+                        val bucketLimit = bucketLimitFor(effectiveStockLimit, bucketCount, bucketId)
                         SeckillInventoryState(
                             skuId = skuId,
-                            projectionAvailableRemaining = result.getInt("available"),
-                            configuredStockLimit = result.getInt("seckill_stock_limit"),
+                            bucketId = bucketId,
+                            projectionAvailableRemaining = bucketLimit,
+                            configuredStockLimit = bucketLimit,
                             acceptedUnits = 0,
                         )
                     }
@@ -310,241 +474,6 @@ class PostgresGateway(private val config: AppConfig) {
             }
         }
 
-    fun persistCreated(request: SeckillBuyIntentRequest, result: SeckillCommandResult) {
-        connection().use { connection ->
-            connection.autoCommit = false
-            try {
-                upsertCheckoutIntentCreated(connection, request, result)
-                upsertCommandStatusCreated(connection, request, result, duplicate = false)
-                upsertSeckillResult(connection, result)
-                connection.commit()
-            } catch (error: Throwable) {
-                connection.rollback()
-                throw error
-            } finally {
-                connection.autoCommit = true
-            }
-        }
-    }
-
-    fun persistRejected(request: SeckillBuyIntentRequest, result: SeckillCommandResult) {
-        connection().use { connection ->
-            connection.autoCommit = false
-            try {
-                upsertCommandStatusFailed(connection, request, result, duplicate = false)
-                upsertSeckillResult(connection, result)
-                connection.commit()
-            } catch (error: Throwable) {
-                connection.rollback()
-                throw error
-            } finally {
-                connection.autoCommit = true
-            }
-        }
-    }
-
-    fun persistForDuplicateCommand(request: SeckillBuyIntentRequest, result: SeckillCommandResult) {
-        val duplicateResult = result.copy(
-            commandId = request.command.command_id,
-            correlationId = request.command.correlation_id,
-            duplicate = true,
-        )
-
-        connection().use { connection ->
-            connection.autoCommit = false
-            try {
-                if (duplicateResult.status == "reserved") {
-                    upsertCommandStatusCreated(connection, request, duplicateResult, duplicate = true)
-                } else {
-                    upsertCommandStatusFailed(connection, request, duplicateResult, duplicate = true)
-                }
-                upsertSeckillResult(connection, duplicateResult)
-                connection.commit()
-            } catch (error: Throwable) {
-                connection.rollback()
-                throw error
-            } finally {
-                connection.autoCommit = true
-            }
-        }
-    }
-
-    private fun upsertCheckoutIntentCreated(
-        connection: Connection,
-        request: SeckillBuyIntentRequest,
-        result: SeckillCommandResult,
-    ) {
-        val payload = mapper.writeValueAsString(
-            mapOf(
-                "checkout_intent_id" to result.checkoutIntentId,
-                "buyer_id" to request.command.buyer_id,
-                "items" to request.command.items,
-                "idempotency_key" to request.command.idempotency_key,
-            )
-        )
-        val metadata = mapper.writeValueAsString(
-            mapOf(
-                "request_id" to request.command.metadata.request_id,
-                "trace_id" to request.command.metadata.trace_id,
-                "source" to request.command.metadata.source,
-                "actor_id" to request.command.metadata.actor_id,
-            )
-        )
-        val occurredAt = Instant.now()
-
-        connection.prepareStatement(
-            """
-            insert into event_store (
-              event_id,
-              event_type,
-              event_version,
-              aggregate_type,
-              aggregate_id,
-              aggregate_version,
-              payload,
-              metadata,
-              idempotency_key,
-              occurred_at
-            )
-            values (?, 'CheckoutIntentCreated', 1, 'checkout', ?, 1, ?::jsonb, ?::jsonb, ?, ?)
-            on conflict (idempotency_key)
-              where idempotency_key is not null
-              do nothing
-            """.trimIndent()
-        ).use { statement ->
-            statement.setObject(1, UUID.fromString(result.eventId))
-            statement.setObject(2, UUID.fromString(result.checkoutIntentId))
-            statement.setString(3, payload)
-            statement.setString(4, metadata)
-            statement.setString(5, request.command.idempotency_key)
-            statement.setTimestamp(6, Timestamp.from(occurredAt))
-            statement.executeUpdate()
-        }
-    }
-
-    private fun upsertCommandStatusCreated(
-        connection: Connection,
-        request: SeckillBuyIntentRequest,
-        result: SeckillCommandResult,
-        duplicate: Boolean,
-    ) {
-        connection.prepareStatement(
-            """
-            insert into command_status (
-              command_id,
-              correlation_id,
-              idempotency_key,
-              status,
-              checkout_intent_id,
-              event_id,
-              is_duplicate,
-              failure_code,
-              failure_message
-            )
-            values (?, ?, ?, 'created', ?, ?, ?, null, null)
-            on conflict (command_id)
-            do update set
-              correlation_id = excluded.correlation_id,
-              idempotency_key = excluded.idempotency_key,
-              status = excluded.status,
-              checkout_intent_id = excluded.checkout_intent_id,
-              event_id = excluded.event_id,
-              is_duplicate = excluded.is_duplicate,
-              failure_code = null,
-              failure_message = null,
-              updated_at = now()
-            """.trimIndent()
-        ).use { statement ->
-            statement.setObject(1, UUID.fromString(request.command.command_id))
-            statement.setObject(2, UUID.fromString(request.command.correlation_id))
-            statement.setString(3, request.command.idempotency_key)
-            statement.setObject(4, UUID.fromString(result.checkoutIntentId))
-            statement.setObject(5, UUID.fromString(result.eventId))
-            statement.setBoolean(6, duplicate)
-            statement.executeUpdate()
-        }
-    }
-
-    private fun upsertCommandStatusFailed(
-        connection: Connection,
-        request: SeckillBuyIntentRequest,
-        result: SeckillCommandResult,
-        duplicate: Boolean,
-    ) {
-        connection.prepareStatement(
-            """
-            insert into command_status (
-              command_id,
-              correlation_id,
-              idempotency_key,
-              status,
-              is_duplicate,
-              failure_code,
-              failure_message
-            )
-            values (?, ?, ?, 'failed', ?, 'seckill_out_of_stock', ?)
-            on conflict (command_id)
-            do update set
-              correlation_id = excluded.correlation_id,
-              idempotency_key = excluded.idempotency_key,
-              status = excluded.status,
-              is_duplicate = excluded.is_duplicate,
-              failure_code = excluded.failure_code,
-              failure_message = excluded.failure_message,
-              updated_at = now()
-            """.trimIndent()
-        ).use { statement ->
-            statement.setObject(1, UUID.fromString(request.command.command_id))
-            statement.setObject(2, UUID.fromString(request.command.correlation_id))
-            statement.setString(3, request.command.idempotency_key)
-            statement.setBoolean(4, duplicate)
-            statement.setString(5, result.failureReason ?: "seckill_out_of_stock")
-            statement.executeUpdate()
-        }
-    }
-
-    private fun upsertSeckillResult(connection: Connection, result: SeckillCommandResult) {
-        connection.prepareStatement(
-            """
-            insert into seckill_command_result (
-              command_id,
-              correlation_id,
-              sku_id,
-              checkout_intent_id,
-              status,
-              requested_quantity,
-              seckill_stock_limit,
-              failure_reason
-            )
-            values (?, ?, ?, ?, ?, ?, ?, ?)
-            on conflict (command_id)
-            do update set
-              correlation_id = excluded.correlation_id,
-              sku_id = excluded.sku_id,
-              checkout_intent_id = excluded.checkout_intent_id,
-              status = excluded.status,
-              requested_quantity = excluded.requested_quantity,
-              seckill_stock_limit = excluded.seckill_stock_limit,
-              failure_reason = excluded.failure_reason,
-              updated_at = now()
-            """.trimIndent()
-        ).use { statement ->
-            statement.setObject(1, UUID.fromString(result.commandId))
-            statement.setObject(2, UUID.fromString(result.correlationId))
-            statement.setString(3, result.skuId)
-            if (result.checkoutIntentId == null) {
-                statement.setObject(4, null)
-            } else {
-                statement.setObject(4, UUID.fromString(result.checkoutIntentId))
-            }
-            statement.setString(5, result.status)
-            statement.setInt(6, result.requestedQuantity)
-            statement.setInt(7, result.seckillStockLimit)
-            statement.setString(8, result.failureReason)
-            statement.executeUpdate()
-        }
-    }
-
-    private fun connection(): Connection =
+    private fun connection() =
         DriverManager.getConnection(config.jdbcUrl, config.jdbcUser, config.jdbcPassword)
 }

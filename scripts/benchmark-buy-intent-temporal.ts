@@ -1073,6 +1073,7 @@ async function resetBuyIntentBenchmarkState(pool: Pool, _mode: "bypass") {
   try {
     await pool.query(`delete from staged_buy_intent_command`);
     await pool.query(`delete from command_status`);
+    await pool.query(`delete from seckill_command_result`);
     await pool.query(`delete from checkout_intent_projection`);
     await pool.query(`delete from order_projection`);
     await pool.query(
