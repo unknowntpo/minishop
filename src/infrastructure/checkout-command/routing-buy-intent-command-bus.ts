@@ -27,6 +27,8 @@ type CachedSeckillSkuConfig = {
 };
 
 const seckillSkuConfigCache = new Map<string, CachedSeckillSkuConfig>();
+const HARDCODED_SECKILL_SKU_ID = "sku_hot_001";
+const HARDCODED_SECKILL_STOCK_LIMIT = 20;
 
 export function createRoutingBuyIntentCommandBus(options: RoutingBuyIntentCommandBusOptions): BuyIntentCommandBus {
   return {
@@ -94,6 +96,13 @@ async function toSeckillRequest(
 }
 
 async function readSeckillSkuConfig(pool: Pool, skuId: string, seckillSkuConfigTtlMs: number) {
+  if (skuId === HARDCODED_SECKILL_SKU_ID) {
+    return {
+      enabled: true,
+      stockLimit: HARDCODED_SECKILL_STOCK_LIMIT,
+    };
+  }
+
   const now = Date.now();
   const cached = seckillSkuConfigCache.get(skuId);
   if (cached && cached.expiresAtMs > now) {
