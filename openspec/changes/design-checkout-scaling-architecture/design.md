@@ -323,6 +323,31 @@ The comparison contract is therefore:
 - do not invent missing values
 - keep run-specific evidence local to the selected run
 
+### Dynamic evidence matrix rule
+
+The selected-scenario evidence table should not define a fixed set of domain columns.
+
+Instead, it should:
+
+- treat the table as a run-by-run projection of artifact data
+- derive candidate columns from the actual fields present in runs under the same scenario
+- hide columns that are identical for every run because those fields belong in selected-run details rather than comparative evidence
+- keep columns that differ across runs or are missing in only some runs because those are the fields that explain movement in charts
+
+This keeps the table reusable across projects and avoids coupling the dashboard to checkout-specific terms such as HTTP status, event types, or inventory summaries.
+
+### Shared-axis comparison rule
+
+When the dashboard compares runs inside one scenario, it may render a line chart over a shared x-axis such as `concurrency`.
+
+That view is a comparison projection, not a guarantee that each run contributes a unique x value. In practice this means:
+
+- multiple runs may share the same x value
+- repeated runs at the same x value are valid and should be shown as multiple observations at that coordinate
+- the chart should not invent synthetic spacing just to avoid overlap
+
+If a project needs a true single-run curve, that should be expressed through explicit `series[]` data in the artifact rather than inferred from multiple runs.
+
 ### Lane is a tag, not a separate dashboard model
 
 Earlier benchmark artifacts and dashboard views used an independent "architecture lane" concept. That model is now considered redundant.
