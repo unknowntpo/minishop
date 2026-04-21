@@ -241,6 +241,127 @@ If per-bucket heat becomes an optimization requirement, the design should add on
 
 The design should avoid adding bucket IDs to every general-purpose dashboard until it is clear that bucket-level heat, rather than overall retry ratio, is the bottleneck that must be operated continuously.
 
+### Benchmark dashboard artifact contract
+
+The internal benchmark dashboard is now treated as an artifact reader rather than a benchmark-specific page with hard-coded KPI names.
+
+The artifact contract should distinguish two different kinds of data:
+
+- `measurements[]`
+  - scalar values for one run, such as:
+    - `queued/sec`
+    - `result topic throughput`
+    - `p95 latency`
+    - `errors`
+- `series[]`
+  - x-y curves for one run, such as:
+    - `concurrency -> queued/sec`
+    - `concurrency -> result topic throughput`
+    - `concurrency -> p95 latency`
+
+This separation is intentional:
+
+- scalar measurements support summary cards, tables, and single-run inspection
+- series support capacity curves and parameter sweeps without forcing the dashboard to guess the x-axis
+
+The dashboard should therefore prefer:
+
+1. `series[]` when a run explicitly provides a curve
+2. `measurements[]` for scalar comparison and fallback rendering
+
+The dashboard should not rely on hard-coded field names such as:
+
+- `accept/sec`
+- `intent created/sec`
+- `projection lag`
+
+Those labels are scenario-specific interpretations and belong in artifact metadata, not in dashboard source code.
+
+### Scenario and tag model for benchmark comparison
+
+Benchmark scenarios should answer only one question:
+
+- what is being measured
+
+Run-level variation should be expressed through tags, not by multiplying scenario names.
+
+For example, this should be one scenario:
+
+- `buy-intent-hot-seckill`
+
+with run tags such as:
+
+- `ingress=http`
+- `style=steady_state`
+- `bucket=4`
+- `maxProbe=4`
+- `concurrency=200`
+
+This keeps the dashboard stable as experiments grow. A bucket sweep, ingress comparison, or probe sweep is then represented as:
+
+- one scenario
+- many runs
+- different tags
+
+rather than many near-duplicate scenarios.
+
+### Shared-schema comparison rule
+
+The dashboard must tolerate the case where runs under the same scenario were produced by different artifact schema versions.
+
+That means:
+
+- a scenario comparison should only draw measurements or series that are actually shared across comparable runs
+- a missing measurement in one run must not be silently rendered as `0`
+- run-specific measurements remain visible only inside selected-run details
+
+This rule avoids a common failure mode where old and new runs appear on the same chart but the older run simply lacks a field that the newer schema introduced.
+
+The comparison contract is therefore:
+
+- compare shared keys
+- do not invent missing values
+- keep run-specific evidence local to the selected run
+
+### Lane is a tag, not a separate dashboard model
+
+Earlier benchmark artifacts and dashboard views used an independent "architecture lane" concept. That model is now considered redundant.
+
+If a run needs to distinguish a path such as:
+
+- `postgres-baseline`
+- `bypass`
+- `queue-first`
+
+it should do so through a normal scenario tag such as:
+
+- `lane=postgres-baseline`
+- `lane=bypass`
+
+The dashboard may still group or filter by that tag, but `lane` should not remain a second classification system parallel to scenario names and tags.
+
+### Future standalone benchmark dashboard direction
+
+The current internal page is moving toward a standalone benchmark dashboard tool that can be reused across projects.
+
+The preferred long-term contract is:
+
+- projects generate JSON benchmark artifacts
+- the dashboard reads those artifacts from disk, or later via explicit upload
+- scenario-specific semantics live in artifact metadata rather than in application code
+
+This makes a future "upload JSON and inspect benchmark history" workflow realistic without forcing every project to adopt the same domain model.
+
+The practical implication for current work is:
+
+- artifact schema stability matters more than local UI shortcuts
+- migration scripts are acceptable for old JSON files
+- dashboard logic should stay generic enough that another project can provide:
+  - different scenario names
+  - different measurement labels
+  - different series axes
+  without modifying dashboard source code
+
 ## Target Dataflow
 
 ```text
