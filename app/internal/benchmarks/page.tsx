@@ -650,6 +650,7 @@ function SelectedRunPanel({
   scenarioName: string;
 }) {
   const profileFile = run.profiling?.files?.find((file) => Boolean(file.path))?.path;
+  const runSeries = seriesForRun(run);
 
   return (
     <article className="capacity-chart-card benchmark-selected-run-card">
@@ -687,6 +688,39 @@ function SelectedRunPanel({
           { title: "Kafka", value: run.kafka },
         ]}
       />
+
+      {runSeries.length > 0 ? (
+        <>
+          <p className="eyebrow" style={{ marginTop: "1.5rem" }}>
+            Series
+          </p>
+          <div className="benchmark-comparison-grid">
+            {runSeries.map((series) => (
+              <ComparisonChart
+                key={`${run.runId}:${series.key}`}
+                calculation={series.calculation ?? ""}
+                definition={series.definition ?? ""}
+                interpretation={series.interpretation ?? ""}
+                label={series.label}
+                unit={series.yUnit}
+                xLabel={series.xLabel}
+                points={sortChartPoints(
+                  series.points.map((point) => ({
+                    run,
+                    x: point.x as number | string,
+                    y: point.y as number,
+                    pointLabel:
+                      point.pointLabel ??
+                      (typeof point.x === "number" || typeof point.x === "string"
+                        ? String(point.x)
+                        : undefined),
+                  })),
+                )}
+              />
+            ))}
+          </div>
+        </>
+      ) : null}
 
       <div className="benchmark-selected-run-actions">
         {profileFile ? (
