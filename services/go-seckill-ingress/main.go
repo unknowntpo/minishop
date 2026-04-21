@@ -24,6 +24,7 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
@@ -265,11 +266,24 @@ func (a *app) handleBuyIntents(w http.ResponseWriter, r *http.Request) {
 
 	var body requestBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "invalid_json")
 		writeError(w, requestID, traceIDFromContext(ctx), http.StatusBadRequest, "Request body must be valid JSON.")
 		return
 	}
 
-	if err := validateRequest(body); err != nil {
+	_, validateSpan := a.tracer.Start(ctx, "buy_intent.validate_request")
+	err := validateRequest(body)
+	validateSpan.SetAttributes(
+		attribute.Int("buy_intent.item_count", len(body.Items)),
+		attribute.String("buy_intent.buyer_id", body.BuyerID),
+	)
+	if err != nil {
+		validateSpan.RecordError(err)
+		validateSpan.SetStatus(codes.Error, "invalid_request")
+		validateSpan.End()
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "invalid_request")
 		status := http.StatusBadRequest
 		if errors.Is(err, errNonSeckillSKU) {
 			status = http.StatusUnprocessableEntity
@@ -277,14 +291,24 @@ func (a *app) handleBuyIntents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, requestID, traceIDFromContext(ctx), status, err.Error())
 		return
 	}
-
 	item := body.Items[0]
+	validateSpan.SetAttributes(
+		attribute.String("buy_intent.sku_id", item.SkuID),
+		attribute.Int("buy_intent.quantity", item.Quantity),
+		attribute.Int("buy_intent.unit_price_minor", item.UnitPriceAmountMinor),
+		attribute.String("buy_intent.currency", item.Currency),
+	)
+	validateSpan.End()
+
 	cfg, err := a.readSeckillConfig(ctx, item.SkuID)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "lookup_failed")
 		writeError(w, requestID, traceIDFromContext(ctx), http.StatusInternalServerError, "Buy intent command could not be accepted. Please try again.")
 		return
 	}
 	if !cfg.enabled || cfg.stockLimit <= 0 {
+		span.SetStatus(codes.Error, "non_seckill_sku")
 		writeError(w, requestID, traceIDFromContext(ctx), http.StatusUnprocessableEntity, errNonSeckillSKU.Error())
 		return
 	}
@@ -302,6 +326,16 @@ func (a *app) handleBuyIntents(w http.ResponseWriter, r *http.Request) {
 	primaryBucketID := selectPrimaryBucket(stableKey, a.cfg.kafkaBucketCount)
 	traceCarrier := injectTraceCarrier(ctx)
 
+	buildCtx, buildSpan := a.tracer.Start(ctx, "buy_intent.build_seckill_request")
+	buildSpan.SetAttributes(
+		attribute.String("buy_intent.command_id", commandID),
+		attribute.String("buy_intent.correlation_id", correlationID),
+		attribute.String("buy_intent.sku_id", item.SkuID),
+		attribute.Int("buy_intent.quantity", item.Quantity),
+		attribute.Int("buy_intent.primary_bucket_id", primaryBucketID),
+		attribute.Int("buy_intent.bucket_count", a.cfg.kafkaBucketCount),
+		attribute.Int("buy_intent.max_probe", a.cfg.kafkaMaxProbe),
+	)
 	request := seckillBuyIntentRequest{
 		SkuID:             item.SkuID,
 		Quantity:          item.Quantity,
@@ -332,20 +366,34 @@ func (a *app) handleBuyIntents(w http.ResponseWriter, r *http.Request) {
 			IssuedAt: time.Now().UTC().Format(time.RFC3339Nano),
 		},
 	}
+	buildSpan.End()
 
+	encodeCtx, encodeSpan := a.tracer.Start(buildCtx, "buy_intent.encode_seckill_request")
 	payload, err := json.Marshal(request)
 	if err != nil {
+		encodeSpan.RecordError(err)
+		encodeSpan.SetStatus(codes.Error, "encode_failed")
+		encodeSpan.End()
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "encode_failed")
 		writeError(w, requestID, traceIDFromContext(ctx), http.StatusInternalServerError, "Buy intent command could not be accepted. Please try again.")
 		return
 	}
+	encodeSpan.SetAttributes(attribute.Int("messaging.message_payload_size_bytes", len(payload)))
+	encodeSpan.End()
 
-	publishCtx, publishSpan := a.tracer.Start(ctx, "buy_intent.publish_seckill_go")
+	publishCtx, publishSpan := a.tracer.Start(encodeCtx, "buy_intent.publish_seckill_go")
 	publishSpan.SetAttributes(
 		attribute.String("messaging.system", "kafka"),
 		attribute.String("messaging.operation", "publish"),
 		attribute.String("messaging.destination.name", a.cfg.kafkaRequestTopic),
 		attribute.String("buy_intent.command_id", commandID),
 		attribute.String("buy_intent.sku_id", item.SkuID),
+		attribute.String("messaging.kafka.message_key", request.ProcessingKey),
+		attribute.Int("messaging.message_payload_size_bytes", len(payload)),
+		attribute.Int("messaging.kafka.batch_size", a.cfg.kafkaBatchSize),
+		attribute.Int("messaging.kafka.batch_timeout_ms", a.cfg.kafkaLingerMs),
+		attribute.Int("messaging.kafka.broker_count", len(a.cfg.kafkaBrokers)),
 	)
 	headers := make([]kafka.Header, 0, 3)
 	for _, key := range []string{"traceparent", "tracestate", "baggage"} {
@@ -353,19 +401,39 @@ func (a *app) handleBuyIntents(w http.ResponseWriter, r *http.Request) {
 			headers = append(headers, kafka.Header{Key: key, Value: []byte(value)})
 		}
 	}
-	err = a.writer.WriteMessages(publishCtx, kafka.Message{
+	writeCtx, writeSpan := a.tracer.Start(publishCtx, "kafka.write_messages")
+	writeSpan.SetAttributes(
+		attribute.String("messaging.destination.name", a.cfg.kafkaRequestTopic),
+		attribute.String("messaging.kafka.message_key", request.ProcessingKey),
+	)
+	err = a.writer.WriteMessages(writeCtx, kafka.Message{
 		Key:     []byte(request.ProcessingKey),
 		Value:   payload,
 		Time:    time.Now().UTC(),
 		Headers: headers,
 	})
 	if err != nil {
+		writeSpan.RecordError(err)
+		writeSpan.SetStatus(codes.Error, "write_failed")
+		writeSpan.End()
 		publishSpan.RecordError(err)
+		publishSpan.SetStatus(codes.Error, "publish_failed")
 		publishSpan.End()
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "publish_failed")
 		writeError(w, requestID, traceIDFromContext(ctx), http.StatusInternalServerError, "Buy intent command could not be accepted. Please try again.")
 		return
 	}
+	writeSpan.End()
 	publishSpan.End()
+
+	span.SetAttributes(
+		attribute.String("buy_intent.command_id", commandID),
+		attribute.String("buy_intent.correlation_id", correlationID),
+		attribute.String("buy_intent.sku_id", item.SkuID),
+		attribute.Int("buy_intent.primary_bucket_id", primaryBucketID),
+		attribute.String("http.request_id", requestID),
+	)
 
 	writeJSON(w, http.StatusAccepted, traceIDFromContext(ctx), requestID, acceptResponse{
 		CommandID:     commandID,
@@ -401,16 +469,26 @@ func validateRequest(body requestBody) error {
 }
 
 func (a *app) readSeckillConfig(ctx context.Context, skuID string) (cachedSeckillConfig, error) {
+	ctx, span := a.tracer.Start(ctx, "buy_intent.lookup_seckill_sku")
+	defer span.End()
+	span.SetAttributes(
+		attribute.String("buy_intent.sku_id", skuID),
+		attribute.Int64("cache.ttl_ms", a.cfg.cacheTTL.Milliseconds()),
+	)
+
 	now := time.Now().UnixMilli()
 	a.cache.mu.RLock()
 	cached, ok := a.cache.entries[skuID]
 	a.cache.mu.RUnlock()
 	if ok && cached.expiresAtMs > now {
+		span.SetAttributes(
+			attribute.Bool("cache.hit", true),
+			attribute.Bool("buy_intent.seckill_enabled", cached.enabled),
+			attribute.Int("buy_intent.seckill_stock_limit", cached.stockLimit),
+		)
 		return cached, nil
 	}
-
-	ctx, span := a.tracer.Start(ctx, "buy_intent.lookup_seckill_sku")
-	defer span.End()
+	span.SetAttributes(attribute.Bool("cache.hit", false))
 
 	row := a.db.QueryRowContext(ctx, `
       select seckill_enabled, seckill_stock_limit
@@ -427,8 +505,14 @@ func (a *app) readSeckillConfig(ctx context.Context, skuID string) (cachedSeckil
 			a.cache.mu.Lock()
 			a.cache.entries[skuID] = cfg
 			a.cache.mu.Unlock()
+			span.SetAttributes(
+				attribute.Bool("buy_intent.seckill_enabled", false),
+				attribute.Int("buy_intent.seckill_stock_limit", 0),
+			)
 			return cfg, nil
 		}
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "lookup_failed")
 		return cachedSeckillConfig{}, err
 	}
 
@@ -440,6 +524,10 @@ func (a *app) readSeckillConfig(ctx context.Context, skuID string) (cachedSeckil
 	a.cache.mu.Lock()
 	a.cache.entries[skuID] = cfg
 	a.cache.mu.Unlock()
+	span.SetAttributes(
+		attribute.Bool("buy_intent.seckill_enabled", enabled),
+		attribute.Int("buy_intent.seckill_stock_limit", cfg.stockLimit),
+	)
 	return cfg, nil
 }
 
