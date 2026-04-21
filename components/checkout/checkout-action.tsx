@@ -144,7 +144,7 @@ export function CheckoutAction({
         message: messages.checkout.completing,
       });
 
-      await processProjections();
+      await waitForCheckoutIntentProjection(commandStatus.checkoutIntentId);
       await completeDemoCheckout(commandStatus.checkoutIntentId);
       await processProjections();
       const completedStatus = await waitForCheckoutStatus(commandStatus.checkoutIntentId);
@@ -225,6 +225,30 @@ async function processProjections() {
   if (!body.locked) {
     throw new Error("Projection processing is busy. Please try again.");
   }
+}
+
+async function waitForCheckoutIntentProjection(checkoutIntentId: string) {
+  const deadline = Date.now() + 30_000;
+
+  while (Date.now() < deadline) {
+    await processProjections();
+
+    const response = await fetch(`/api/checkout-intents/${checkoutIntentId}`, {
+      cache: "no-store",
+    });
+
+    if (response.ok) {
+      return (await response.json()) as CheckoutStatusResponse;
+    }
+
+    if (response.status !== 404) {
+      throw new Error(await readError(response));
+    }
+
+    await new Promise((resolve) => window.setTimeout(resolve, 250));
+  }
+
+  throw new Error("Checkout intent projection did not become available in time.");
 }
 
 async function completeDemoCheckout(checkoutIntentId: string) {
