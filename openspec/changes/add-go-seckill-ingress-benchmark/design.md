@@ -93,3 +93,46 @@ Interpretation:
 
 - The Go ingress materially increases admission throughput.
 - Downstream result throughput moves only slightly, which implies the bottleneck shifts from ingress into the existing Kafka/worker/result path.
+
+## Trace-guided bottleneck findings
+
+Recent end-to-end traces for the Go seckill ingress show that ingress runtime is no longer the dominant cost.
+
+Observed shape:
+
+- `go-seckill-ingress`
+  - request handling was on the order of `~50ms`
+  - `buy_intent.lookup_seckill_sku` was `~10-20ms`
+  - `buy_intent.publish_seckill_go` was `~30ms`
+- `worker-seckill`
+  - multiple `inventory.seckill.requested publish` spans appeared back-to-back at `~100ms` each
+  - this indicates retry/reroute cycles inside the topology
+- `worker-seckill-result-sink`
+  - `pg-pool.connect` was still visible and non-trivial
+
+Interpretation:
+
+- reroute/retry in the Kafka Streams worker is now a larger contributor to tail latency than the Go ingress itself
+- result-sink PG connection reuse also remains a meaningful cost
+- next optimization work should prioritize:
+  - reducing retry/reroute pressure
+  - improving result-sink connection reuse
+  - only then revisiting ingress publish tuning
+
+## Bun + Next.js experiment
+
+A local experiment attempted to run the existing Next.js app under Bun instead of Node to compare seckill HTTP ingress throughput.
+
+Results:
+
+- `bun --bun next start` initially failed because Next 16 startup touched `node:inspector.url()`, which Bun 1.0.23 does not implement
+- after a local non-repo patch to guard the `inspector.url()` call, the server reported `Ready`
+- however, the Bun-served app still timed out on both:
+  - `GET /products`
+  - `POST /api/buy-intents`
+
+Conclusion:
+
+- the current repository is not benchmark-ready on Bun
+- no valid Bun benchmark artifact was produced
+- Bun should currently be treated as an incompatible runtime experiment rather than a completed ingress comparison
