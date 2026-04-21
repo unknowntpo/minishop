@@ -32,24 +32,23 @@ export async function processStagedBuyIntentCommandBatch(
   input: { batchSize?: number; processConcurrency?: number },
   deps: ProcessStagedBuyIntentCommandBatchDeps,
 ): Promise<ProcessStagedBuyIntentCommandBatchResult> {
+  const batchSize = Math.max(1, input.batchSize ?? 100);
+  const processConcurrency = Math.max(1, input.processConcurrency ?? 1);
+  const batchId = deps.idGenerator.randomUuid();
+  const claimed = await deps.gateway.claimPendingBatch({ batchId, batchSize });
+  const batchParentContext = extractContextFromTraceCarrier(claimed[0]?.traceCarrier);
+
   return withSpan(
     "buy_intent.process_staged_batch",
     {
       attributes: {
-        "buy_intent.batch_size.requested": Math.max(1, input.batchSize ?? 100),
-        "buy_intent.process_concurrency": Math.max(1, input.processConcurrency ?? 1),
+        "buy_intent.batch_size.requested": batchSize,
+        "buy_intent.process_concurrency": processConcurrency,
+        "buy_intent.batch_id": batchId,
+        "buy_intent.claimed_count": claimed.length,
       },
     },
     async (batchSpan) => {
-      const batchSize = Math.max(1, input.batchSize ?? 100);
-      const processConcurrency = Math.max(1, input.processConcurrency ?? 1);
-      const batchId = deps.idGenerator.randomUuid();
-      const claimed = await deps.gateway.claimPendingBatch({ batchId, batchSize });
-      setSpanAttributes(batchSpan, {
-        "buy_intent.batch_id": batchId,
-        "buy_intent.claimed_count": claimed.length,
-      });
-
       await deps.gateway.ensureAcceptedBatch(
         claimed.map((row) => ({
           commandId: row.commandId,
@@ -205,6 +204,7 @@ export async function processStagedBuyIntentCommandBatch(
         duplicateCommandCount,
       };
     },
+    batchParentContext,
   );
 }
 

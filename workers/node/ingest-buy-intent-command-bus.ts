@@ -135,6 +135,7 @@ async function main() {
               })),
             );
           },
+          stagedBatch[0]?.parentContext,
         );
         for (const entry of stagedBatch) {
           await withSpan(
