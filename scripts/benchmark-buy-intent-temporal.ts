@@ -27,6 +27,7 @@ type BenchmarkConfig = {
   scenarioName: string;
   mode: "bypass";
   ingressSource: "http" | "direct_kafka";
+  benchmarkStyle: "burst" | "steady_state";
   createdTimeoutMs: number;
   resetStateBeforeRun: boolean;
   createdSource: "postgres" | "kafka_seckill_result";
@@ -39,6 +40,9 @@ type BenchmarkConfig = {
   appPublishLingerMs: number;
   producerLingerMs: number;
   producerBatchNumMessages: number;
+  steadyStateWarmupMs: number;
+  steadyStateMeasureMs: number;
+  steadyStateCooldownMs: number;
 };
 
 type AcceptResult = {
@@ -73,6 +77,19 @@ type SeckillCommandOutcome = {
     duplicate: boolean;
   };
   processedAt: string;
+};
+
+type SteadyStateStats = {
+  windowStartedAtMs: number;
+  windowEndedAtMs: number;
+  warmupDurationMs: number;
+  measureDurationMs: number;
+  cooldownDurationMs: number;
+  acceptedDuringWindow: number;
+  createdWithinWindow: number;
+  createdByDrainEnd: number;
+  acceptRequestsPerSecond: number;
+  createdThroughputPerSecond: number;
 };
 
 type CheckoutResult = {
@@ -167,39 +184,55 @@ async function main() {
     let paymentSignalResults: PaymentSignalResult[] = [];
     let cancelledResults: CheckoutResult[] = [];
     let acceptDurationMs = 0;
+    let steadyState: SteadyStateStats | null = null;
 
     try {
-      acceptResults =
-        config.ingressSource === "direct_kafka"
-          ? await publishSeckillRequestsDirectly(
-              directKafkaPublisher,
-              effectiveRequests,
-              config,
-            )
-          : await runWithConcurrency(
-              effectiveRequests,
-              config.httpConcurrency,
-              async (index) => createBuyIntent(index),
-            );
-      acceptDurationMs = performance.now() - acceptStartedAt;
+      let pendingCreatedCommandIds: string[] = [];
 
-      accepted = acceptResults.filter(
-        (result): result is AcceptResult & { commandId: string; acceptedAtMs: number } =>
-          result.ok &&
-          typeof result.commandId === "string" &&
-          typeof result.acceptedAtMs === "number",
-      );
+      if (config.benchmarkStyle === "steady_state") {
+        const steadyStateRun = await runSteadyStateSeckillBenchmark(
+          directKafkaPublisher,
+          seckillCollector,
+        );
+        acceptResults = steadyStateRun.acceptResults;
+        accepted = steadyStateRun.accepted;
+        createdResults = steadyStateRun.createdResults;
+        pendingCreatedCommandIds = steadyStateRun.pendingCreatedCommandIds;
+        steadyState = steadyStateRun.steadyState;
+        acceptDurationMs = config.steadyStateMeasureMs;
+      } else {
+        acceptResults =
+          config.ingressSource === "direct_kafka"
+            ? await publishSeckillRequestsDirectly(
+                directKafkaPublisher,
+                effectiveRequests,
+                config,
+              )
+            : await runWithConcurrency(
+                effectiveRequests,
+                config.httpConcurrency,
+                async (index) => createBuyIntent(index),
+              );
+        acceptDurationMs = performance.now() - acceptStartedAt;
 
-      if (accepted.length === 0) {
-        throw new Error("No benchmark requests were accepted.");
+        accepted = acceptResults.filter(
+          (result): result is AcceptResult & { commandId: string; acceptedAtMs: number } =>
+            result.ok &&
+            typeof result.commandId === "string" &&
+            typeof result.acceptedAtMs === "number",
+        );
+
+        if (accepted.length === 0) {
+          throw new Error("No benchmark requests were accepted.");
+        }
+
+        const createdBatch =
+          config.createdSource === "kafka_seckill_result"
+            ? await waitForCreatedSeckillOutcomes(seckillCollector, accepted)
+            : await waitForCreatedStatuses(pool, accepted);
+        createdResults = createdBatch.results;
+        pendingCreatedCommandIds = createdBatch.pendingCommandIds;
       }
-
-      const createdBatch =
-        config.createdSource === "kafka_seckill_result"
-          ? await waitForCreatedSeckillOutcomes(seckillCollector, accepted)
-          : await waitForCreatedStatuses(pool, accepted);
-      createdResults = createdBatch.results;
-      const pendingCreatedCommandIds = createdBatch.pendingCommandIds;
 
       const acceptedAtByCommandId = new Map(
         accepted.map((result) => [result.commandId, result.acceptedAtMs] as const),
@@ -281,6 +314,7 @@ async function main() {
             quantityPerIntent: 1,
             profilingEnabled: config.profilingEnabled,
             ingressSource: config.ingressSource,
+            benchmarkStyle: config.benchmarkStyle,
           },
           requestedBuyIntents: config.requests,
           effectiveBuyIntents: effectiveRequests,
@@ -291,8 +325,10 @@ async function main() {
           startingInventoryAvailable: inventory.available,
           mode: config.mode,
           ingressSource: config.ingressSource,
+          benchmarkStyle: config.benchmarkStyle,
         },
         kafka: buildKafkaReport(config, kafkaBefore, kafkaAfter),
+        steadyState,
         requestPath: {
           accepted: accepted.length,
           errors: acceptResults.length - accepted.length,
@@ -442,8 +478,10 @@ async function main() {
           startingInventoryAvailable: inventory.available,
           mode: config.mode,
           ingressSource: config.ingressSource,
+          benchmarkStyle: config.benchmarkStyle,
         },
         kafka: buildKafkaReport(config, kafkaBefore, kafkaAfter),
+        steadyState,
         requestPath: {
           accepted: accepted.length,
           errors: Math.max(acceptResults.length - accepted.length, 0),
@@ -635,6 +673,9 @@ async function startSeckillOutcomeCollector(config: BenchmarkConfig) {
         pendingCommandIds: [...pendingCommandIds],
       };
     },
+    getOutcome(commandId: string) {
+      return outcomes.get(commandId);
+    },
     async stop() {
       await consumer.disconnect().catch(() => undefined);
     },
@@ -749,6 +790,68 @@ async function publishSeckillRequestsDirectly(
   }
 
   return results;
+}
+
+async function publishSeckillRequestsDirectlyUntil(
+  publisher: Awaited<ReturnType<typeof startDirectSeckillRequestPublisher>> | null,
+  config: BenchmarkConfig,
+  durationMs: number,
+  collectResults: boolean,
+  startIndex = 0,
+) {
+  if (!publisher) {
+    throw new Error("Direct Kafka publisher is not initialized.");
+  }
+
+  const results: AcceptResult[] = [];
+  const deadline = performance.now() + durationMs;
+  let nextIndex = startIndex;
+
+  while (performance.now() < deadline) {
+    const batchRequests = Array.from({ length: config.directKafkaBatchSize }, () =>
+      buildDirectSeckillRequest(nextIndex++, config),
+    );
+    const requestStartedAtMs = performance.timeOrigin + performance.now();
+    const startedAt = performance.now();
+
+    try {
+      await publisher.publish(batchRequests);
+      const acceptedAtMs = performance.timeOrigin + performance.now();
+
+      if (collectResults) {
+        for (const request of batchRequests) {
+          results.push({
+            ok: true,
+            status: 202,
+            latencyMs: performance.now() - startedAt,
+            requestStartedAtMs,
+            commandId: request.command.command_id,
+            acceptedAtMs,
+          });
+        }
+      }
+    } catch (error) {
+      if (collectResults) {
+        const message = error instanceof Error ? error.message : "direct_kafka_publish_failed";
+
+        for (const request of batchRequests) {
+          results.push({
+            ok: false,
+            status: 0,
+            latencyMs: performance.now() - startedAt,
+            requestStartedAtMs,
+            commandId: request.command.command_id,
+            error: message,
+          });
+        }
+      }
+    }
+  }
+
+  return {
+    results,
+    nextIndex,
+  };
 }
 
 function buildDirectSeckillRequest(index: number, config: BenchmarkConfig): SeckillBuyIntentRequest {
@@ -889,6 +992,119 @@ async function waitForCreatedSeckillOutcomes(
   }
 
   return collector.waitForOutcomes(accepted, config.createdTimeoutMs);
+}
+
+async function runSteadyStateSeckillBenchmark(
+  directKafkaPublisher: Awaited<ReturnType<typeof startDirectSeckillRequestPublisher>> | null,
+  seckillCollector: Awaited<ReturnType<typeof startSeckillOutcomeCollector>> | null,
+) {
+  if (config.createdSource !== "kafka_seckill_result") {
+    throw new Error("steady_state benchmark style currently requires kafka_seckill_result.");
+  }
+
+  if (config.ingressSource === "direct_kafka") {
+    let nextIndex = 0;
+    await publishSeckillRequestsDirectlyUntil(
+      directKafkaPublisher,
+      config,
+      config.steadyStateWarmupMs,
+      false,
+      nextIndex,
+    ).then((result) => {
+      nextIndex = result.nextIndex;
+    });
+
+    const windowStartedAtMs = performance.timeOrigin + performance.now();
+    const measured = await publishSeckillRequestsDirectlyUntil(
+      directKafkaPublisher,
+      config,
+      config.steadyStateMeasureMs,
+      true,
+      nextIndex,
+    );
+    const windowEndedAtMs = performance.timeOrigin + performance.now();
+    nextIndex = measured.nextIndex;
+
+    await sleep(config.steadyStateCooldownMs);
+
+    const accepted = measured.results.filter(
+      (result): result is AcceptResult & { commandId: string; acceptedAtMs: number } =>
+        result.ok &&
+        typeof result.commandId === "string" &&
+        typeof result.acceptedAtMs === "number",
+    );
+    const createdBatch = await waitForCreatedSeckillOutcomes(seckillCollector, accepted);
+    const createdWithinWindow = createdBatch.results.filter(
+      (result) =>
+        typeof result.completedAtMs === "number" &&
+        result.completedAtMs >= windowStartedAtMs &&
+        result.completedAtMs <= windowEndedAtMs,
+    ).length;
+
+    return {
+      acceptResults: measured.results,
+      accepted,
+      createdResults: createdBatch.results,
+      pendingCreatedCommandIds: createdBatch.pendingCommandIds,
+      steadyState: {
+        windowStartedAtMs,
+        windowEndedAtMs,
+        warmupDurationMs: config.steadyStateWarmupMs,
+        measureDurationMs: config.steadyStateMeasureMs,
+        cooldownDurationMs: config.steadyStateCooldownMs,
+        acceptedDuringWindow: accepted.length,
+        createdWithinWindow,
+        createdByDrainEnd: createdBatch.results.length,
+        acceptRequestsPerSecond: ratePerSecond(accepted.length, config.steadyStateMeasureMs),
+        createdThroughputPerSecond: ratePerSecond(createdWithinWindow, config.steadyStateMeasureMs),
+      } satisfies SteadyStateStats,
+    };
+  }
+
+  await runWithConcurrencyUntil(config.httpConcurrency, config.steadyStateWarmupMs, async (index) =>
+    createBuyIntent(index),
+  );
+
+  const windowStartedAtMs = performance.timeOrigin + performance.now();
+  const measured = await runWithConcurrencyUntil(config.httpConcurrency, config.steadyStateMeasureMs, async (index) =>
+    createBuyIntent(index),
+  );
+  const windowEndedAtMs = performance.timeOrigin + performance.now();
+
+  await sleep(config.steadyStateCooldownMs);
+
+  const accepted = measured.results.filter(
+    (result): result is AcceptResult & { commandId: string; acceptedAtMs: number } =>
+      result.ok &&
+      typeof result.commandId === "string" &&
+      typeof result.acceptedAtMs === "number",
+  );
+  const createdBatch = await waitForCreatedSeckillOutcomes(seckillCollector, accepted);
+  const createdWithinWindow = createdBatch.results.filter(
+    (result) =>
+      typeof result.completedAtMs === "number" &&
+      result.completedAtMs >= windowStartedAtMs &&
+      result.completedAtMs <= windowEndedAtMs,
+  ).length;
+
+  return {
+    acceptResults: measured.results,
+    accepted,
+    createdResults: createdBatch.results,
+    pendingCreatedCommandIds: createdBatch.pendingCommandIds,
+    steadyState: {
+      windowStartedAtMs,
+      windowEndedAtMs,
+      warmupDurationMs: config.steadyStateWarmupMs,
+      measureDurationMs: config.steadyStateMeasureMs,
+      cooldownDurationMs: config.steadyStateCooldownMs,
+      acceptedDuringWindow: accepted.length,
+      createdWithinWindow,
+      createdByDrainEnd: createdBatch.results.length,
+      acceptRequestsPerSecond: ratePerSecond(accepted.length, config.steadyStateMeasureMs),
+      createdThroughputPerSecond: ratePerSecond(createdWithinWindow, config.steadyStateMeasureMs),
+    } satisfies SteadyStateStats,
+  };
 }
 
 async function waitForCheckoutStatus(
@@ -1319,6 +1535,30 @@ async function runWithConcurrency<T>(
   return results;
 }
 
+async function runWithConcurrencyUntil<T>(
+  concurrency: number,
+  durationMs: number,
+  taskFor: (index: number) => Promise<T>,
+) {
+  const results: T[] = [];
+  const deadline = performance.now() + durationMs;
+  let nextIndex = 0;
+
+  async function worker() {
+    while (performance.now() < deadline) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      results.push(await taskFor(currentIndex));
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.max(1, concurrency) }, () => worker()));
+  return {
+    results,
+    totalIssued: nextIndex,
+  };
+}
+
 async function writeBenchmarkArtifact(report: object) {
   const directory = path.join(config.resultsDir, config.scenarioName);
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
@@ -1495,6 +1735,8 @@ function readConfig(): BenchmarkConfig {
     ingressSource:
       (process.env.BENCHMARK_INGRESS_SOURCE as BenchmarkConfig["ingressSource"] | undefined) ??
       "http",
+    benchmarkStyle:
+      (process.env.BENCHMARK_STYLE as BenchmarkConfig["benchmarkStyle"] | undefined) ?? "burst",
     createdTimeoutMs: readPositiveIntegerEnv("BENCHMARK_CREATED_TIMEOUT_MS", 60_000),
     resetStateBeforeRun: readBooleanWithDefault("BENCHMARK_RESET_STATE", true),
     createdSource,
@@ -1512,6 +1754,9 @@ function readConfig(): BenchmarkConfig {
       "KAFKA_SECKILL_CLIENT_BATCH_NUM_MESSAGES",
       10000,
     ),
+    steadyStateWarmupMs: readPositiveIntegerEnv("BENCHMARK_STEADY_STATE_WARMUP_MS", 5_000),
+    steadyStateMeasureMs: readPositiveIntegerEnv("BENCHMARK_STEADY_STATE_MEASURE_MS", 15_000),
+    steadyStateCooldownMs: readPositiveIntegerEnv("BENCHMARK_STEADY_STATE_COOLDOWN_MS", 5_000),
   };
 }
 
@@ -1600,6 +1845,7 @@ function buildKafkaReport(
     client: config.kafkaClient,
     brokers: config.kafkaBrokers,
     ingressSource: config.ingressSource,
+    benchmarkStyle: config.benchmarkStyle,
     requestTopic: config.seckillRequestTopic,
     resultTopic: config.seckillResultTopic,
     dlqTopic: config.seckillDlqTopic,
@@ -1609,6 +1855,14 @@ function buildKafkaReport(
       maxProbe: config.seckillMaxProbe,
       directKafkaBatchSize:
         config.ingressSource === "direct_kafka" ? config.directKafkaBatchSize : undefined,
+      steadyState:
+        config.benchmarkStyle === "steady_state"
+          ? {
+              warmupMs: config.steadyStateWarmupMs,
+              measureMs: config.steadyStateMeasureMs,
+              cooldownMs: config.steadyStateCooldownMs,
+            }
+          : undefined,
     },
     appPublish: {
       batchSize: config.appPublishBatchSize,
