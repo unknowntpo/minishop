@@ -22,12 +22,17 @@ import org.apache.kafka.streams.processor.api.Record
 import org.apache.kafka.streams.state.KeyValueStore
 import org.apache.kafka.streams.state.Stores
 import org.slf4j.LoggerFactory
+import java.lang.management.ManagementFactory
 import java.net.URI
 import java.sql.DriverManager
 import java.time.Instant
 import java.util.Properties
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
+import javax.management.ObjectName
 
 private val mapper = jacksonObjectMapper()
 private val requestReader = mapper.readerFor(SeckillBuyIntentRequest::class.java)
@@ -39,6 +44,7 @@ private const val INVENTORY_STORE_NAME = "inventory-store"
 private const val DEDUPE_STORE_NAME = "dedupe-store"
 private const val RETRY_KEY_PREFIX = "retry|"
 private const val RESULT_KEY_PREFIX = "result|"
+private val bucketMetricsRegistry = SeckillBucketMetricsRegistry()
 
 fun main() {
     val config = AppConfig.fromEnv()
@@ -208,11 +214,18 @@ class SeckillDecisionProcessor(
 
     override fun process(record: Record<String, String>) {
         val request = requestReader.readValue<SeckillBuyIntentRequest>(record.value()).normalized()
+        val bucketMetrics = bucketMetricsRegistry.forBucket(request.sku_id, request.bucket_id)
+        if (request.attempt == 0) {
+            bucketMetrics.incrementPrimaryRequests()
+        } else {
+            bucketMetrics.incrementRetriedRequests()
+        }
         val dedupeKey = request.command.idempotency_key ?: request.command.command_id
         val storedResult = dedupeStore.get(dedupeKey)?.let { decodeStoredResult(it, request) }
         val processedAt = Instant.now().toString()
 
         if (storedResult != null) {
+            bucketMetrics.incrementDedupeHits()
             val duplicateResult = storedResult.copy(
                 commandId = request.command.command_id,
                 correlationId = request.command.correlation_id,
@@ -250,6 +263,7 @@ class SeckillDecisionProcessor(
         if (state.configuredStockLimit != bucketStockLimit) {
             state = state.copy(configuredStockLimit = bucketStockLimit)
         }
+        bucketMetrics.updateState(state)
 
         val effectiveRemaining = minOf(
             state.projectionAvailableRemaining,
@@ -264,6 +278,7 @@ class SeckillDecisionProcessor(
                     acceptedUnits = state.acceptedUnits + request.quantity,
                 )
                 state = acceptedState
+                bucketMetrics.updateState(state)
                 val result = SeckillCommandResult(
                     commandId = request.command.command_id,
                     correlationId = request.command.correlation_id,
@@ -278,12 +293,14 @@ class SeckillDecisionProcessor(
                 )
                 inventoryStore.put(record.key(), encodeInventoryState(state))
                 dedupeStore.put(dedupeKey, encodeStoredResult(result))
+                bucketMetrics.incrementReserveTotal()
                 forwardFinalOutcome(record, request, result, processedAt)
                 return
         }
 
         if (request.attempt + 1 < request.max_probe && request.bucket_count > 1) {
             val nextBucketId = (request.primary_bucket_id + request.attempt + 1) % request.bucket_count
+            bucketMetrics.incrementRetryScheduled()
             val retryRequest = request.copy(
                 bucket_id = nextBucketId,
                 attempt = request.attempt + 1,
@@ -306,6 +323,7 @@ class SeckillDecisionProcessor(
             duplicate = false,
         )
         dedupeStore.put(dedupeKey, encodeStoredResult(result))
+        bucketMetrics.incrementRejectTotal()
         forwardFinalOutcome(record, request, result, processedAt)
     }
 
@@ -325,6 +343,7 @@ class SeckillDecisionProcessor(
         processedAt: String,
     ) {
         val processingKey = request.processing_key ?: buildProcessingKey(request.sku_id, request.bucket_id)
+        bucketMetricsRegistry.forBucket(request.sku_id, request.bucket_id).incrementResultTotal()
         context().forward(
             record
                 .withKey("$RESULT_KEY_PREFIX$processingKey")
@@ -346,6 +365,109 @@ class SeckillDecisionProcessor(
                 )
         )
     }
+}
+
+interface SeckillBucketMetricsMBean {
+    fun getPrimaryRequestsTotal(): Long
+    fun getRetriedRequestsTotal(): Long
+    fun getRetryScheduledTotal(): Long
+    fun getResultTotal(): Long
+    fun getReserveTotal(): Long
+    fun getRejectTotal(): Long
+    fun getDedupeHitsTotal(): Long
+    fun getProjectionAvailableRemaining(): Int
+    fun getConfiguredStockLimit(): Int
+    fun getAcceptedUnits(): Int
+    fun getRemaining(): Int
+}
+
+class SeckillBucketMetrics(
+    private val skuId: String,
+    private val bucketId: Int,
+) : SeckillBucketMetricsMBean {
+    private val primaryRequestsTotal = AtomicLong()
+    private val retriedRequestsTotal = AtomicLong()
+    private val retryScheduledTotal = AtomicLong()
+    private val resultTotal = AtomicLong()
+    private val reserveTotal = AtomicLong()
+    private val rejectTotal = AtomicLong()
+    private val dedupeHitsTotal = AtomicLong()
+    private val projectionAvailableRemaining = AtomicInteger()
+    private val configuredStockLimit = AtomicInteger()
+    private val acceptedUnits = AtomicInteger()
+    private val remaining = AtomicInteger()
+
+    fun register(): SeckillBucketMetrics {
+        val server = ManagementFactory.getPlatformMBeanServer()
+        val objectName = ObjectName(
+            "dev.minishop.seckill:type=BucketMetrics,sku=${ObjectName.quote(skuId)},bucket=${bucketId.toString().padStart(2, '0')}",
+        )
+        if (!server.isRegistered(objectName)) {
+            server.registerMBean(this, objectName)
+        }
+        return this
+    }
+
+    fun incrementPrimaryRequests() {
+        primaryRequestsTotal.incrementAndGet()
+    }
+
+    fun incrementRetriedRequests() {
+        retriedRequestsTotal.incrementAndGet()
+    }
+
+    fun incrementRetryScheduled() {
+        retryScheduledTotal.incrementAndGet()
+    }
+
+    fun incrementResultTotal() {
+        resultTotal.incrementAndGet()
+    }
+
+    fun incrementReserveTotal() {
+        reserveTotal.incrementAndGet()
+    }
+
+    fun incrementRejectTotal() {
+        rejectTotal.incrementAndGet()
+    }
+
+    fun incrementDedupeHits() {
+        dedupeHitsTotal.incrementAndGet()
+    }
+
+    fun updateState(state: SeckillInventoryState) {
+        projectionAvailableRemaining.set(state.projectionAvailableRemaining)
+        configuredStockLimit.set(state.configuredStockLimit)
+        acceptedUnits.set(state.acceptedUnits)
+        remaining.set(
+            minOf(
+                state.projectionAvailableRemaining,
+                (state.configuredStockLimit - state.acceptedUnits).coerceAtLeast(0),
+            ),
+        )
+    }
+
+    override fun getPrimaryRequestsTotal(): Long = primaryRequestsTotal.get()
+    override fun getRetriedRequestsTotal(): Long = retriedRequestsTotal.get()
+    override fun getRetryScheduledTotal(): Long = retryScheduledTotal.get()
+    override fun getResultTotal(): Long = resultTotal.get()
+    override fun getReserveTotal(): Long = reserveTotal.get()
+    override fun getRejectTotal(): Long = rejectTotal.get()
+    override fun getDedupeHitsTotal(): Long = dedupeHitsTotal.get()
+    override fun getProjectionAvailableRemaining(): Int = projectionAvailableRemaining.get()
+    override fun getConfiguredStockLimit(): Int = configuredStockLimit.get()
+    override fun getAcceptedUnits(): Int = acceptedUnits.get()
+    override fun getRemaining(): Int = remaining.get()
+}
+
+class SeckillBucketMetricsRegistry {
+    private val metrics = ConcurrentHashMap<String, SeckillBucketMetrics>()
+
+    fun forBucket(skuId: String, bucketId: Int): SeckillBucketMetrics =
+        metrics.computeIfAbsent("$skuId#$bucketId") {
+            SeckillBucketMetrics(skuId, bucketId).register()
+        }
 }
 
 @JsonIgnoreProperties(ignoreUnknown = true)

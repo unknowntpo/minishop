@@ -7,3 +7,71 @@ whitelistObjectNames:
   - "kafka.consumer:*"
   - "kafka.producer:*"
   - "java.lang:*"
+  - "dev.minishop.seckill:*"
+rules:
+  - pattern: 'dev.minishop.seckill<type=BucketMetrics, sku="([^"]+)", bucket=([^,]+)><>PrimaryRequestsTotal'
+    name: minishop_seckill_bucket_primary_requests_total
+    labels:
+      sku: "$1"
+      bucket: "$2"
+    type: COUNTER
+  - pattern: 'dev.minishop.seckill<type=BucketMetrics, sku="([^"]+)", bucket=([^,]+)><>RetriedRequestsTotal'
+    name: minishop_seckill_bucket_retried_requests_total
+    labels:
+      sku: "$1"
+      bucket: "$2"
+    type: COUNTER
+  - pattern: 'dev.minishop.seckill<type=BucketMetrics, sku="([^"]+)", bucket=([^,]+)><>RetryScheduledTotal'
+    name: minishop_seckill_bucket_retry_scheduled_total
+    labels:
+      sku: "$1"
+      bucket: "$2"
+    type: COUNTER
+  - pattern: 'dev.minishop.seckill<type=BucketMetrics, sku="([^"]+)", bucket=([^,]+)><>ResultTotal'
+    name: minishop_seckill_bucket_result_total
+    labels:
+      sku: "$1"
+      bucket: "$2"
+    type: COUNTER
+  - pattern: 'dev.minishop.seckill<type=BucketMetrics, sku="([^"]+)", bucket=([^,]+)><>ReserveTotal'
+    name: minishop_seckill_bucket_reserve_total
+    labels:
+      sku: "$1"
+      bucket: "$2"
+    type: COUNTER
+  - pattern: 'dev.minishop.seckill<type=BucketMetrics, sku="([^"]+)", bucket=([^,]+)><>RejectTotal'
+    name: minishop_seckill_bucket_reject_total
+    labels:
+      sku: "$1"
+      bucket: "$2"
+    type: COUNTER
+  - pattern: 'dev.minishop.seckill<type=BucketMetrics, sku="([^"]+)", bucket=([^,]+)><>DedupeHitsTotal'
+    name: minishop_seckill_bucket_dedupe_hits_total
+    labels:
+      sku: "$1"
+      bucket: "$2"
+    type: COUNTER
+  - pattern: 'dev.minishop.seckill<type=BucketMetrics, sku="([^"]+)", bucket=([^,]+)><>ProjectionAvailableRemaining'
+    name: minishop_seckill_bucket_projection_available_remaining
+    labels:
+      sku: "$1"
+      bucket: "$2"
+    type: GAUGE
+  - pattern: 'dev.minishop.seckill<type=BucketMetrics, sku="([^"]+)", bucket=([^,]+)><>ConfiguredStockLimit'
+    name: minishop_seckill_bucket_configured_stock_limit
+    labels:
+      sku: "$1"
+      bucket: "$2"
+    type: GAUGE
+  - pattern: 'dev.minishop.seckill<type=BucketMetrics, sku="([^"]+)", bucket=([^,]+)><>AcceptedUnits'
+    name: minishop_seckill_bucket_accepted_units
+    labels:
+      sku: "$1"
+      bucket: "$2"
+    type: GAUGE
+  - pattern: 'dev.minishop.seckill<type=BucketMetrics, sku="([^"]+)", bucket=([^,]+)><>Remaining'
+    name: minishop_seckill_bucket_remaining
+    labels:
+      sku: "$1"
+      bucket: "$2"
+    type: GAUGE

@@ -281,6 +281,158 @@
         "x": 0,
         "y": 31
       },
+      "id": 21,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (bucket) (rate(minishop_seckill_bucket_primary_requests_total[5m]))",
+          "legendFormat": "primary bucket {{bucket}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (bucket) (rate(minishop_seckill_bucket_retried_requests_total[5m]))",
+          "legendFormat": "retried bucket {{bucket}}",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (bucket) (rate(minishop_seckill_bucket_result_total[5m]))",
+          "legendFormat": "result bucket {{bucket}}",
+          "refId": "C"
+        }
+      ],
+      "title": "Per-Bucket Request, Retry, and Result Rates",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 31
+      },
+      "id": 22,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max by (bucket) (minishop_seckill_bucket_remaining)",
+          "legendFormat": "remaining {{bucket}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max by (bucket) (minishop_seckill_bucket_accepted_units)",
+          "legendFormat": "accepted {{bucket}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Per-Bucket Remaining and Accepted Units",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 39
+      },
+      "id": 23,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (bucket) (rate(minishop_seckill_bucket_retried_requests_total[5m])) / clamp_min(sum by (bucket) (rate(minishop_seckill_bucket_primary_requests_total[5m]) + rate(minishop_seckill_bucket_retried_requests_total[5m])), 0.0001)",
+          "legendFormat": "retry ratio {{bucket}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (bucket) (rate(minishop_seckill_bucket_result_total[5m])) / clamp_min(sum by (bucket) (rate(minishop_seckill_bucket_primary_requests_total[5m]) + rate(minishop_seckill_bucket_retried_requests_total[5m])), 0.0001)",
+          "legendFormat": "result ratio {{bucket}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Per-Bucket Retry and Finalization Ratios",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 47
+      },
       "id": 6,
       "options": {
         "legend": {
@@ -335,7 +487,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 31
+        "y": 47
       },
       "id": 7,
       "options": {

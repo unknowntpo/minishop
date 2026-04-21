@@ -170,6 +170,77 @@ Instead it relies on:
 
 This favors effectively-once business outcomes over stricter and more expensive transport guarantees.
 
+### Seckill bucket routing observation
+
+The Kafka-first seckill spike introduced a hot-key mitigation layer by splitting one hot SKU into multiple physical bucket keys:
+
+- `sku_hot_001#00`
+- `sku_hot_001#01`
+- ...
+- `sku_hot_001#15`
+
+The current routing algorithm chooses the initial bucket with a deterministic hash:
+
+- `primary_bucket_id = hash(idempotency_key ?? command_id) % bucket_count`
+
+The worker then linearly probes subsequent buckets on reject until `max_probe` is exhausted.
+
+The first useful observation from production-like benchmark data is that the primary hash itself does **not** appear badly skewed. A one-off topic-window analysis over the benchmark run `buy-intent-hot-seckill-debug` showed:
+
+- request-topic records distributed across all 16 buckets in a narrow band of `243..257` records each
+- result-topic records distributed across all 16 buckets in a narrow band of `59..66` records each
+
+This means the current problem is not best described as "the hash function sent all traffic to a few buckets." The stronger evidence is:
+
+- `requestTopicOffsets.delta = 4210`
+- `resultTopicOffsets.delta = 1174`
+- `retry/input ratio ≈ 0.75`
+
+So the current retry pressure is more consistent with **spillover caused by the probe algorithm** than with obvious initial bucket imbalance. In other words:
+
+- initial traffic appears reasonably balanced
+- once some buckets become locally exhausted, the linear fallback path amplifies pressure on subsequent buckets
+- retry traffic becomes a major share of all work even though the initial distribution looked healthy
+
+This changes the optimization direction. The next routing experiments should prefer:
+
+- better fallback selection, not just a different one-choice hash
+- candidate-bucket selection such as two-choice or d-choice routing
+- explicit measurement of retry pressure per bucket before replacing the current routing algorithm
+
+### Per-bucket observability limitation
+
+Current Grafana and Prometheus metrics are sufficient to observe:
+
+- input consume rate
+- retry write rate
+- result write rate
+- changelog write rate
+- partition lag
+
+But they do **not** directly expose per-bucket consume rate, because the bucket identity currently exists in:
+
+- the Kafka message key suffix, such as `sku_hot_001#07`
+- the request payload fields `primary_bucket_id` and `bucket_id`
+
+and not as a built-in Prometheus label in the exported Kafka Streams metrics.
+
+Today, per-bucket insight can be recovered only through ad hoc analysis, for example:
+
+- consuming a benchmark time window from `inventory.seckill.requested`
+- grouping recent keys by bucket suffix
+- comparing request-topic counts with result-topic counts
+
+That approach is good enough for debugging a spike, but it is not a durable runtime metric.
+
+If per-bucket heat becomes an optimization requirement, the design should add one of:
+
+- benchmark-only topic isolation plus post-run key aggregation
+- an internal aggregation stream that emits bucket-level counters
+- custom metrics that export bucket-level retry/success totals
+
+The design should avoid adding bucket IDs to every general-purpose dashboard until it is clear that bucket-level heat, rather than overall retry ratio, is the bottleneck that must be operated continuously.
+
 ## Target Dataflow
 
 ```text
