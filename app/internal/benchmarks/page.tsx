@@ -934,113 +934,174 @@ function RunEvidenceComparison({ runs }: { runs: BenchmarkRun[] }) {
 }
 
 function evidenceColumnsForRuns(runs: BenchmarkRun[]) {
-  const columns = new Map<string, { key: string; label: string; count: number }>();
+  const columns = new Map<string, { key: string; label: string; count: number; values: Set<string> }>();
 
   for (const run of runs) {
     for (const entry of evidenceEntriesForRun(run)) {
-      const current = columns.get(entry.key) ?? { key: entry.key, label: entry.label, count: 0 };
+      const current = columns.get(entry.key) ?? {
+        key: entry.key,
+        label: entry.label,
+        count: 0,
+        values: new Set<string>(),
+      };
       current.count += 1;
+      current.values.add(entry.value);
       columns.set(entry.key, current);
     }
   }
 
-  return sortEvidenceEntries([...columns.values()].filter((entry) => entry.count > 0));
+  return [...columns.values()]
+    .filter((entry) => entry.count > 0)
+    .filter((entry) => entry.values.size > 1 || entry.count < runs.length)
+    .sort((left, right) => left.label.localeCompare(right.label));
 }
 
 function evidenceEntriesForRun(run: BenchmarkRun) {
-  const entries = [
-    evidenceEntry("http_status", "HTTP status", formatDistribution(run.requestPath?.statusDistribution)),
-    evidenceEntry("errors", "Errors", formatDistribution(run.requestPath?.errorDistribution)),
-    evidenceEntry("event_types", "Event types", formatDistribution(run.eventStore?.eventTypeDistribution)),
-    evidenceEntry("checkout_status", "Checkout status", formatDistribution(readCheckoutStatusDistribution(run))),
-    evidenceEntry("inventory", "Inventory", formatInventorySummary(run)),
-    evidenceEntry("idempotency", "Idempotency", formatIdempotencySummary(run)),
-    evidenceEntry("created_boundary", "Created boundary", run.kafka?.createdBoundary ?? "n/a"),
-    evidenceEntry(
-      "request_topic_delta",
-      "Request topic delta",
-      typeof run.kafka?.requestTopicOffsets?.delta === "number"
-        ? formatNumber(run.kafka.requestTopicOffsets.delta)
-        : "n/a",
-    ),
-    evidenceEntry(
-      "result_topic_delta",
-      "Result topic delta",
-      typeof run.kafka?.resultTopicOffsets?.delta === "number"
-        ? formatNumber(run.kafka.resultTopicOffsets.delta)
-        : "n/a",
-    ),
-    evidenceEntry(
-      "dlq_topic_delta",
-      "DLQ delta",
-      typeof run.kafka?.dlqTopicOffsets?.delta === "number"
-        ? formatNumber(run.kafka.dlqTopicOffsets.delta)
-        : "n/a",
-    ),
-    evidenceEntry(
-      "duplicates",
-      "Duplicates",
-      typeof run.commandLifecycle?.duplicates === "number"
-        ? formatNumber(run.commandLifecycle.duplicates)
-        : "n/a",
-    ),
-    evidenceEntry(
-      "pending",
-      "Pending",
-      typeof run.commandLifecycle?.pending === "number"
-        ? formatNumber(run.commandLifecycle.pending)
-        : "n/a",
-    ),
-  ];
+  const result = new Map<string, { key: string; label: string; value: string }>();
 
-  return entries.filter(
-    (entry): entry is { key: string; label: string; value: string } =>
-      Boolean(entry && entry.value && entry.value !== "n/a"),
-  );
-}
+  for (const [key, value] of Object.entries(run)) {
+    if (isExcludedEvidenceRootKey(key)) {
+      continue;
+    }
 
-function evidenceEntry(key: string, label: string, value: string) {
-  if (!value || value === "n/a") {
-    return null;
+    collectEvidenceEntries(value, [key], result);
   }
 
-  return { key, label, value };
+  return [...result.values()];
 }
 
-function sortEvidenceEntries<T extends { key: string }>(entries: T[]) {
-  const order = [
-    "http_status",
-    "errors",
-    "event_types",
-    "checkout_status",
-    "inventory",
-    "idempotency",
-    "created_boundary",
-    "request_topic_delta",
-    "result_topic_delta",
-    "dlq_topic_delta",
-    "duplicates",
-    "pending",
-  ];
+function collectEvidenceEntries(
+  value: unknown,
+  path: string[],
+  result: Map<string, { key: string; label: string; value: string }>,
+) {
+  if (value === null || typeof value === "undefined") {
+    return;
+  }
 
-  return [...entries].sort((left, right) => {
-    const leftIndex = order.indexOf(left.key);
-    const rightIndex = order.indexOf(right.key);
-
-    if (leftIndex === -1 && rightIndex === -1) {
-      return left.key.localeCompare(right.key);
+  if (typeof value === "string") {
+    if (value.trim().length === 0) {
+      return;
     }
 
-    if (leftIndex === -1) {
-      return 1;
+    result.set(path.join("."), {
+      key: path.join("."),
+      label: formatEvidenceLabel(path),
+      value,
+    });
+    return;
+  }
+
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      return;
     }
 
-    if (rightIndex === -1) {
-      return -1;
+    result.set(path.join("."), {
+      key: path.join("."),
+      label: formatEvidenceLabel(path),
+      value: formatEvidenceNumber(path, value),
+    });
+    return;
+  }
+
+  if (typeof value === "boolean") {
+    result.set(path.join("."), {
+      key: path.join("."),
+      label: formatEvidenceLabel(path),
+      value: value ? "true" : "false",
+    });
+    return;
+  }
+
+  if (Array.isArray(value)) {
+    const primitiveValues = value.filter(
+      (entry) =>
+        typeof entry === "string" || typeof entry === "number" || typeof entry === "boolean",
+    );
+
+    if (primitiveValues.length > 0) {
+      result.set(path.join("."), {
+        key: path.join("."),
+        label: formatEvidenceLabel(path),
+        value: primitiveValues.map((entry) => String(entry)).join(", "),
+      });
+      return;
     }
 
-    return leftIndex - rightIndex;
-  });
+    if (value.length > 0) {
+      result.set(path.join("."), {
+        key: path.join("."),
+        label: formatEvidenceLabel(path),
+        value: `${formatNumber(value.length)} item${value.length === 1 ? "" : "s"}`,
+      });
+    }
+
+    return;
+  }
+
+  if (typeof value === "object") {
+    const entries = Object.entries(value);
+
+    if (entries.length === 0) {
+      return;
+    }
+
+    if (entries.every(([, nestedValue]) => typeof nestedValue === "number")) {
+      const distribution = formatDistribution(value as Record<string, number>);
+
+      if (distribution !== "n/a") {
+        result.set(path.join("."), {
+          key: path.join("."),
+          label: formatEvidenceLabel(path),
+          value: distribution,
+        });
+      }
+
+      return;
+    }
+
+    for (const [key, nestedValue] of entries) {
+      collectEvidenceEntries(nestedValue, [...path, key], result);
+    }
+  }
+}
+
+function isExcludedEvidenceRootKey(key: string) {
+  return [
+    "artifactFile",
+    "runId",
+    "scenarioName",
+    "scenarioFamily",
+    "scenarioTags",
+    "measurements",
+    "series",
+    "startedAt",
+    "finishedAt",
+    "pass",
+  ].includes(key);
+}
+
+function formatEvidenceLabel(path: string[]) {
+  return path
+    .filter((segment) => !["scenario", "conditions", "environment", "kafka"].includes(segment))
+    .map((segment) =>
+      segment
+        .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+        .replace(/[_-]+/g, " ")
+        .toLowerCase(),
+    )
+    .join(" ");
+}
+
+function formatEvidenceNumber(path: string[], value: number) {
+  const label = path[path.length - 1] ?? "";
+
+  if (label.toLowerCase().includes("latency") || label.endsWith("Ms")) {
+    return formatMilliseconds(value);
+  }
+
+  return formatNumber(value);
 }
 
 function axisLabelForUnit(unit: string) {
