@@ -933,14 +933,14 @@ function SelectedRunPanel({
         }}
       />
 
-      {run.kafka ? (
-        <>
-          <p className="eyebrow" style={{ marginTop: "1.5rem" }}>
-            Kafka
-          </p>
-          <KeyValueList values={flattenDetailValues(run.kafka)} />
-        </>
-      ) : null}
+      <DetailSections
+        sections={[
+          { title: "Scenario", value: run.scenario },
+          { title: "Environment", value: run.environment },
+          { title: "Conditions", value: run.conditions },
+          { title: "Kafka", value: run.kafka },
+        ]}
+      />
 
       <div className="benchmark-selected-run-actions">
         {profileFile ? (
@@ -1260,6 +1260,36 @@ function KeyValueList({ values }: { values: Record<string, string> }) {
         </div>
       ))}
     </dl>
+  );
+}
+
+function DetailSections({
+  sections,
+}: {
+  sections: Array<{ title: string; value: unknown }>;
+}) {
+  const nonEmptySections = sections
+    .map((section) => ({
+      ...section,
+      values: flattenDetailValues(section.value),
+    }))
+    .filter((section) => Object.keys(section.values).length > 0);
+
+  if (nonEmptySections.length === 0) {
+    return null;
+  }
+
+  return (
+    <>
+      {nonEmptySections.map((section, index) => (
+        <Fragment key={section.title}>
+          <p className="eyebrow" style={{ marginTop: index === 0 ? "1.5rem" : "1rem" }}>
+            {section.title}
+          </p>
+          <KeyValueList values={section.values} />
+        </Fragment>
+      ))}
+    </>
   );
 }
 
