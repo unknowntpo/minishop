@@ -103,6 +103,24 @@ type BenchmarkMeasurement = {
   interpretation?: string;
 };
 
+type BenchmarkSeries = {
+  key: string;
+  label: string;
+  xKey: string;
+  xLabel: string;
+  xUnit: string;
+  yUnit: string;
+  points: Array<{
+    x: number | string;
+    y: number;
+    runId?: string;
+    pointLabel?: string;
+  }>;
+  definition?: string;
+  calculation?: string;
+  interpretation?: string;
+};
+
 type CheckoutResult = {
   checkoutIntentId: string;
   status: string;
@@ -411,8 +429,10 @@ async function main() {
             }
           : {}),
         measurements: [] as BenchmarkMeasurement[],
+        series: [] as BenchmarkSeries[],
       };
       report.measurements = buildMeasurementsFromReport(report);
+      report.series = buildSeriesFromReport(report);
 
       const artifactPath = await writeBenchmarkArtifact(report);
 
@@ -570,8 +590,10 @@ async function main() {
               : "Intent creation benchmark failure happened after partial progress; created-only throughput remains the primary signal.",
         ],
         measurements: [] as BenchmarkMeasurement[],
+        series: [] as BenchmarkSeries[],
       };
       report.measurements = buildMeasurementsFromReport(report);
+      report.series = buildSeriesFromReport(report);
       const artifactPath = await writeBenchmarkArtifact(report);
       console.error(`Benchmark artifact written to ${artifactPath}`);
       throw error;
@@ -1528,7 +1550,9 @@ function countBy<T>(values: T[], keyFor: (value: T) => string) {
 }
 
 function buildMeasurementsFromReport(report: {
+  runId: string;
   scenarioName?: string;
+  scenarioTags?: Record<string, string | number | boolean>;
   scenario?: { requestedBuyClicks?: number };
   kafka?: { createdBoundary?: string };
   conditions?: {
@@ -1655,6 +1679,39 @@ function buildMeasurementsFromReport(report: {
   }
 
   return measurements;
+}
+
+function buildSeriesFromReport(report: {
+  runId: string;
+  scenarioTags?: Record<string, string | number | boolean>;
+  measurements?: BenchmarkMeasurement[];
+}): BenchmarkSeries[] {
+  const measurements = report.measurements ?? [];
+  const concurrency = report.scenarioTags?.concurrency;
+
+  if (typeof concurrency !== "number" || !Number.isFinite(concurrency) || concurrency <= 0) {
+    return [];
+  }
+
+  return measurements.map((measurement) => ({
+    key: `measurement.${measurement.key}.by_concurrency`,
+    label: measurement.label,
+    xKey: "concurrency",
+    xLabel: "concurrency",
+    xUnit: "",
+    yUnit: measurement.unit,
+    points: [
+      {
+        x: concurrency,
+        y: measurement.value,
+        runId: report.runId,
+        pointLabel: report.runId,
+      },
+    ],
+    definition: measurement.definition,
+    calculation: measurement.calculation,
+    interpretation: measurement.interpretation,
+  }));
 }
 
 function chunked<T>(values: T[], size: number) {
@@ -1935,6 +1992,7 @@ function readScenarioFamily(config: BenchmarkConfig) {
 
 function buildScenarioTags(config: BenchmarkConfig) {
   const tags: Record<string, string | number | boolean> = {
+    concurrency: config.httpConcurrency,
     ingress: config.ingressSource,
     style: config.benchmarkStyle,
   };

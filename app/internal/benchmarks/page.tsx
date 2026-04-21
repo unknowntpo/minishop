@@ -24,6 +24,23 @@ type BenchmarkReport = {
     calculation?: string;
     interpretation?: string;
   }>;
+  series?: Array<{
+    key?: string;
+    label?: string;
+    xKey?: string;
+    xLabel?: string;
+    xUnit?: string;
+    yUnit?: string;
+    points?: Array<{
+      x?: number | string;
+      y?: number;
+      runId?: string;
+      pointLabel?: string;
+    }>;
+    definition?: string;
+    calculation?: string;
+    interpretation?: string;
+  }>;
   startedAt?: string;
   finishedAt?: string;
   pass?: boolean;
@@ -606,16 +623,16 @@ function RunComparison({
       </div>
 
       <div className="benchmark-comparison-grid">
-        {measurementDefinitionsForRuns(runs).map((measurement) => (
+        {comparisonDefinitionsForRuns(runs).map((measurement) => (
           <ComparisonChart
             key={measurement.key}
             definition={measurement.definition ?? ""}
             calculation={measurement.calculation ?? ""}
             interpretation={measurement.interpretation ?? ""}
             label={measurement.label}
-            runs={runs}
             unit={measurement.unit}
-            valueFor={(run) => readMeasurementValue(run, measurement.key)}
+            xLabel={measurement.xLabel}
+            points={measurement.points}
           />
         ))}
       </div>
@@ -692,46 +709,51 @@ function ComparisonChart({
   definition,
   interpretation,
   label,
-  runs,
+  points,
   unit,
-  valueFor,
+  xLabel,
 }: {
   calculation: string;
   definition: string;
   interpretation: string;
   label: string;
-  runs: BenchmarkRun[];
+  points: Array<{
+    run: BenchmarkRun;
+    x: number | string;
+    y: number;
+    pointLabel?: string;
+  }>;
   unit: string;
-  valueFor: (run: BenchmarkRun) => number;
+  xLabel?: string;
 }) {
-  const distinctConcurrencies = [...new Set(runs.map((run) => concurrencyForRun(run)).filter((value) => value > 0))].sort(
-    (left, right) => left - right,
-  );
-  const useConcurrencyAxis = distinctConcurrencies.length > 1;
-  const plottedRuns = useConcurrencyAxis
-    ? [...runs].sort((left, right) => {
-        const concurrencyDiff = concurrencyForRun(left) - concurrencyForRun(right);
-        return concurrencyDiff !== 0 ? concurrencyDiff : timestampFor(left) - timestampFor(right);
-      })
-    : runs;
-  const values = plottedRuns.map(valueFor);
+  const values = points.map((point) => point.y);
   const max = Math.max(1, ...values);
-  const points = plottedRuns.map((run, index) => {
-    const value = valueFor(run);
-    const x = plottedRuns.length === 1 ? 198 : 44 + (index / (plottedRuns.length - 1)) * 304;
-    const y = 176 - (value / max) * 120;
-    const xLabel = useConcurrencyAxis ? `c${formatNumber(concurrencyForRun(run))}` : displayRunShortName(run, index + 1);
+  const numericXAxis = points.every((point) => typeof point.x === "number");
+  const xValues = points.map((point) => point.x);
+  const minX = numericXAxis ? Math.min(...(xValues as number[])) : 0;
+  const maxX = numericXAxis ? Math.max(...(xValues as number[])) : 0;
+  const plottedPoints = points.map((point, index) => {
+    const x =
+      points.length === 1
+        ? 198
+        : numericXAxis
+          ? maxX === minX
+            ? 198
+            : 44 + ((((point.x as number) - minX) / (maxX - minX)) * 304)
+          : 44 + (index / Math.max(points.length - 1, 1)) * 304;
+    const y = 176 - (point.y / max) * 120;
 
     return {
-      run,
+      ...point,
       index,
-      value,
-      x,
-      y,
-      xLabel,
+      chartX: x,
+      chartY: y,
+      tickLabel:
+        point.pointLabel ??
+        (typeof point.x === "number" ? formatNumber(point.x) : String(point.x || `r${index + 1}`)),
     };
   });
-  const polyline = points.map(({ x, y }) => `${x},${y}`).join(" ");
+  const polyline = plottedPoints.map(({ chartX, chartY }) => `${chartX},${chartY}`).join(" ");
 
   return (
     <article className="benchmark-comparison-card">
@@ -774,25 +796,25 @@ function ComparisonChart({
           {axisLabelForUnit(unit)}
         </text>
         <text className="capacity-axis-title" x="198" y="232" textAnchor="middle">
-          {useConcurrencyAxis ? "concurrency" : "run order"}
+          {xLabel ?? "run order"}
         </text>
         <line className="capacity-axis" x1="44" y1="28" x2="44" y2="176" />
         <line className="capacity-axis" x1="44" y1="176" x2="348" y2="176" />
         <polyline className="capacity-axis-arrow" points="36,36 44,28 52,36" />
         <polyline className="capacity-axis-arrow" points="340,168 348,176 340,184" />
         <polyline className="capacity-line" points={polyline} stroke="#2e9462" />
-        {points.map(({ run, index, value, x, y }) => {
-          const hoverText = `r${index + 1} ${run.runId}: ${value}${unit ? ` ${unit}` : ""}\n${formatConditionSummary(
+        {plottedPoints.map(({ run, index, y, chartX, chartY, tickLabel }) => {
+          const hoverText = `${tickLabel} ${run.runId}: ${values[index]}${unit ? ` ${unit}` : ""}\n${formatConditionSummary(
             run,
           )}\n${displayRunName(run)}\nHTTP ${formatDistribution(run.requestPath?.statusDistribution)}`;
-          const tooltipY = y < 92 ? Math.min(y + 12, 168) : Math.max(y - 86, 6);
+          const tooltipY = chartY < 92 ? Math.min(chartY + 12, 168) : Math.max(chartY - 86, 6);
 
           return (
             <g className="capacity-point-group" key={run.artifactFile} tabIndex={0}>
               <circle
                 className={`capacity-point${run.pass ? "" : " preview"}`}
-                cx={x}
-                cy={y}
+                cx={chartX}
+                cy={chartY}
                 fill={run.pass ? "#2e9462" : "#b75f4b"}
                 r={4}
               />
@@ -800,12 +822,12 @@ function ComparisonChart({
                 className="capacity-point-tooltip"
                 height="60"
                 width="132"
-                x={Math.min(Math.max(x - 54, 10), 214)}
+                x={Math.min(Math.max(chartX - 54, 10), 214)}
                 y={tooltipY}
               >
                 <div className="capacity-point-tooltip-card">
-                  <strong>{displayRunShortName(run, index + 1)}</strong>
-                  <span>{formatPlotHoverValue(value, unit)}</span>
+                  <strong>{tickLabel}</strong>
+                  <span>{formatPlotHoverValue(values[index], unit)}</span>
                   <span>{formatScenarioTags(run)}</span>
                 </div>
               </foreignObject>
@@ -813,9 +835,9 @@ function ComparisonChart({
             </g>
           );
         })}
-        {points.map(({ run, index, x, xLabel }) => (
-          <text className="capacity-axis-label" key={run.artifactFile} x={x} y="200">
-            {xLabel}
+        {plottedPoints.map(({ run, chartX, tickLabel }) => (
+          <text className="capacity-axis-label" key={run.artifactFile} x={chartX} y="200">
+            {tickLabel}
           </text>
         ))}
       </svg>
@@ -1049,8 +1071,108 @@ function measurementsForRun(run: BenchmarkRun) {
   return buildLegacyMeasurements(run);
 }
 
-function measurementDefinitionsForRuns(runs: BenchmarkRun[]) {
+function seriesForRun(run: BenchmarkRun) {
+  return (run.series ?? [])
+    .filter(
+      (series): series is NonNullable<BenchmarkRun["series"]>[number] =>
+        Boolean(
+          series?.key &&
+            series?.label &&
+            series?.xKey &&
+            series?.xLabel &&
+            Array.isArray(series?.points) &&
+            series.points.length > 0,
+        ),
+    )
+    .map((series) => ({
+      key: series.key as string,
+      label: series.label as string,
+      xKey: series.xKey as string,
+      xLabel: series.xLabel as string,
+      xUnit: series.xUnit ?? "",
+      yUnit: series.yUnit ?? "",
+      points: (series.points ?? []).filter(
+        (point): point is NonNullable<typeof series.points>[number] =>
+          typeof point?.y === "number" &&
+          (typeof point?.x === "number" || typeof point?.x === "string"),
+      ),
+      definition: series.definition,
+      calculation: series.calculation,
+      interpretation: series.interpretation,
+    }));
+}
+
+function comparisonDefinitionsForRuns(runs: BenchmarkRun[]) {
+  const explicitSeries = mergeComparableSeriesAcrossRuns(runs);
+
+  if (explicitSeries.length > 0) {
+    return explicitSeries;
+  }
+
+  return mergeComparableMeasurementsAcrossRuns(runs);
+}
+
+function mergeComparableSeriesAcrossRuns(runs: BenchmarkRun[]) {
   const definitions = new Map<
+    string,
+    {
+      key: string;
+      label: string;
+      unit: string;
+      xLabel: string;
+      definition?: string;
+      calculation?: string;
+      interpretation?: string;
+      points: Array<{
+        run: BenchmarkRun;
+        x: number | string;
+        y: number;
+        pointLabel?: string;
+      }>;
+      runCount: number;
+    }
+  >();
+
+  for (const run of runs) {
+    for (const series of seriesForRun(run)) {
+      const definition = definitions.get(series.key) ?? {
+        key: series.key,
+        label: series.label,
+        unit: series.yUnit,
+        xLabel: series.xLabel,
+        definition: series.definition,
+        calculation: series.calculation,
+        interpretation: series.interpretation,
+        points: [],
+        runCount: 0,
+      };
+
+      definition.runCount += 1;
+      definition.points.push(
+        ...series.points.map((point) => ({
+          run,
+          x: point.x as number | string,
+          y: point.y as number,
+          pointLabel:
+            point.pointLabel ??
+            (typeof point.x === "number" || typeof point.x === "string" ? String(point.x) : undefined),
+        })),
+      );
+      definitions.set(series.key, definition);
+    }
+  }
+
+  return [...definitions.values()]
+    .filter((definition) => definition.runCount >= 2 && definition.points.length >= 2)
+    .map((definition) => ({
+      ...definition,
+      points: sortChartPoints(definition.points),
+    }));
+}
+
+function mergeComparableMeasurementsAcrossRuns(runs: BenchmarkRun[]) {
+  const axisKey = sharedAxisKeyForRuns(runs);
+  const grouped = new Map<
     string,
     {
       key: string;
@@ -1059,29 +1181,112 @@ function measurementDefinitionsForRuns(runs: BenchmarkRun[]) {
       definition?: string;
       calculation?: string;
       interpretation?: string;
+      points: Array<{
+        run: BenchmarkRun;
+        x: number | string;
+        y: number;
+        pointLabel?: string;
+      }>;
+      runCount: number;
     }
   >();
 
   for (const run of runs) {
+    const axis = comparisonAxisForRun(run, axisKey);
+
     for (const measurement of measurementsForRun(run)) {
-      if (!definitions.has(measurement.key)) {
-        definitions.set(measurement.key, {
-          key: measurement.key,
-          label: measurement.label,
-          unit: measurement.unit,
-          definition: measurement.definition,
-          calculation: measurement.calculation,
-          interpretation: measurement.interpretation,
-        });
+      const definition = grouped.get(measurement.key) ?? {
+        key: measurement.key,
+        label: measurement.label,
+        unit: measurement.unit,
+        definition: measurement.definition,
+        calculation: measurement.calculation,
+        interpretation: measurement.interpretation,
+        points: [],
+        runCount: 0,
+      };
+
+      definition.runCount += 1;
+      const axisValue =
+        axis && (typeof axis.value === "number" || typeof axis.value === "string")
+          ? axis.value
+          : displayRunName(run);
+      definition.points.push({
+        run,
+        x: axisValue,
+        y: measurement.value,
+        pointLabel: axis?.label ?? displayRunName(run),
+      });
+      grouped.set(measurement.key, definition);
+    }
+  }
+
+  return [...grouped.values()]
+    .filter((definition) => definition.runCount >= 2 && definition.points.length >= 2)
+    .map((definition) => ({
+      ...definition,
+      xLabel: axisKey ?? "run order",
+      points: sortChartPoints(definition.points),
+    }));
+}
+
+function comparisonAxisForRun(run: BenchmarkRun, preferredKey?: string | null) {
+  const tags = Object.entries(run.scenarioTags ?? {}).filter(
+    ([, value]) => typeof value === "number" || typeof value === "string",
+  );
+
+  const preferredTag =
+    (preferredKey ? tags.find(([key]) => key === preferredKey) : undefined) ??
+    tags.find(([, value]) => typeof value === "number");
+  const selected = preferredTag ?? tags[0];
+
+  if (!selected) {
+    return null;
+  }
+
+  const [key, value] = selected;
+  return {
+    key,
+    label: typeof value === "number" ? formatNumber(value) : String(value),
+    value,
+  };
+}
+
+function sharedAxisKeyForRuns(runs: BenchmarkRun[]) {
+  const candidateKeys = new Set<string>();
+
+  for (const run of runs) {
+    for (const [key, value] of Object.entries(run.scenarioTags ?? {})) {
+      if (typeof value === "number" || typeof value === "string") {
+        candidateKeys.add(key);
       }
     }
   }
 
-  return [...definitions.values()];
+  for (const key of candidateKeys) {
+    const values = runs
+      .map((run) => run.scenarioTags?.[key])
+      .filter((value): value is string | number => typeof value === "number" || typeof value === "string");
+    const distinct = [...new Set(values.map((value) => String(value)))];
+
+    if (distinct.length > 1 && values.length === runs.length) {
+      return key;
+    }
+  }
+
+  return null;
 }
 
-function readMeasurementValue(run: BenchmarkRun, key: string) {
-  return measurementsForRun(run).find((measurement) => measurement.key === key)?.value ?? 0;
+function sortChartPoints<T extends { x: number | string }>(points: T[]) {
+  const numericOnly = points.every((point) => typeof point.x === "number");
+
+  return [...points].sort((left, right) => {
+    if (numericOnly) {
+      return (left.x as number) - (right.x as number);
+    }
+
+    return String(left.x).localeCompare(String(right.x));
+  });
 }
 
 function buildLegacyMeasurements(run: BenchmarkRun) {
@@ -1219,7 +1424,7 @@ function ingressMetricDescription(scenarioName?: string) {
     return "Accepted buy-intent commands per second at the HTTP ingress boundary.";
   }
 
-  return "Ingress throughput by concurrency step inside the same architecture lane.";
+  return "Ingress throughput across comparable runs in the same scenario.";
 }
 
 function ingressMetricDefinition(scenarioName?: string) {
@@ -1248,8 +1453,8 @@ function ingressMetricInterpretation(scenarioName?: string) {
 
 function throughputMetricDescription(scenarioName?: string) {
   return isBuyIntentScenarioName(scenarioName)
-    ? "Checkout intent creation facts across concurrency steps in the same architecture lane."
-    : "Checkout intent creation facts across concurrency steps in the same architecture lane.";
+    ? "Checkout intent creation facts across comparable runs in the same scenario."
+    : "Checkout intent creation facts across comparable runs in the same scenario.";
 }
 
 function throughputMetricDefinition(scenarioName?: string) {
@@ -1296,13 +1501,6 @@ function scenarioDescription(name: string) {
 }
 
 function formatConditionSummary(run: BenchmarkRun) {
-  if (run.conditions?.workload?.workloadType === "buy_intent_temporal_flow") {
-    const lane = run.conditions?.workload?.architectureLane ?? "unknown";
-    const concurrency = formatNumber(run.conditions?.workload?.httpConcurrency);
-
-    return `${lane} · c ${concurrency}`;
-  }
-
   const mode = run.conditions?.software?.nextMode ?? "unknown mode";
   const appInstances = formatNumber(run.conditions?.services?.nextjs?.instanceCount ?? 1);
   const pgInstances = formatNumber(run.conditions?.services?.postgres?.instanceCount ?? 1);
@@ -1486,15 +1684,6 @@ function formatPostgresCondition(run: BenchmarkRun) {
   return `${postgres.database ?? "n/a"} @ ${postgres.host ?? "n/a"}:${postgres.port ?? "n/a"} · ${formatNumber(
     postgres.instanceCount,
   )} instance · pool ${formatNumber(postgres.poolMax)}`;
-}
-
-function concurrencyForRun(run: BenchmarkRun) {
-  return (
-    run.conditions?.workload?.httpConcurrency ??
-    run.conditions?.workload?.requestedBuyClicks ??
-    run.scenario?.requestedBuyClicks ??
-    0
-  );
 }
 
 function formatEnabledCount(enabled: boolean | undefined, count: number | undefined) {

@@ -11,9 +11,28 @@ type BenchmarkMeasurement = {
   interpretation?: string;
 };
 
+type BenchmarkSeries = {
+  key: string;
+  label: string;
+  xKey: string;
+  xLabel: string;
+  xUnit: string;
+  yUnit: string;
+  points: Array<{
+    x: number | string;
+    y: number;
+    runId?: string;
+    pointLabel?: string;
+  }>;
+  definition?: string;
+  calculation?: string;
+  interpretation?: string;
+};
+
 type BenchmarkArtifact = {
   runId?: string;
   scenarioName?: string;
+  scenarioTags?: Record<string, string | number | boolean>;
   scenario?: {
     requestedBuyClicks?: number;
   };
@@ -23,6 +42,7 @@ type BenchmarkArtifact = {
   conditions?: {
     workload?: {
       benchmarkStyle?: "burst" | "steady_state";
+      httpConcurrency?: number;
     };
     benchmarkStyle?: "burst" | "steady_state";
   };
@@ -42,6 +62,7 @@ type BenchmarkArtifact = {
     projectionLagEvents?: number;
   };
   measurements?: BenchmarkMeasurement[];
+  series?: BenchmarkSeries[];
 };
 
 const benchmarkResultsRoot = path.join(process.cwd(), "benchmark-results");
@@ -59,6 +80,7 @@ async function main() {
     }
 
     artifact.measurements = buildMeasurementsFromArtifact(artifact);
+    artifact.series = buildSeriesFromArtifact(artifact);
     await writeFile(file, `${JSON.stringify(artifact, null, 2)}\n`, "utf8");
     migrated += 1;
   }
@@ -193,6 +215,35 @@ function buildMeasurementsFromArtifact(artifact: BenchmarkArtifact): BenchmarkMe
   }
 
   return measurements;
+}
+
+function buildSeriesFromArtifact(artifact: BenchmarkArtifact): BenchmarkSeries[] {
+  const measurements = artifact.measurements ?? [];
+  const concurrency = artifact.scenarioTags?.concurrency ?? artifact.conditions?.workload?.httpConcurrency;
+
+  if (typeof concurrency !== "number" || !Number.isFinite(concurrency) || concurrency <= 0) {
+    return [];
+  }
+
+  return measurements.map((measurement) => ({
+    key: `measurement.${measurement.key}.by_concurrency`,
+    label: measurement.label,
+    xKey: "concurrency",
+    xLabel: "concurrency",
+    xUnit: "",
+    yUnit: measurement.unit,
+    points: [
+      {
+        x: concurrency,
+        y: measurement.value,
+        runId: artifact.runId,
+        pointLabel: artifact.runId,
+      },
+    ],
+    definition: measurement.definition,
+    calculation: measurement.calculation,
+    interpretation: measurement.interpretation,
+  }));
 }
 
 main().catch((error) => {
