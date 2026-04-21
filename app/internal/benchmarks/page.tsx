@@ -255,152 +255,6 @@ type ScenarioSummary = {
   runCount: number;
 };
 
-type CapacityPoint = {
-  acceptedRate: number;
-  appendPerSecond: number;
-  concurrency: number;
-  errors: number;
-  lag: number;
-  p95LatencyMs: number;
-  pass: boolean;
-  requestsPerSecond: number;
-};
-
-type ArchitectureLane = {
-  bottleneck: string;
-  latestFinishedAt?: string;
-  latestStatus: "healthy" | "warning" | "danger";
-  name: string;
-  points: CapacityPoint[];
-  safeConcurrency: number | null;
-  source: "artifact" | "preview";
-};
-
-const previewArchitectureLanes: Record<string, ArchitectureLane[]> = {
-  "checkout-postgres-baseline": [
-    {
-      bottleneck: "projection catch-up at higher ingress",
-      latestFinishedAt: "preview",
-      latestStatus: "warning",
-      name: "postgres-worker-preview",
-      points: [
-        {
-          acceptedRate: 1,
-          appendPerSecond: 210,
-          concurrency: 50,
-          errors: 0,
-          lag: 0,
-          p95LatencyMs: 120,
-          pass: true,
-          requestsPerSecond: 225,
-        },
-        {
-          acceptedRate: 1,
-          appendPerSecond: 395,
-          concurrency: 100,
-          errors: 0,
-          lag: 0,
-          p95LatencyMs: 180,
-          pass: true,
-          requestsPerSecond: 420,
-        },
-        {
-          acceptedRate: 1,
-          appendPerSecond: 830,
-          concurrency: 250,
-          errors: 0,
-          lag: 0,
-          p95LatencyMs: 310,
-          pass: true,
-          requestsPerSecond: 875,
-        },
-        {
-          acceptedRate: 0.998,
-          appendPerSecond: 1420,
-          concurrency: 500,
-          errors: 1,
-          lag: 0,
-          p95LatencyMs: 520,
-          pass: true,
-          requestsPerSecond: 1510,
-        },
-        {
-          acceptedRate: 0.992,
-          appendPerSecond: 1990,
-          concurrency: 1000,
-          errors: 8,
-          lag: 14,
-          p95LatencyMs: 980,
-          pass: true,
-          requestsPerSecond: 2125,
-        },
-      ],
-      safeConcurrency: 500,
-      source: "preview",
-    },
-    {
-      bottleneck: "event relay and read-model fan-out",
-      latestFinishedAt: "preview",
-      latestStatus: "healthy",
-      name: "postgres-kafka-cache-preview",
-      points: [
-        {
-          acceptedRate: 1,
-          appendPerSecond: 240,
-          concurrency: 50,
-          errors: 0,
-          lag: 0,
-          p95LatencyMs: 90,
-          pass: true,
-          requestsPerSecond: 252,
-        },
-        {
-          acceptedRate: 1,
-          appendPerSecond: 470,
-          concurrency: 100,
-          errors: 0,
-          lag: 0,
-          p95LatencyMs: 130,
-          pass: true,
-          requestsPerSecond: 490,
-        },
-        {
-          acceptedRate: 1,
-          appendPerSecond: 1120,
-          concurrency: 250,
-          errors: 0,
-          lag: 0,
-          p95LatencyMs: 220,
-          pass: true,
-          requestsPerSecond: 1180,
-        },
-        {
-          acceptedRate: 1,
-          appendPerSecond: 2140,
-          concurrency: 500,
-          errors: 0,
-          lag: 0,
-          p95LatencyMs: 340,
-          pass: true,
-          requestsPerSecond: 2235,
-        },
-        {
-          acceptedRate: 0.998,
-          appendPerSecond: 3280,
-          concurrency: 1000,
-          errors: 2,
-          lag: 0,
-          p95LatencyMs: 620,
-          pass: true,
-          requestsPerSecond: 3390,
-        },
-      ],
-      safeConcurrency: 1000,
-      source: "preview",
-    },
-  ],
-};
-
 export default async function InternalBenchmarksPage({
   searchParams,
 }: {
@@ -419,11 +273,6 @@ export default async function InternalBenchmarksPage({
     : [];
   const comparisonRuns = selectedScenarioRuns.slice(0, 10);
   const selectedRunId = params?.run;
-  const capacityScenarioName =
-    selectedScenarioName ?? (latest ? scenarioNameFor(latest) : undefined);
-  const architectureLanes = capacityScenarioName
-    ? buildArchitectureLanes(runs, capacityScenarioName)
-    : [];
 
   return (
     <main className="page-shell admin-shell">
@@ -551,72 +400,6 @@ export default async function InternalBenchmarksPage({
               />
             ) : null}
           </section>
-
-          {capacityScenarioName ? (
-            <section className="panel admin-panel" aria-labelledby="capacity-title">
-              <p className="eyebrow">Capacity</p>
-              <h2 id="capacity-title">Architecture lane comparison</h2>
-              <p className="muted admin-panel-copy">
-                Compare concurrency curves inside one benchmark family. Artifact lanes are real
-                measurements. Preview lanes are mock future architectures so the dashboard can be
-                tuned before Kafka, workers, or cache layers exist.
-              </p>
-              <div className="capacity-lane-grid">
-                {architectureLanes.map((lane) => (
-                  <article className="capacity-lane-card" key={lane.name}>
-                    <div className="capacity-lane-header">
-                      <strong title={lane.name}>{lane.name}</strong>
-                      <span className="benchmark-scenario-badges">
-                        <span
-                          className={`badge ${
-                            lane.latestStatus === "danger"
-                              ? "danger"
-                              : lane.latestStatus === "warning"
-                                ? "warning"
-                                : "success"
-                          }`}
-                        >
-                          {lane.latestStatus}
-                        </span>
-                        <span
-                          className={`badge ${lane.source === "preview" ? "neutral" : "success"}`}
-                        >
-                          {lane.source === "preview" ? "preview" : "artifact"}
-                        </span>
-                      </span>
-                    </div>
-                    <KeyValueList
-                      values={{
-                        "safe concurrency":
-                          lane.safeConcurrency === null
-                            ? "not reached"
-                            : formatNumber(lane.safeConcurrency),
-                        bottleneck: lane.bottleneck,
-                        points: formatNumber(lane.points.length),
-                        latest:
-                          lane.source === "preview"
-                            ? "preview"
-                            : formatDateTime(lane.latestFinishedAt),
-                      }}
-                    />
-                  </article>
-                ))}
-              </div>
-
-              <div className="capacity-chart-grid">
-                {capacityMeasurementDefinitionsForScenario(selectedScenarioRuns).map((measurement) => (
-                  <LaneMetricChart
-                    key={measurement.key}
-                    description={measurement.definition ?? ""}
-                    label={measurement.label}
-                    lanes={architectureLanes}
-                    unit={measurement.unit}
-                    valueFor={(point) => readLaneMeasurementValue(point, measurement.key)}
-                  />
-                ))}
-              </div>
-            </section>
-          ) : null}
 
           <section className="panel admin-panel" aria-labelledby="history-title">
             <p className="eyebrow">History</p>
@@ -921,8 +704,34 @@ function ComparisonChart({
   unit: string;
   valueFor: (run: BenchmarkRun) => number;
 }) {
-  const values = runs.map(valueFor);
+  const distinctConcurrencies = [...new Set(runs.map((run) => concurrencyForRun(run)).filter((value) => value > 0))].sort(
+    (left, right) => left - right,
+  );
+  const useConcurrencyAxis = distinctConcurrencies.length > 1;
+  const plottedRuns = useConcurrencyAxis
+    ? [...runs].sort((left, right) => {
+        const concurrencyDiff = concurrencyForRun(left) - concurrencyForRun(right);
+        return concurrencyDiff !== 0 ? concurrencyDiff : timestampFor(left) - timestampFor(right);
+      })
+    : runs;
+  const values = plottedRuns.map(valueFor);
   const max = Math.max(1, ...values);
+  const points = plottedRuns.map((run, index) => {
+    const value = valueFor(run);
+    const x = plottedRuns.length === 1 ? 198 : 44 + (index / (plottedRuns.length - 1)) * 304;
+    const y = 176 - (value / max) * 120;
+    const xLabel = useConcurrencyAxis ? `c${formatNumber(concurrencyForRun(run))}` : displayRunShortName(run, index + 1);
+
+    return {
+      run,
+      index,
+      value,
+      x,
+      y,
+      xLabel,
+    };
+  });
+  const polyline = points.map(({ x, y }) => `${x},${y}`).join(" ");
 
   return (
     <article className="benchmark-comparison-card">
@@ -952,31 +761,64 @@ function ComparisonChart({
           </span>
         </button>
       </strong>
-      <div className="benchmark-plot" role="img" aria-label={`${label} comparison`}>
-        {runs.map((run, index) => {
-          const value = valueFor(run);
-          const height = Math.max(6, Math.round((value / max) * 120));
+      <svg
+        className="capacity-chart"
+        viewBox="0 0 396 244"
+        role="img"
+        aria-label={`${label} comparison`}
+      >
+        <text className="capacity-axis-unit" x="18" y="18">
+          ({axisShortUnitForUnit(unit)})
+        </text>
+        <text className="capacity-axis-title" transform="translate(18 156) rotate(-90)">
+          {axisLabelForUnit(unit)}
+        </text>
+        <text className="capacity-axis-title" x="198" y="232" textAnchor="middle">
+          {useConcurrencyAxis ? "concurrency" : "run order"}
+        </text>
+        <line className="capacity-axis" x1="44" y1="28" x2="44" y2="176" />
+        <line className="capacity-axis" x1="44" y1="176" x2="348" y2="176" />
+        <polyline className="capacity-axis-arrow" points="36,36 44,28 52,36" />
+        <polyline className="capacity-axis-arrow" points="340,168 348,176 340,184" />
+        <polyline className="capacity-line" points={polyline} stroke="#2e9462" />
+        {points.map(({ run, index, value, x, y }) => {
           const hoverText = `r${index + 1} ${run.runId}: ${value}${unit ? ` ${unit}` : ""}\n${formatConditionSummary(
             run,
           )}\n${displayRunName(run)}\nHTTP ${formatDistribution(run.requestPath?.statusDistribution)}`;
+          const tooltipY = y < 92 ? Math.min(y + 12, 168) : Math.max(y - 86, 6);
 
           return (
-            <span
-              className="benchmark-plot-column"
-              key={run.artifactFile}
-              aria-label={hoverText}
-              tabIndex={0}
-            >
-              <span className="benchmark-plot-value">{formatPlotHoverValue(value, unit)}</span>
-              <span
-                className={run.pass ? "benchmark-plot-bar" : "benchmark-plot-bar failed"}
-                style={{ height }}
+            <g className="capacity-point-group" key={run.artifactFile} tabIndex={0}>
+              <circle
+                className={`capacity-point${run.pass ? "" : " preview"}`}
+                cx={x}
+                cy={y}
+                fill={run.pass ? "#2e9462" : "#b75f4b"}
+                r={4}
               />
-              <code>{displayRunShortName(run, index + 1)}</code>
-            </span>
+              <foreignObject
+                className="capacity-point-tooltip"
+                height="60"
+                width="132"
+                x={Math.min(Math.max(x - 54, 10), 214)}
+                y={tooltipY}
+              >
+                <div className="capacity-point-tooltip-card">
+                  <strong>{displayRunShortName(run, index + 1)}</strong>
+                  <span>{formatPlotHoverValue(value, unit)}</span>
+                  <span>{formatScenarioTags(run)}</span>
+                </div>
+              </foreignObject>
+              <title>{hoverText}</title>
+            </g>
           );
         })}
-      </div>
+        {points.map(({ run, index, x, xLabel }) => (
+          <text className="capacity-axis-label" key={run.artifactFile} x={x} y="200">
+            {xLabel}
+          </text>
+        ))}
+      </svg>
       <span className="muted">
         latest {formatNumber(values.at(-1))}
         {unit ? ` ${unit}` : ""}
@@ -1025,146 +867,6 @@ function RunEvidenceComparison({ runs }: { runs: BenchmarkRun[] }) {
         </tbody>
       </table>
     </div>
-  );
-}
-
-function LaneMetricChart({
-  description,
-  label,
-  lanes,
-  unit,
-  valueFor,
-}: {
-  description: string;
-  label: string;
-  lanes: ArchitectureLane[];
-  unit: string;
-  valueFor: (point: CapacityPoint) => number;
-}) {
-  const allSteps = uniqueSortedNumbers(
-    lanes.flatMap((lane) => lane.points.map((point) => point.concurrency)),
-  );
-  const maxValue = Math.max(1, ...lanes.flatMap((lane) => lane.points.map(valueFor)));
-  const colors = ["#2e9462", "#b75f4b", "#2f6fd6", "#c48326"];
-  const yAxisLabel = axisLabelForUnit(unit);
-  const yAxisShortUnit = axisShortUnitForUnit(unit);
-
-  return (
-    <article className="capacity-chart-card">
-      <div className="capacity-chart-header">
-        <div>
-          <strong>{label}</strong>
-          <p className="muted">{description}</p>
-        </div>
-      </div>
-      <svg
-        className="capacity-chart"
-        viewBox="0 0 396 244"
-        role="img"
-        aria-label={`${label} by concurrency and architecture lane`}
-      >
-        <text className="capacity-axis-unit" x="18" y="18">
-          ({yAxisShortUnit})
-        </text>
-        <text className="capacity-axis-title" transform="translate(18 156) rotate(-90)">
-          {yAxisLabel}
-        </text>
-        <text className="capacity-axis-title" x="198" y="232" textAnchor="middle">
-          concurrency
-        </text>
-        <text className="capacity-axis-unit" x="352" y="222">
-          (c)
-        </text>
-        <line className="capacity-axis" x1="52" y1="28" x2="52" y2="190" />
-        <line className="capacity-axis" x1="52" y1="190" x2="356" y2="190" />
-        <polyline className="capacity-axis-arrow" points="44,36 52,28 60,36" />
-        <polyline className="capacity-axis-arrow" points="348,182 356,190 348,198" />
-        {lanes.map((lane, laneIndex) => {
-          const color = colors[laneIndex % colors.length];
-          const points = lane.points
-            .sort((left, right) => left.concurrency - right.concurrency)
-            .map((point) => {
-              const stepIndex = allSteps.indexOf(point.concurrency);
-              const x =
-                allSteps.length === 1 || stepIndex === -1
-                  ? 204
-                  : 52 + (stepIndex / (allSteps.length - 1)) * 304;
-              const y = 190 - (valueFor(point) / maxValue) * 132;
-
-              return { point, x, y };
-            });
-          const polyline = points.map(({ x, y }) => `${x},${y}`).join(" ");
-
-          return (
-            <g key={lane.name}>
-              <polyline
-                className={`capacity-line${lane.source === "preview" ? " preview" : ""}`}
-                points={polyline}
-                stroke={color}
-              />
-              {points.map(({ point, x, y }) => (
-                <g
-                  className="capacity-point-group"
-                  key={`${lane.name}-${point.concurrency}`}
-                  tabIndex={0}
-                >
-                  <circle
-                    className={`capacity-point${lane.source === "preview" ? " preview" : ""}`}
-                    cx={x}
-                    cy={y}
-                    fill={color}
-                    r={4}
-                  />
-                  <foreignObject
-                    className="capacity-point-tooltip"
-                    height="60"
-                    width="132"
-                    x={Math.min(Math.max(x - 54, 10), 214)}
-                    y={Math.max(y - 58, 8)}
-                  >
-                    <div className="capacity-point-tooltip-card">
-                      <strong>{lane.name}</strong>
-                      <span>c{formatNumber(point.concurrency)}</span>
-                      <span>
-                        {formatNumber(valueFor(point))}
-                        {unit ? ` ${unit}` : ""}
-                      </span>
-                    </div>
-                  </foreignObject>
-                  <title>
-                    {`${lane.name} · c${point.concurrency} · ${formatNumber(valueFor(point))}${unit ? ` ${unit}` : ""}`}
-                  </title>
-                </g>
-              ))}
-            </g>
-          );
-        })}
-        {allSteps.map((step, index) => {
-          const x = allSteps.length === 1 ? 204 : 52 + (index / (allSteps.length - 1)) * 304;
-
-          return (
-            <text className="capacity-axis-label" key={step} x={x} y="214">
-              {step}
-            </text>
-          );
-        })}
-      </svg>
-      <div className="capacity-legend">
-        {lanes.map((lane, laneIndex) => {
-          const color = colors[laneIndex % colors.length];
-
-          return (
-            <span className="capacity-legend-item" key={lane.name}>
-              <span
-                className={`capacity-legend-swatch${lane.source === "preview" ? " preview" : ""}`}
-                style={{ backgroundColor: color }}
-              />
-              <span>{lane.name}</span>
-            </span>
-          );
-        })}
-      </div>
-    </article>
   );
 }
 
@@ -1378,37 +1080,8 @@ function measurementDefinitionsForRuns(runs: BenchmarkRun[]) {
   return [...definitions.values()];
 }
 
-function capacityMeasurementDefinitionsForScenario(runs: BenchmarkRun[]) {
-  const allowed = new Set([
-    "accepted_rate",
-    "ingress_throughput",
-    "ingress_p95_latency",
-    "result_throughput",
-    "projection_lag",
-  ]);
-
-  return measurementDefinitionsForRuns(runs).filter((measurement) => allowed.has(measurement.key));
-}
-
 function readMeasurementValue(run: BenchmarkRun, key: string) {
   return measurementsForRun(run).find((measurement) => measurement.key === key)?.value ?? 0;
-}
-
-function readLaneMeasurementValue(point: CapacityPoint, key: string) {
-  switch (key) {
-    case "accepted_rate":
-      return point.acceptedRate * 100;
-    case "ingress_throughput":
-      return point.requestsPerSecond;
-    case "ingress_p95_latency":
-      return point.p95LatencyMs;
-    case "result_throughput":
-      return point.appendPerSecond;
-    case "projection_lag":
-      return point.lag;
-    default:
-      return 0;
-  }
 }
 
 function buildLegacyMeasurements(run: BenchmarkRun) {
@@ -1605,97 +1278,6 @@ function scenarioNameFor(run: BenchmarkRun) {
   return run.scenarioName ?? run.conditions?.workload?.scenarioName ?? "unknown";
 }
 
-function scenarioFamilyFor(run: BenchmarkRun) {
-  if (run.scenarioFamily) {
-    return run.scenarioFamily;
-  }
-
-  const scenarioName = scenarioNameFor(run);
-  const bucketSweepMatch = scenarioName.match(/^(buy-intent-hot-seckill-steady-state)-bucket-\d+$/);
-
-  if (bucketSweepMatch) {
-    return `${bucketSweepMatch[1]}-buckets`;
-  }
-
-  return scenarioName;
-}
-
-function defaultArchitectureLaneForScenario(scenarioName: string) {
-  if (scenarioName === "checkout-postgres-baseline") {
-    return "postgres-baseline";
-  }
-
-  return scenarioName;
-}
-
-function architectureLaneFor(run: BenchmarkRun) {
-  return (
-    run.conditions?.workload?.architectureLane ??
-    defaultArchitectureLaneForScenario(scenarioNameFor(run))
-  );
-}
-
-function concurrencyFor(run: BenchmarkRun) {
-  return (
-    run.conditions?.workload?.httpConcurrency ??
-    run.conditions?.workload?.requestedBuyClicks ??
-    run.scenario?.requestedBuyClicks ??
-    0
-  );
-}
-
-function buildArchitectureLanes(runs: BenchmarkRun[], scenarioName: string): ArchitectureLane[] {
-  const scenarioRuns = runs.filter((run) => scenarioNameFor(run) === scenarioName);
-  const grouped = new Map<string, Map<number, BenchmarkRun>>();
-
-  for (const run of scenarioRuns) {
-    const laneName = architectureLaneFor(run);
-    const concurrency = concurrencyFor(run);
-
-    if (concurrency <= 0) {
-      continue;
-    }
-
-    const laneRuns = grouped.get(laneName) ?? new Map<number, BenchmarkRun>();
-    const existing = laneRuns.get(concurrency);
-
-    if (!existing || timestampFor(run) > timestampFor(existing)) {
-      laneRuns.set(concurrency, run);
-    }
-
-    grouped.set(laneName, laneRuns);
-  }
-
-  const artifactLanes = [...grouped.entries()].map(([name, laneRuns]) => {
-    const orderedRuns = [...laneRuns.values()].sort(
-      (left, right) => concurrencyFor(left) - concurrencyFor(right),
-    );
-    const points = orderedRuns.map((run) => ({
-      acceptedRate: readAcceptedRate(run),
-      appendPerSecond: readAppendThroughputPerSecond(run),
-      concurrency: concurrencyFor(run),
-      errors: run.requestPath?.errors ?? 0,
-      lag: readProjectionLagEvents(run) ?? 0,
-      p95LatencyMs: readRequestP95(run),
-      pass: run.pass ?? false,
-      requestsPerSecond: readRequestsPerSecond(run),
-    }));
-
-    return {
-      bottleneck: deriveLaneBottleneck(points.at(-1)),
-      latestFinishedAt: orderedRuns.at(-1)?.finishedAt,
-      latestStatus: deriveLaneStatus(points.at(-1)),
-      name,
-      points,
-      safeConcurrency: deriveSafeConcurrency(points),
-      source: "artifact" as const,
-    };
-  });
-
-  return [...artifactLanes, ...(previewArchitectureLanes[scenarioName] ?? [])].sort((left, right) =>
-    left.name.localeCompare(right.name),
-  );
-}
 
 function scenarioDescription(name: string) {
   if (name === "checkout-postgres-baseline") {
@@ -1906,6 +1488,15 @@ function formatPostgresCondition(run: BenchmarkRun) {
   )} instance · pool ${formatNumber(postgres.poolMax)}`;
 }
 
+function concurrencyForRun(run: BenchmarkRun) {
+  return (
+    run.conditions?.workload?.httpConcurrency ??
+    run.conditions?.workload?.requestedBuyClicks ??
+    run.scenario?.requestedBuyClicks ??
+    0
+  );
+}
+
 function formatEnabledCount(enabled: boolean | undefined, count: number | undefined) {
   if (!enabled) {
     return "disabled";
@@ -1972,53 +1563,4 @@ function formatDateTime(value: string | undefined) {
     dateStyle: "medium",
     timeStyle: "medium",
   }).format(date);
-}
-
-function deriveSafeConcurrency(points: CapacityPoint[]) {
-  const safePoints = points.filter(
-    (point) =>
-      point.acceptedRate >= 0.99 && point.p95LatencyMs <= 1000 && point.lag === 0 && point.pass,
-  );
-
-  return safePoints.length > 0 ? (safePoints.at(-1)?.concurrency ?? null) : null;
-}
-
-function deriveLaneStatus(point: CapacityPoint | undefined): ArchitectureLane["latestStatus"] {
-  if (!point) {
-    return "danger";
-  }
-
-  if (point.acceptedRate < 0.99 || point.errors > 0) {
-    return "danger";
-  }
-
-  if (point.lag > 0 || point.p95LatencyMs > 1000) {
-    return "warning";
-  }
-
-  return "healthy";
-}
-
-function deriveLaneBottleneck(point: CapacityPoint | undefined) {
-  if (!point) {
-    return "no data";
-  }
-
-  if (point.acceptedRate < 0.99 || point.errors > 0) {
-    return "ingress admission and transport pressure";
-  }
-
-  if (point.lag > 0) {
-    return "projection catch-up";
-  }
-
-  if (point.p95LatencyMs > 1000) {
-    return "tail latency saturation";
-  }
-
-  return "healthy baseline";
-}
-
-function uniqueSortedNumbers(values: number[]) {
-  return [...new Set(values)].sort((left, right) => left - right);
 }
