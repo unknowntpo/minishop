@@ -64,6 +64,14 @@ function getRuntimeCommandBus() {
               readRuntimeEnv("KAFKA_SECKILL_REQUEST_TOPIC") || "inventory.seckill.requested",
             resultTopic:
               readRuntimeEnv("KAFKA_SECKILL_RESULT_TOPIC") || "inventory.seckill.result",
+            batchSize: Number.parseInt(
+              readRuntimeEnv("KAFKA_SECKILL_PUBLISH_BATCH_SIZE") || "64",
+              10,
+            ),
+            lingerMs: Number.parseInt(
+              readRuntimeEnv("KAFKA_SECKILL_PUBLISH_LINGER_MS") || "2",
+              10,
+            ),
             clientId: readRuntimeEnv("KAFKA_CLIENT_ID") || "minishop-app",
           }),
           pool: getPool(),

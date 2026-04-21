@@ -7,12 +7,24 @@ let sharedProducer: Producer | null = null;
 let sharedAdmin: Admin | null = null;
 let sharedKafka: Kafka | null = null;
 let topicsEnsured: Promise<void> | null = null;
+let pendingBatch: SeckillPendingMessage[] = [];
+let flushTimer: ReturnType<typeof setTimeout> | null = null;
+let activeFlush: Promise<void> | null = null;
 
 type KafkaSeckillCommandBusOptions = {
   brokers: string[];
   requestTopic: string;
   resultTopic: string;
+  batchSize: number;
+  lingerMs: number;
   clientId?: string;
+};
+
+type SeckillPendingMessage = {
+  request: SeckillBuyIntentRequest;
+  headers: Record<string, Buffer>;
+  resolve: () => void;
+  reject: (error: unknown) => void;
 };
 
 function getKafka(options: KafkaSeckillCommandBusOptions) {
@@ -99,6 +111,121 @@ function toKafkaHeaders() {
   };
 }
 
+function clearFlushTimer() {
+  if (flushTimer) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+  }
+}
+
+async function sendBatch(
+  options: KafkaSeckillCommandBusOptions,
+  entries: SeckillPendingMessage[],
+) {
+  const execute = async () => {
+    const producer = await getProducer(options);
+    await producer.sendBatch({
+      topicMessages: [
+        {
+          topic: options.requestTopic,
+          messages: entries.map((entry) => ({
+            key: entry.request.processing_key,
+            value: JSON.stringify(entry.request),
+            headers: entry.headers,
+          })),
+        },
+      ],
+    });
+  };
+
+  try {
+    await execute();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!message.toLowerCase().includes("disconnected")) {
+      throw error;
+    }
+
+    await resetProducer();
+    await execute();
+  }
+}
+
+function scheduleFlush(options: KafkaSeckillCommandBusOptions) {
+  if (flushTimer || pendingBatch.length === 0) {
+    return;
+  }
+
+  flushTimer = setTimeout(() => {
+    flushTimer = null;
+    void flushPendingBatch(options);
+  }, Math.max(1, options.lingerMs));
+}
+
+function startFlush(entries: SeckillPendingMessage[], options: KafkaSeckillCommandBusOptions) {
+  return (async () => {
+    try {
+      await ensureTopics(options);
+      await sendBatch(options, entries);
+      for (const entry of entries) {
+        entry.resolve();
+      }
+    } catch (error) {
+      for (const entry of entries) {
+        entry.reject(error);
+      }
+    } finally {
+      if (activeFlush) {
+        activeFlush = null;
+      }
+
+      if (pendingBatch.length > 0) {
+        clearFlushTimer();
+        if (pendingBatch.length >= options.batchSize) {
+          void flushPendingBatch(options);
+        } else {
+          scheduleFlush(options);
+        }
+      }
+    }
+  })();
+}
+
+function flushPendingBatch(options: KafkaSeckillCommandBusOptions) {
+  if (activeFlush || pendingBatch.length === 0) {
+    return activeFlush ?? Promise.resolve();
+  }
+
+  clearFlushTimer();
+  const entries = pendingBatch;
+  pendingBatch = [];
+  activeFlush = startFlush(entries, options);
+  return activeFlush;
+}
+
+function enqueuePublish(
+  options: KafkaSeckillCommandBusOptions,
+  request: SeckillBuyIntentRequest,
+  headers: Record<string, Buffer>,
+) {
+  return new Promise<void>((resolve, reject) => {
+    pendingBatch.push({
+      request,
+      headers,
+      resolve,
+      reject,
+    });
+
+    if (pendingBatch.length >= options.batchSize) {
+      clearFlushTimer();
+      void flushPendingBatch(options);
+      return;
+    }
+
+    scheduleFlush(options);
+  });
+}
+
 export function createKafkaSeckillCommandBus(options: KafkaSeckillCommandBusOptions) {
   return {
     async publish(request: SeckillBuyIntentRequest) {
@@ -115,32 +242,7 @@ export function createKafkaSeckillCommandBus(options: KafkaSeckillCommandBusOpti
           },
         },
         async () => {
-          await ensureTopics(options);
-          const send = async () => {
-            const producer = await getProducer(options);
-            await producer.send({
-              topic: options.requestTopic,
-              messages: [
-                {
-                  key: request.processing_key,
-                  value: JSON.stringify(request),
-                  headers: toKafkaHeaders(),
-                },
-              ],
-            });
-          };
-
-          try {
-            await send();
-          } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            if (!message.toLowerCase().includes("disconnected")) {
-              throw error;
-            }
-
-            await resetProducer();
-            await send();
-          }
+          await enqueuePublish(options, request, toKafkaHeaders());
         },
       );
     },

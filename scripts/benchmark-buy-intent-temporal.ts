@@ -4,11 +4,14 @@ import { mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+import { Kafka, logLevel } from "kafkajs";
 import { Pool } from "pg";
 
 type BenchmarkConfig = {
   appUrl: string;
   databaseUrl: string;
+  kafkaBrokers: string[];
+  seckillResultTopic: string;
   requests: number;
   httpConcurrency: number;
   profilingEnabled: boolean;
@@ -22,6 +25,7 @@ type BenchmarkConfig = {
   mode: "bypass";
   createdTimeoutMs: number;
   resetStateBeforeRun: boolean;
+  createdSource: "postgres" | "kafka_seckill_result";
 };
 
 type AcceptResult = {
@@ -41,6 +45,23 @@ type CreatedResult = {
   eventId: string | null;
   isDuplicate: boolean;
   latencyMs: number;
+  completedAtMs?: number;
+};
+
+type SeckillCommandOutcome = {
+  request: {
+    command: {
+      command_id: string;
+    };
+  };
+  result: {
+    commandId: string;
+    status: "reserved" | "rejected";
+    checkoutIntentId: string | null;
+    eventId: string | null;
+    duplicate: boolean;
+  };
+  processedAt: string;
 };
 
 type CheckoutResult = {
@@ -83,6 +104,10 @@ async function main() {
     max: 4,
   });
   await assertAppReachable(config.appUrl);
+  const seckillCollector =
+    config.createdSource === "kafka_seckill_result"
+      ? await startSeckillOutcomeCollector(config)
+      : null;
 
   try {
     if (config.resetStateBeforeRun) {
@@ -129,7 +154,10 @@ async function main() {
         throw new Error("No benchmark requests were accepted.");
       }
 
-      const createdBatch = await waitForCreatedStatuses(pool, accepted);
+      const createdBatch =
+        config.createdSource === "kafka_seckill_result"
+          ? await waitForCreatedSeckillOutcomes(seckillCollector, accepted)
+          : await waitForCreatedStatuses(pool, accepted);
       createdResults = createdBatch.results;
 
       if (createdBatch.pendingCommandIds.length > 0) {
@@ -151,22 +179,32 @@ async function main() {
 
       cancelledResults = [];
 
-      const intentCreation = await readIntentCreationMetrics(
-        pool,
-        createdResults
-          .filter(
-            (result) =>
-              result.status === "created" &&
-              typeof result.checkoutIntentId === "string" &&
-              result.checkoutIntentId,
-          )
-          .map((result) => ({
-            checkoutIntentId: result.checkoutIntentId as string,
-            requestStartedAtMs:
-              accepted.find((entry) => entry.commandId === result.commandId)?.requestStartedAtMs ??
-              null,
-          }))
-      );
+      const intentCreation =
+        config.createdSource === "kafka_seckill_result"
+          ? readIntentCreationMetricsFromCreatedResults(
+              createdResults,
+              accepted.map((entry) => ({
+                commandId: entry.commandId,
+                requestStartedAtMs: entry.requestStartedAtMs ?? null,
+                acceptedAtMs: entry.acceptedAtMs,
+              })),
+            )
+          : await readIntentCreationMetrics(
+              pool,
+              createdResults
+                .filter(
+                  (result) =>
+                    result.status === "created" &&
+                    typeof result.checkoutIntentId === "string" &&
+                    result.checkoutIntentId,
+                )
+                .map((result) => ({
+                  checkoutIntentId: result.checkoutIntentId as string,
+                  requestStartedAtMs:
+                    accepted.find((entry) => entry.commandId === result.commandId)
+                      ?.requestStartedAtMs ?? null,
+                })),
+            );
 
       const natsSnapshot = await readNatsSnapshot();
       profiling = await maybeStopProfiling(profilingPlan, profiling);
@@ -224,10 +262,13 @@ async function main() {
           created: createdResults.filter((result) => result.status === "created").length,
           duplicates: createdResults.filter((result) => result.isDuplicate).length,
           createdLatencyMs: summarizeLatencies(createdResults.map((result) => result.latencyMs)),
-          createdThroughputPerSecond: ratePerSecond(
-            createdResults.length,
-            Math.max(...createdResults.map((result) => result.latencyMs)),
-          ),
+          createdThroughputPerSecond:
+            config.createdSource === "kafka_seckill_result"
+              ? intentCreation.createdThroughputPerSecond
+              : ratePerSecond(
+                  createdResults.length,
+                  Math.max(...createdResults.map((result) => result.latencyMs)),
+                ),
         },
         checkoutLifecycle: {
           displayReadyStatusDistribution: countBy(displayReadyResults, (result) => result.status),
@@ -254,7 +295,9 @@ async function main() {
         profiling,
         nats: natsSnapshot,
         notes: [
-          "This benchmark measures the async buy-intent path and stops at CheckoutIntentCreated.",
+          config.createdSource === "kafka_seckill_result"
+            ? "This benchmark measures the seckill Kafka path and treats durable output-topic results as the created boundary."
+            : "This benchmark measures the async buy-intent path and stops at CheckoutIntentCreated.",
           "Bypass mode does not wait for projection queued state, so inventory availability is not used to cap request volume.",
         ],
       };
@@ -268,22 +311,32 @@ async function main() {
       const natsSnapshot = await readNatsSnapshot().catch(() => ({ available: false }));
       const finishedAtIso = new Date().toISOString();
       const failureMessage = error instanceof Error ? error.message : "unknown benchmark failure";
-      const intentCreation = await readIntentCreationMetrics(
-        pool,
-        createdResults
-          .filter(
-            (result) =>
-              result.status === "created" &&
-              typeof result.checkoutIntentId === "string" &&
-              result.checkoutIntentId,
-          )
-          .map((result) => ({
-            checkoutIntentId: result.checkoutIntentId as string,
-            requestStartedAtMs:
-              accepted.find((entry) => entry.commandId === result.commandId)?.requestStartedAtMs ??
-              null,
-          }))
-      );
+      const intentCreation =
+        config.createdSource === "kafka_seckill_result"
+          ? readIntentCreationMetricsFromCreatedResults(
+              createdResults,
+              accepted.map((entry) => ({
+                commandId: entry.commandId,
+                requestStartedAtMs: entry.requestStartedAtMs ?? null,
+                acceptedAtMs: entry.acceptedAtMs,
+              })),
+            )
+          : await readIntentCreationMetrics(
+              pool,
+              createdResults
+                .filter(
+                  (result) =>
+                    result.status === "created" &&
+                    typeof result.checkoutIntentId === "string" &&
+                    result.checkoutIntentId,
+                )
+                .map((result) => ({
+                  checkoutIntentId: result.checkoutIntentId as string,
+                  requestStartedAtMs:
+                    accepted.find((entry) => entry.commandId === result.commandId)
+                      ?.requestStartedAtMs ?? null,
+                })),
+            );
       const artifactPath = await writeBenchmarkArtifact({
         schemaVersion: 1,
         pass: false,
@@ -336,10 +389,13 @@ async function main() {
           created: createdResults.filter((result) => result.status === "created").length,
           duplicates: createdResults.filter((result) => result.isDuplicate).length,
           createdLatencyMs: summarizeLatencies(createdResults.map((result) => result.latencyMs)),
-          createdThroughputPerSecond: ratePerSecond(
-            createdResults.length,
-            Math.max(...createdResults.map((result) => result.latencyMs), 1),
-          ),
+          createdThroughputPerSecond:
+            config.createdSource === "kafka_seckill_result"
+              ? intentCreation.createdThroughputPerSecond
+              : ratePerSecond(
+                  createdResults.length,
+                  Math.max(...createdResults.map((result) => result.latencyMs), 1),
+                ),
         },
         checkoutLifecycle: {
           displayReadyStatusDistribution: countBy(displayReadyResults, (result) => result.status),
@@ -392,8 +448,102 @@ async function main() {
       throw error;
     }
   } finally {
+    await seckillCollector?.stop();
     await pool.end();
   }
+}
+
+function createKafkaClientId() {
+  return `benchmark-seckill-result-${config.runId}`;
+}
+
+async function startSeckillOutcomeCollector(config: BenchmarkConfig) {
+  const kafka = new Kafka({
+    clientId: createKafkaClientId(),
+    brokers: config.kafkaBrokers,
+    logLevel: logLevel.NOTHING,
+  });
+  const consumer = kafka.consumer({
+    groupId: `${createKafkaClientId()}-group`,
+  });
+  const outcomes = new Map<string, CreatedResult>();
+
+  await consumer.connect();
+  await consumer.subscribe({
+    topic: config.seckillResultTopic,
+    fromBeginning: false,
+  });
+
+  await consumer.run({
+    eachMessage: async ({ message }) => {
+      if (!message.value) {
+        return;
+      }
+
+      const outcome = JSON.parse(message.value.toString("utf8")) as SeckillCommandOutcome;
+      const commandId = outcome.result.commandId || outcome.request.command.command_id;
+      const completedAtMs =
+        Number(message.timestamp) || Date.parse(outcome.processedAt || "") || Date.now();
+
+      outcomes.set(commandId, {
+        commandId,
+        status: outcome.result.status === "reserved" ? "created" : "failed",
+        checkoutIntentId: outcome.result.checkoutIntentId,
+        eventId: outcome.result.eventId,
+        isDuplicate: outcome.result.duplicate,
+        latencyMs: completedAtMs,
+        completedAtMs,
+      });
+    },
+  });
+
+  return {
+    async waitForOutcomes(
+      accepted: Array<AcceptResult & { commandId: string; acceptedAtMs: number }>,
+      timeoutMs: number,
+    ) {
+      const acceptedAtByCommandId = new Map(
+        accepted.map((result) => [result.commandId, result.acceptedAtMs] as const),
+      );
+      const pendingCommandIds = new Set(accepted.map((result) => result.commandId));
+      const deadline = Date.now() + timeoutMs;
+      const resultsByCommandId = new Map<string, CreatedResult>();
+
+      while (Date.now() < deadline && pendingCommandIds.size > 0) {
+        for (const commandId of [...pendingCommandIds]) {
+          const outcome = outcomes.get(commandId);
+          const acceptedAtMs = acceptedAtByCommandId.get(commandId);
+
+          if (!outcome || typeof acceptedAtMs !== "number") {
+            continue;
+          }
+
+          resultsByCommandId.set(commandId, {
+            ...outcome,
+            latencyMs: Math.max(0, outcome.latencyMs - acceptedAtMs),
+            completedAtMs: outcome.completedAtMs,
+          });
+          pendingCommandIds.delete(commandId);
+        }
+
+        if (pendingCommandIds.size === 0) {
+          break;
+        }
+
+        await sleep(100);
+      }
+
+      return {
+        results: accepted
+          .map((result) => resultsByCommandId.get(result.commandId))
+          .filter((result): result is CreatedResult => typeof result !== "undefined"),
+        pendingCommandIds: [...pendingCommandIds],
+      };
+    },
+    async stop() {
+      await consumer.disconnect().catch(() => undefined);
+    },
+  };
 }
 
 async function createBuyIntent(index: number): Promise<AcceptResult> {
@@ -502,6 +652,17 @@ async function waitForCreatedStatuses(
       .filter((result): result is CreatedResult => typeof result !== "undefined"),
     pendingCommandIds: [...pendingCommandIds],
   };
+}
+
+async function waitForCreatedSeckillOutcomes(
+  collector: Awaited<ReturnType<typeof startSeckillOutcomeCollector>> | null,
+  accepted: Array<AcceptResult & { commandId: string; acceptedAtMs: number }>,
+) {
+  if (!collector) {
+    throw new Error("Seckill outcome collector is not initialized.");
+  }
+
+  return collector.waitForOutcomes(accepted, config.createdTimeoutMs);
 }
 
 async function waitForCheckoutStatus(
@@ -731,6 +892,55 @@ async function readIntentCreationMetrics(
     createdThroughputPerSecond:
       Number.isFinite(minRequestStartedAtMs) && maxOccurredAtMs >= minRequestStartedAtMs
         ? ratePerSecond(result.rows.length, Math.max(maxOccurredAtMs - minRequestStartedAtMs, 1))
+        : 0,
+    requestToCreatedLatencyMs: summarizeLatencies(latencies),
+  };
+}
+
+function readIntentCreationMetricsFromCreatedResults(
+  createdResults: CreatedResult[],
+  accepted: Array<{ commandId: string; requestStartedAtMs: number | null; acceptedAtMs: number }>,
+) {
+  if (createdResults.length === 0) {
+    return {
+      created: 0,
+      createdThroughputPerSecond: 0,
+      requestToCreatedLatencyMs: summarizeLatencies([]),
+    };
+  }
+
+  const acceptedByCommandId = new Map(
+    accepted.map((entry) => [entry.commandId, entry] as const),
+  );
+  const latencies = createdResults
+    .map((result) => {
+      const acceptedEntry = acceptedByCommandId.get(result.commandId);
+      if (
+        !acceptedEntry ||
+        acceptedEntry.requestStartedAtMs === null ||
+        typeof result.completedAtMs !== "number"
+      ) {
+        return null;
+      }
+
+      return Math.max(0, result.completedAtMs - acceptedEntry.requestStartedAtMs);
+    })
+    .filter((value): value is number => value !== null);
+  const minRequestStartedAtMs = Math.min(
+    ...accepted
+      .map((entry) => entry.requestStartedAtMs)
+      .filter((value): value is number => typeof value === "number"),
+  );
+  const maxCompletedAtMs = Math.max(
+    ...createdResults.map((result) => result.completedAtMs ?? 0),
+    0,
+  );
+
+  return {
+    created: createdResults.length,
+    createdThroughputPerSecond:
+      Number.isFinite(minRequestStartedAtMs) && maxCompletedAtMs >= minRequestStartedAtMs
+        ? ratePerSecond(createdResults.length, Math.max(maxCompletedAtMs - minRequestStartedAtMs, 1))
         : 0,
     requestToCreatedLatencyMs: summarizeLatencies(latencies),
   };
@@ -1006,9 +1216,22 @@ async function maybeStopProfiling(
 }
 
 function readConfig(): BenchmarkConfig {
+  const scenarioName = process.env.BENCHMARK_SCENARIO_NAME ?? "buy-intent-bypass-created";
+  const createdSource =
+    (process.env.BENCHMARK_CREATED_SOURCE as BenchmarkConfig["createdSource"] | undefined) ??
+    (scenarioName.includes("seckill") ? "kafka_seckill_result" : "postgres");
+
   return {
     appUrl: process.env.BENCHMARK_APP_URL ?? "http://localhost:3000",
     databaseUrl: requiredEnv("DATABASE_URL"),
+    kafkaBrokers: (process.env.BENCHMARK_KAFKA_BROKERS ?? "localhost:19092")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean),
+    seckillResultTopic:
+      process.env.BENCHMARK_KAFKA_SECKILL_RESULT_TOPIC ??
+      process.env.KAFKA_SECKILL_RESULT_TOPIC ??
+      "inventory.seckill.result",
     requests: readPositiveIntegerEnv("BENCHMARK_REQUESTS", 20),
     httpConcurrency: readPositiveIntegerEnv("BENCHMARK_HTTP_CONCURRENCY", 10),
     profilingEnabled: process.env.BENCHMARK_PROFILE === "1",
@@ -1018,10 +1241,11 @@ function readConfig(): BenchmarkConfig {
     buyerPrefix: process.env.BENCHMARK_BUYER_PREFIX ?? "benchmark_buyer",
     runId: process.env.BENCHMARK_RUN_ID ?? `bench_${Date.now()}`,
     resultsDir: process.env.BENCHMARK_RESULTS_DIR ?? "benchmark-results",
-    scenarioName: process.env.BENCHMARK_SCENARIO_NAME ?? "buy-intent-bypass-created",
+    scenarioName,
     mode: "bypass",
     createdTimeoutMs: readPositiveIntegerEnv("BENCHMARK_CREATED_TIMEOUT_MS", 60_000),
     resetStateBeforeRun: readBooleanWithDefault("BENCHMARK_RESET_STATE", true),
+    createdSource,
   };
 }
 
