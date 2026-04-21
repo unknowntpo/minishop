@@ -8,6 +8,9 @@ const enabled = ["1", "true", "yes"].includes(String(process.env.OTEL_ENABLED ||
 if (enabled) {
   const serviceName = process.env.OTEL_SERVICE_NAME || process.env.HOSTNAME || "minishop-node";
   const endpointBase = (process.env.OTEL_EXPORTER_OTLP_ENDPOINT || "http://tempo:4318").replace(/\/$/, "");
+  if (!process.env.OTEL_BSP_SCHEDULE_DELAY) {
+    process.env.OTEL_BSP_SCHEDULE_DELAY = "250";
+  }
   const traceExporter = new OTLPTraceExporter({
     url: `${endpointBase}/v1/traces`,
   });
