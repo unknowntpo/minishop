@@ -65,6 +65,38 @@ const catalogSeed = [
   },
 ] as const;
 
+function readOnHandOverrides() {
+  const raw = process.env.SEED_DEV_CATALOG_ON_HAND_OVERRIDES?.trim();
+
+  if (!raw) {
+    return new Map<string, number>();
+  }
+
+  const overrides = new Map<string, number>();
+
+  for (const entry of raw.split(",")) {
+    const [skuIdRaw, onHandRaw] = entry.split(":").map((value) => value?.trim() ?? "");
+
+    if (!skuIdRaw || !onHandRaw) {
+      throw new Error(
+        `Invalid SEED_DEV_CATALOG_ON_HAND_OVERRIDES entry "${entry}". Expected sku_id:on_hand.`,
+      );
+    }
+
+    const onHand = Number.parseInt(onHandRaw, 10);
+
+    if (!Number.isInteger(onHand) || onHand < 0) {
+      throw new Error(
+        `Invalid on_hand override for ${skuIdRaw}: "${onHandRaw}" must be a non-negative integer.`,
+      );
+    }
+
+    overrides.set(skuIdRaw, onHand);
+  }
+
+  return overrides;
+}
+
 const pool = new Pool({
   connectionString: databaseUrl,
   max: 1,
@@ -73,7 +105,11 @@ const pool = new Pool({
 const db = drizzle(pool);
 
 async function seedDevCatalog() {
+  const onHandOverrides = readOnHandOverrides();
+
   for (const item of catalogSeed) {
+    const onHand = onHandOverrides.get(item.skuId) ?? item.onHand;
+
     await db
       .insert(product)
       .values({
@@ -124,20 +160,20 @@ async function seedDevCatalog() {
         skuId: item.skuId,
         aggregateVersion: 0,
         lastEventId: 0,
-        onHand: item.onHand,
+        onHand,
         reserved: 0,
         sold: 0,
-        available: item.onHand,
+        available: onHand,
       })
       .onConflictDoUpdate({
         target: skuInventoryProjection.skuId,
         set: {
           aggregateVersion: 0,
           lastEventId: 0,
-          onHand: item.onHand,
+          onHand,
           reserved: 0,
           sold: 0,
-          available: item.onHand,
+          available: onHand,
           updatedAt: new Date(),
         },
       });
