@@ -381,6 +381,30 @@ services:
       NEXT_TELEMETRY_DISABLED: "1"
     command: ["pnpm", "worker:seckill:result-sink"]
 
+  go-seckill-result-sink:
+    build:
+      context: .
+      dockerfile: Dockerfile.go-seckill-result-sink
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redpanda:
+        condition: service_started
+      tempo:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/minishop
+      DATABASE_POOL_MAX: ${GO_SECKILL_RESULT_SINK_DATABASE_POOL_MAX:-8}
+      KAFKA_BROKERS: ${KAFKA_BROKERS:-redpanda:9092}
+      KAFKA_SECKILL_RESULT_TOPIC: ${KAFKA_SECKILL_RESULT_TOPIC:-inventory.seckill.result}
+      KAFKA_SECKILL_RESULT_SINK_GROUP_ID: ${KAFKA_SECKILL_RESULT_SINK_GROUP_ID:-minishop-seckill-result-sink}
+      KAFKA_SECKILL_RESULT_SINK_CLIENT_ID: ${GO_SECKILL_RESULT_SINK_CLIENT_ID:-minishop-go-seckill-result-sink}
+      KAFKA_SECKILL_RESULT_SINK_PARTITIONS_CONCURRENTLY: ${KAFKA_SECKILL_RESULT_SINK_PARTITIONS_CONCURRENTLY:-6}
+      OTEL_ENABLED: ${OTEL_ENABLED:-1}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://tempo:4318}
+      OTEL_SERVICE_NAME: ${GO_SECKILL_RESULT_SINK_OTEL_SERVICE_NAME:-go-seckill-result-sink}
+
   benchmark-runner:
     profiles: ["benchmark"]
     build:

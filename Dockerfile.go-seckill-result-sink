@@ -1,0 +1,22 @@
+FROM golang:1.24.3-alpine AS build
+
+WORKDIR /src
+
+COPY services/go-seckill-result-sink/go.mod ./services/go-seckill-result-sink/go.mod
+COPY services/go-seckill-result-sink/go.sum ./services/go-seckill-result-sink/go.sum
+
+WORKDIR /src/services/go-seckill-result-sink
+
+RUN go mod download
+
+COPY services/go-seckill-result-sink/. .
+
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/go-seckill-result-sink .
+
+FROM alpine:3.22
+
+WORKDIR /app
+
+COPY --from=build /out/go-seckill-result-sink /app/go-seckill-result-sink
+
+CMD ["/app/go-seckill-result-sink"]
