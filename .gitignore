@@ -13,3 +13,4 @@ coverage/
 benchmark-results/
 profiles/*.jfr
 .idea/
+workers/kafka-seckill/.gradle/
