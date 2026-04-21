@@ -48,6 +48,8 @@ describe("schema rules", () => {
         trace_id: "trace_123",
         source: "web",
         actor_id: "buyer_1",
+        command_id: "00000000-0000-4000-8000-000000000010",
+        correlation_id: "00000000-0000-4000-8000-000000000011",
         traceparent: "00-11111111111111111111111111111111-2222222222222222-01",
         tracestate: "vendor=value",
         baggage: "tenant=minishop",

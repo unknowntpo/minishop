@@ -29,9 +29,14 @@ export async function acceptBuyIntentCommand(
     buyer_id: input.buyer_id,
     items: input.items,
     ...(input.idempotency_key ? { idempotency_key: input.idempotency_key } : {}),
-    metadata: input.metadata,
+    metadata: {
+      ...input.metadata,
+    },
     issued_at: deps.clock.now().toISOString(),
   } satisfies BuyIntentCommand;
+
+  command.metadata.command_id = command.command_id;
+  command.metadata.correlation_id = command.correlation_id;
 
   return await withSpan(
     "buy_intent.accept",

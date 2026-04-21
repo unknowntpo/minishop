@@ -6,6 +6,8 @@ export type EventMetadata = TraceCarrier & {
   trace_id: string;
   source: "web" | "api" | "worker" | "benchmark";
   actor_id: string;
+  command_id?: string;
+  correlation_id?: string;
 };
 
 export function isEventMetadata(value: unknown): value is EventMetadata {

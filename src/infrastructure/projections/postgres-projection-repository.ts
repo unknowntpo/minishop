@@ -63,6 +63,12 @@ export function createPostgresProjectionRepository(pool: Pool): ProjectionReposi
                 "event.aggregate_type": event.aggregateType,
                 "event.aggregate_id": event.aggregateId,
                 "event.store_id": event.id,
+                ...(event.metadata.command_id
+                  ? { "buy_intent.command_id": event.metadata.command_id }
+                  : {}),
+                ...(event.metadata.correlation_id
+                  ? { "buy_intent.correlation_id": event.metadata.correlation_id }
+                  : {}),
               },
             },
             async () => applyProjectionEvent(client, event),
