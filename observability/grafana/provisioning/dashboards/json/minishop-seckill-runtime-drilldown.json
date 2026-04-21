@@ -21,7 +21,7 @@
       },
       "id": 1,
       "options": {
-        "content": "<h2>Seckill Runtime Drilldown</h2><pre>inventory.seckill.requested\n  -> source consumer (read input)\n  -> FixedKeyProcessor\n  -> RocksDB inventory-store / dedupe-store\n  -> retry path: write back to inventory.seckill.requested\n  -> final path: write to inventory.seckill.result\n  -> changelog: dedupe/inventory store changelog topics</pre><p><strong>Metric mapping</strong></p><ul><li><code>input consumed/sec</code>: worker 從 request topic 吃進來</li><li><code>retry writes/sec</code>: worker 自己寫回 request topic，代表 reroute/probe</li><li><code>result writes/sec</code>: final outcome 寫到 result topic</li><li><code>changelog writes/sec</code>: RocksDB state 變更寫回 changelog</li><li><code>partition lag</code>: request topic 各 partition 堆積</li><li><code>bytes by task/sink</code>: 哪些 task / sink topic 比較熱</li></ul>",
+        "content": "<h2>Seckill Runtime Drilldown</h2><pre>inventory.seckill.requested\n  -> source consumer (read input)\n  -> FixedKeyProcessor\n  -> RocksDB inventory-store / dedupe-store\n  -> retry path: write back to inventory.seckill.requested\n  -> final path: write to inventory.seckill.result\n  -> changelog: dedupe/inventory store changelog topics</pre><p><strong>Metric mapping</strong></p><ul><li><code>input consumed/sec</code>: worker \u5f9e request topic \u5403\u9032\u4f86</li><li><code>retry writes/sec</code>: worker \u81ea\u5df1\u5beb\u56de request topic\uff0c\u4ee3\u8868 reroute/probe</li><li><code>result writes/sec</code>: final outcome \u5beb\u5230 result topic</li><li><code>changelog writes/sec</code>: RocksDB state \u8b8a\u66f4\u5beb\u56de changelog</li><li><code>partition lag</code>: request topic \u5404 partition \u5806\u7a4d</li><li><code>bytes by task/sink</code>: \u54ea\u4e9b task / sink topic \u6bd4\u8f03\u71b1</li></ul>",
         "mode": "markdown"
       },
       "pluginVersion": "12.1.1",
@@ -214,6 +214,63 @@
       },
       "fieldConfig": {
         "defaults": {
+          "unit": "percentunit",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 23
+      },
+      "id": 20,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(kafka_producer_producer_topic_metrics_record_send_rate{topic=\"inventory.seckill.requested\"}) / clamp_min(sum(kafka_consumer_consumer_fetch_manager_metrics_records_consumed_rate{topic=\"inventory.seckill.requested\"}), 0.0001)",
+          "legendFormat": "retry/input ratio",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(kafka_producer_producer_topic_metrics_record_send_rate{topic=\"inventory.seckill.result\"}) / clamp_min(sum(kafka_consumer_consumer_fetch_manager_metrics_records_consumed_rate{topic=\"inventory.seckill.requested\"}), 0.0001)",
+          "legendFormat": "result/input ratio",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "(sum(kafka_consumer_consumer_fetch_manager_metrics_records_consumed_rate{topic=\"inventory.seckill.requested\"}) - sum(kafka_producer_producer_topic_metrics_record_send_rate{topic=\"inventory.seckill.result\"})) / clamp_min(sum(kafka_consumer_consumer_fetch_manager_metrics_records_consumed_rate{topic=\"inventory.seckill.requested\"}), 0.0001)",
+          "legendFormat": "(input-result)/input",
+          "refId": "C"
+        }
+      ],
+      "title": "Retry and Finalization Ratios",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
           "unit": "ops"
         },
         "overrides": []
@@ -222,7 +279,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 23
+        "y": 31
       },
       "id": 6,
       "options": {
@@ -278,7 +335,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 23
+        "y": 31
       },
       "id": 7,
       "options": {
