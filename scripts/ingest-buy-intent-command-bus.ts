@@ -66,19 +66,18 @@ async function main() {
       message: JsMsg;
       command: ReturnType<typeof parseBuyIntentCommandContract>;
       parentContext: ReturnType<typeof extractContextFromNatsHeaders>;
-      span: import("@opentelemetry/api").Span;
     }> = [];
 
     for await (const message of messages) {
       emptyBatch = false;
       receivedCount += 1;
       const parentContext = extractContextFromNatsHeaders(message.headers);
-      const span = tracer.startSpan(
-        "buy_intent.ingest_message",
+      const receiveSpan = tracer.startSpan(
+        "buy_intent.ingest_receive",
         {
           attributes: {
             "messaging.system": "nats",
-            "messaging.operation": "process",
+            "messaging.operation": "receive",
             "messaging.destination.name": message.subject,
           },
         },
@@ -87,15 +86,20 @@ async function main() {
 
       try {
         const command = parseBuyIntentCommandContract(buyIntentCommandCodec.decode(message.data));
-        setSpanAttributes(span, {
+        setSpanAttributes(receiveSpan, {
           "buy_intent.command_id": command.command_id,
           "buy_intent.correlation_id": command.correlation_id,
         });
-        stagedBatch.push({ message, command, parentContext, span });
+        receiveSpan.end();
+        stagedBatch.push({
+          message,
+          command,
+          parentContext,
+        });
       } catch (error) {
         if (!isCodecError(error)) {
-          span.recordException(error instanceof Error ? error : new Error(String(error)));
-          span.end();
+          receiveSpan.recordException(error instanceof Error ? error : new Error(String(error)));
+          receiveSpan.end();
           throw error;
         }
 
@@ -107,8 +111,8 @@ async function main() {
         });
         message.ack();
         decodeFailedCount += 1;
-        span.recordException(error instanceof Error ? error : new Error(String(error)));
-        span.end();
+        receiveSpan.recordException(error instanceof Error ? error : new Error(String(error)));
+        receiveSpan.end();
       }
     }
 
@@ -133,9 +137,23 @@ async function main() {
           },
         );
         for (const entry of stagedBatch) {
-          entry.message.ack();
+          await withSpan(
+            "buy_intent.ingest_message",
+            {
+              attributes: {
+                "messaging.system": "nats",
+                "messaging.operation": "process",
+                "messaging.destination.name": entry.message.subject,
+                "buy_intent.command_id": entry.command.command_id,
+                "buy_intent.correlation_id": entry.command.correlation_id,
+              },
+            },
+            async () => {
+              entry.message.ack();
+            },
+            entry.parentContext,
+          );
           stagedCount += 1;
-          entry.span.end();
         }
       } catch (error) {
         for (const entry of stagedBatch) {
@@ -145,8 +163,22 @@ async function main() {
           } catch (nakError) {
             console.error("buy_intent_command_bus_nak_failed", nakError);
           }
-          entry.span.recordException(error instanceof Error ? error : new Error(String(error)));
-          entry.span.end();
+          await withSpan(
+            "buy_intent.ingest_message",
+            {
+              attributes: {
+                "messaging.system": "nats",
+                "messaging.operation": "process",
+                "messaging.destination.name": entry.message.subject,
+                "buy_intent.command_id": entry.command.command_id,
+                "buy_intent.correlation_id": entry.command.correlation_id,
+              },
+            },
+            async (span) => {
+              span.recordException(error instanceof Error ? error : new Error(String(error)));
+            },
+            entry.parentContext,
+          );
         }
         console.error("buy_intent_command_bus_stage_batch_failed", error);
       }
