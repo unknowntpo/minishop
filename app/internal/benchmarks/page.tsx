@@ -13,6 +13,8 @@ type BenchmarkReport = {
   schemaVersion?: number;
   runId: string;
   scenarioName?: string;
+  scenarioFamily?: string;
+  scenarioTags?: Record<string, string | number | boolean>;
   startedAt?: string;
   finishedAt?: string;
   pass?: boolean;
@@ -826,6 +828,7 @@ function RunComparison({
               <span className={`badge ${run.pass ? "success" : "danger"}`}>
                 {run.pass ? "pass" : "fail"}
               </span>
+              <code>{formatScenarioTags(run)}</code>
               <code>{formatConditionSummary(run)}</code>
             </Link>
             {selectedRun?.runId === run.runId ? (
@@ -913,7 +916,7 @@ function SelectedRunPanel({
           <p className="eyebrow">Selected run</p>
           <strong>{displayRunName(run)}</strong>
           <p className="muted admin-panel-copy">
-            {formatDateTime(run.finishedAt)} · {formatConditionSummary(run)} · {run.runId}
+            {formatDateTime(run.finishedAt)} · {formatScenarioTags(run)} · {formatConditionSummary(run)} · {run.runId}
           </p>
         </div>
         <span className={`badge ${run.pass ? "success" : "danger"}`}>
@@ -1490,6 +1493,21 @@ function scenarioNameFor(run: BenchmarkRun) {
   return run.scenarioName ?? run.conditions?.workload?.scenarioName ?? "unknown";
 }
 
+function scenarioFamilyFor(run: BenchmarkRun) {
+  if (run.scenarioFamily) {
+    return run.scenarioFamily;
+  }
+
+  const scenarioName = scenarioNameFor(run);
+  const bucketSweepMatch = scenarioName.match(/^(buy-intent-hot-seckill-steady-state)-bucket-\d+$/);
+
+  if (bucketSweepMatch) {
+    return `${bucketSweepMatch[1]}-buckets`;
+  }
+
+  return scenarioName;
+}
+
 function defaultArchitectureLaneForScenario(scenarioName: string) {
   if (scenarioName === "checkout-postgres-baseline") {
     return "postgres-baseline";
@@ -1599,6 +1617,19 @@ function formatConditionSummary(run: BenchmarkRun) {
   const kafkaClient = run.kafka?.client ? ` · kafka ${run.kafka.client}` : "";
 
   return `${mode} · app ${appInstances} · pg ${pgInstances} · pool ${pgPool} · c ${concurrency}${kafkaClient}`;
+}
+
+function formatScenarioTags(run: BenchmarkRun) {
+  const entries = Object.entries(run.scenarioTags ?? {});
+
+  if (entries.length === 0) {
+    return "n/a";
+  }
+
+  return entries
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `${key}=${String(value)}`)
+    .join(" · ");
 }
 
 function formatMilliseconds(value: number | undefined) {

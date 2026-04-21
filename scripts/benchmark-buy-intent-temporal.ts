@@ -12,6 +12,7 @@ type BenchmarkConfig = {
   appUrl: string;
   databaseUrl: string;
   kafkaBrokers: string[];
+  scenarioFamily?: string;
   seckillRequestTopic: string;
   seckillResultTopic: string;
   seckillDlqTopic: string;
@@ -285,6 +286,8 @@ async function main() {
           acceptResults.length === accepted.length &&
           pendingCreatedCommandIds.length === 0,
         scenarioName: config.scenarioName,
+        scenarioFamily: readScenarioFamily(config),
+        scenarioTags: buildScenarioTags(config),
         runId: config.runId,
         startedAt: startedAtIso,
         finishedAt: finishedAtIso,
@@ -439,6 +442,8 @@ async function main() {
         schemaVersion: 1,
         pass: false,
         scenarioName: config.scenarioName,
+        scenarioFamily: readScenarioFamily(config),
+        scenarioTags: buildScenarioTags(config),
         runId: config.runId,
         startedAt: startedAtIso,
         finishedAt: finishedAtIso,
@@ -1700,7 +1705,7 @@ async function maybeStopProfiling(
 }
 
 function readConfig(): BenchmarkConfig {
-  const scenarioName = process.env.BENCHMARK_SCENARIO_NAME ?? "buy-intent-bypass-created";
+  const scenarioName = process.env.BENCHMARK_SCENARIO_NAME ?? defaultScenarioName();
   const createdSource =
     (process.env.BENCHMARK_CREATED_SOURCE as BenchmarkConfig["createdSource"] | undefined) ??
     (scenarioName.includes("seckill") ? "kafka_seckill_result" : "postgres");
@@ -1708,6 +1713,7 @@ function readConfig(): BenchmarkConfig {
   return {
     appUrl: process.env.BENCHMARK_APP_URL ?? "http://localhost:3000",
     databaseUrl: requiredEnv("DATABASE_URL"),
+    scenarioFamily: process.env.BENCHMARK_SCENARIO_FAMILY?.trim() || undefined,
     kafkaBrokers: (process.env.BENCHMARK_KAFKA_BROKERS ?? "localhost:19092")
       .split(",")
       .map((value) => value.trim())
@@ -1761,6 +1767,38 @@ function readConfig(): BenchmarkConfig {
     steadyStateMeasureMs: readPositiveIntegerEnv("BENCHMARK_STEADY_STATE_MEASURE_MS", 15_000),
     steadyStateCooldownMs: readPositiveIntegerEnv("BENCHMARK_STEADY_STATE_COOLDOWN_MS", 5_000),
   };
+}
+
+function defaultScenarioName() {
+  return "buy-intent-hot-seckill";
+}
+
+function readScenarioFamily(config: BenchmarkConfig) {
+  if (config.scenarioFamily) {
+    return config.scenarioFamily;
+  }
+
+  return config.scenarioName;
+}
+
+function buildScenarioTags(config: BenchmarkConfig) {
+  const tags: Record<string, string | number | boolean> = {
+    ingress: config.ingressSource,
+    style: config.benchmarkStyle,
+  };
+
+  if (config.scenarioName.includes("seckill")) {
+    tags.bucket = config.seckillBucketCount;
+    tags.maxProbe = config.seckillMaxProbe;
+  }
+
+  if (config.benchmarkStyle === "steady_state") {
+    tags.warmupMs = config.steadyStateWarmupMs;
+    tags.measureMs = config.steadyStateMeasureMs;
+    tags.cooldownMs = config.steadyStateCooldownMs;
+  }
+
+  return tags;
 }
 
 async function readKafkaBenchmarkSnapshot(config: BenchmarkConfig) {
