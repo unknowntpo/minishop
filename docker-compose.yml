@@ -301,7 +301,14 @@ services:
       KAFKA_SECKILL_PROCESSING_EXCEPTION_HANDLER: ${KAFKA_SECKILL_PROCESSING_EXCEPTION_HANDLER:-org.apache.kafka.streams.errors.LogAndContinueProcessingExceptionHandler}
       KAFKA_SECKILL_PRODUCTION_EXCEPTION_HANDLER: ${KAFKA_SECKILL_PRODUCTION_EXCEPTION_HANDLER:-org.apache.kafka.streams.errors.DefaultProductionExceptionHandler}
       KAFKA_SECKILL_STATE_DIR: /var/lib/minishop-seckill/state
-      JAVA_TOOL_OPTIONS: ${WORKER_SECKILL_JAVA_TOOL_OPTIONS:--javaagent:/opt/jmx/jmx_prometheus_javaagent.jar=9404:/etc/jmx-exporter/kafka-streams.yml}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://tempo:4318}
+      OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
+      OTEL_SERVICE_NAME: ${WORKER_SECKILL_OTEL_SERVICE_NAME:-worker-seckill}
+      OTEL_TRACES_EXPORTER: ${WORKER_SECKILL_OTEL_TRACES_EXPORTER:-otlp}
+      OTEL_METRICS_EXPORTER: ${WORKER_SECKILL_OTEL_METRICS_EXPORTER:-none}
+      OTEL_LOGS_EXPORTER: ${WORKER_SECKILL_OTEL_LOGS_EXPORTER:-none}
+      OTEL_PROPAGATORS: ${WORKER_SECKILL_OTEL_PROPAGATORS:-tracecontext,baggage}
+      JAVA_TOOL_OPTIONS: ${WORKER_SECKILL_JAVA_TOOL_OPTIONS:--javaagent:/opt/otel/opentelemetry-javaagent.jar -javaagent:/opt/jmx/jmx_prometheus_javaagent.jar=9404:/etc/jmx-exporter/kafka-streams.yml}
     volumes:
       - minishop_seckill_state:/var/lib/minishop-seckill/state
     expose:
