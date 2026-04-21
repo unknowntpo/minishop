@@ -19,6 +19,15 @@ type SeckillSkuRow = {
   seckill_stock_limit: number | null;
 };
 
+type CachedSeckillSkuConfig = {
+  enabled: boolean;
+  stockLimit: number | null;
+  expiresAtMs: number;
+};
+
+const seckillSkuConfigCache = new Map<string, CachedSeckillSkuConfig>();
+const seckillSkuConfigTtlMs = 5_000;
+
 export function createRoutingBuyIntentCommandBus(options: RoutingBuyIntentCommandBusOptions): BuyIntentCommandBus {
   return {
     async publish(command: BuyIntentCommand) {
@@ -34,6 +43,15 @@ export function createRoutingBuyIntentCommandBus(options: RoutingBuyIntentComman
   };
 }
 
+export function invalidateSeckillSkuConfigCache(skuId?: string) {
+  if (typeof skuId === "string" && skuId.trim()) {
+    seckillSkuConfigCache.delete(skuId.trim());
+    return;
+  }
+
+  seckillSkuConfigCache.clear();
+}
+
 async function toSeckillRequest(
   command: BuyIntentCommand,
   pool: Pool,
@@ -45,20 +63,9 @@ async function toSeckillRequest(
   }
 
   const [item] = command.items;
+  const config = await readSeckillSkuConfig(pool, item.sku_id);
 
-  const result = await pool.query<SeckillSkuRow>(
-    `
-      select seckill_enabled, seckill_stock_limit
-      from sku
-      where sku_id = $1
-      limit 1
-    `,
-    [item.sku_id],
-  );
-
-  const row = result.rows[0];
-
-  if (!row?.seckill_enabled || row.seckill_stock_limit === null) {
+  if (!config.enabled || config.stockLimit === null) {
     return null;
   }
 
@@ -68,7 +75,7 @@ async function toSeckillRequest(
   return {
     sku_id: item.sku_id,
     quantity: item.quantity,
-    seckill_stock_limit: row.seckill_stock_limit,
+    seckill_stock_limit: config.stockLimit,
     bucket_count: bucketCount,
     primary_bucket_id: primaryBucketId,
     bucket_id: primaryBucketId,
@@ -77,6 +84,40 @@ async function toSeckillRequest(
     processing_key: buildProcessingKey(item.sku_id, primaryBucketId),
     command,
   } satisfies SeckillBuyIntentRequest;
+}
+
+async function readSeckillSkuConfig(pool: Pool, skuId: string) {
+  const now = Date.now();
+  const cached = seckillSkuConfigCache.get(skuId);
+  if (cached && cached.expiresAtMs > now) {
+    return {
+      enabled: cached.enabled,
+      stockLimit: cached.stockLimit,
+    };
+  }
+
+  const result = await pool.query<SeckillSkuRow>(
+    `
+      select seckill_enabled, seckill_stock_limit
+      from sku
+      where sku_id = $1
+      limit 1
+    `,
+    [skuId],
+  );
+
+  const row = result.rows[0];
+  const config = {
+    enabled: row?.seckill_enabled ?? false,
+    stockLimit: row?.seckill_stock_limit ?? null,
+  };
+
+  seckillSkuConfigCache.set(skuId, {
+    ...config,
+    expiresAtMs: now + seckillSkuConfigTtlMs,
+  });
+
+  return config;
 }
 
 function selectPrimaryBucket(stableKey: string, bucketCount: number) {

@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server";
 
 import { postgresAdminDashboardRepository } from "@/src/infrastructure/admin";
+import { invalidateSeckillSkuConfigCache } from "@/src/infrastructure/checkout-command/routing-buy-intent-command-bus";
 import {
   apiErrorBody,
   getRequestContext,
@@ -47,6 +48,7 @@ export async function POST(request: NextRequest) {
   try {
     const body = parseRequest(await request.json());
     await postgresAdminDashboardRepository.updateSeckillConfig(body);
+    invalidateSeckillSkuConfigCache(body.skuId);
 
     return NextResponse.json(
       {

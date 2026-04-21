@@ -26,6 +26,7 @@ type BenchmarkConfig = {
   createdTimeoutMs: number;
   resetStateBeforeRun: boolean;
   createdSource: "postgres" | "kafka_seckill_result";
+  ensureSeckillEnabled: boolean;
 };
 
 type AcceptResult = {
@@ -110,6 +111,13 @@ async function main() {
       : null;
 
   try {
+    if (config.ensureSeckillEnabled) {
+      await ensureBenchmarkSeckillEnabled(pool, config);
+      // Seckill routing is cached in each app process. Let stale false entries expire
+      // before the run so the benchmark actually exercises the Kafka path.
+      await sleep(5_500);
+    }
+
     if (config.resetStateBeforeRun) {
       await resetBuyIntentBenchmarkState(pool, config.mode);
     }
@@ -463,10 +471,25 @@ async function startSeckillOutcomeCollector(config: BenchmarkConfig) {
     brokers: config.kafkaBrokers,
     logLevel: logLevel.NOTHING,
   });
+  const admin = kafka.admin();
   const consumer = kafka.consumer({
     groupId: `${createKafkaClientId()}-group`,
   });
   const outcomes = new Map<string, CreatedResult>();
+
+  await admin.connect();
+  const startingOffsets = await admin.fetchTopicOffsets(config.seckillResultTopic);
+  await admin.disconnect();
+
+  let resolveGroupJoin: (() => void) | null = null;
+  const groupJoined = new Promise<void>((resolve) => {
+    resolveGroupJoin = resolve;
+  });
+
+  const removeGroupJoinListener = consumer.on(consumer.events.GROUP_JOIN, () => {
+    resolveGroupJoin?.();
+    resolveGroupJoin = null;
+  });
 
   await consumer.connect();
   await consumer.subscribe({
@@ -496,6 +519,20 @@ async function startSeckillOutcomeCollector(config: BenchmarkConfig) {
       });
     },
   });
+
+  await groupJoined;
+  removeGroupJoinListener();
+
+  for (const partitionOffset of startingOffsets) {
+    consumer.seek({
+      topic: config.seckillResultTopic,
+      partition: partitionOffset.partition,
+      offset: partitionOffset.offset,
+    });
+  }
+
+  // Give the seeks time to take effect before we start issuing requests.
+  await sleep(250);
 
   return {
     async waitForOutcomes(
@@ -1246,6 +1283,9 @@ function readConfig(): BenchmarkConfig {
     createdTimeoutMs: readPositiveIntegerEnv("BENCHMARK_CREATED_TIMEOUT_MS", 60_000),
     resetStateBeforeRun: readBooleanWithDefault("BENCHMARK_RESET_STATE", true),
     createdSource,
+    ensureSeckillEnabled:
+      process.env.BENCHMARK_ENSURE_SECKILL_ENABLED === "1" ||
+      (process.env.BENCHMARK_ENSURE_SECKILL_ENABLED !== "0" && scenarioName.includes("seckill")),
   };
 }
 
@@ -1320,6 +1360,19 @@ async function resetBuyIntentBenchmarkState(pool: Pool, _mode: "bypass") {
   }
 
   await sleep(500);
+}
+
+async function ensureBenchmarkSeckillEnabled(pool: Pool, config: BenchmarkConfig) {
+  await pool.query(
+    `
+      update sku
+      set
+        seckill_enabled = true,
+        seckill_stock_limit = greatest(coalesce(seckill_stock_limit, 0), $2::integer)
+      where sku_id = $1
+    `,
+    [config.skuId, config.requests],
+  );
 }
 
 main().catch((error) => {
