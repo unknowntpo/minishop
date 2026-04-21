@@ -789,7 +789,70 @@ function ComparisonChart({
         (typeof point.x === "number" ? formatNumber(point.x) : String(point.x || `r${index + 1}`)),
     };
   });
-  const polyline = plottedPoints.map(({ chartX, chartY }) => `${chartX},${chartY}`).join(" ");
+  const groupedPoints = new Map<
+    string,
+    {
+      x: number | string;
+      tickLabel: string;
+      points: Array<(typeof plottedPoints)[number]>;
+    }
+  >();
+
+  for (const point of plottedPoints) {
+    const key = String(point.x);
+    const current = groupedPoints.get(key);
+
+    if (current) {
+      current.points.push(point);
+      continue;
+    }
+
+    groupedPoints.set(key, {
+      x: point.x,
+      tickLabel: point.tickLabel,
+      points: [point],
+    });
+  }
+
+  const aggregatedPoints = [...groupedPoints.values()]
+    .map((group, index) => {
+      const sortedYValues = group.points.map((point) => point.y).sort((left, right) => left - right);
+      const medianIndex = Math.floor(sortedYValues.length / 2);
+      const medianValue =
+        sortedYValues.length % 2 === 0
+          ? (sortedYValues[medianIndex - 1] + sortedYValues[medianIndex]) / 2
+          : sortedYValues[medianIndex];
+      const x =
+        groupedPoints.size === 1
+          ? 198
+          : numericXAxis
+            ? maxX === minX
+              ? 198
+              : 44 + ((((group.x as number) - minX) / (maxX - minX)) * 304)
+            : 44 + (index / Math.max(groupedPoints.size - 1, 1)) * 304;
+      const y = 176 - (medianValue / max) * 120;
+
+      return {
+        chartX: x,
+        chartY: y,
+        count: group.points.length,
+        maxValue: Math.max(...sortedYValues),
+        minValue: Math.min(...sortedYValues),
+        medianValue,
+        tickLabel: group.tickLabel,
+        x: group.x,
+      };
+    })
+    .sort((left, right) => {
+      if (numericXAxis) {
+        return (left.x as number) - (right.x as number);
+      }
+
+      return String(left.x).localeCompare(String(right.x));
+    });
+  const polyline = aggregatedPoints
+    .map(({ chartX, chartY }) => `${chartX},${chartY}`)
+    .join(" ");
 
   return (
     <article className="benchmark-comparison-card">
@@ -838,41 +901,55 @@ function ComparisonChart({
         <line className="capacity-axis" x1="44" y1="176" x2="348" y2="176" />
         <polyline className="capacity-axis-arrow" points="36,36 44,28 52,36" />
         <polyline className="capacity-axis-arrow" points="340,168 348,176 340,184" />
+        {plottedPoints.map(({ run, chartX, chartY, y, tickLabel }) => (
+          <circle
+            key={`raw-${run.artifactFile}`}
+            className={`capacity-point-raw${run.pass ? "" : " preview"}`}
+            cx={chartX}
+            cy={chartY}
+            fill={run.pass ? "#2e9462" : "#b75f4b"}
+            r={2.75}
+          >
+            <title>
+              {`${tickLabel} · ${formatPlotHoverValue(y, unit)}\n${displayRunName(run)}\n${run.runId}\n${formatScenarioTags(run)}`}
+            </title>
+          </circle>
+        ))}
         <polyline className="capacity-line" points={polyline} stroke="#2e9462" />
-        {plottedPoints.map(({ run, index, y, chartX, chartY, tickLabel }) => {
-          const hoverText = `${tickLabel} ${run.runId}: ${values[index]}${unit ? ` ${unit}` : ""}\n${formatConditionSummary(
-            run,
-          )}\n${displayRunName(run)}\nHTTP ${formatDistribution(run.requestPath?.statusDistribution)}`;
+        {aggregatedPoints.map(({ chartX, chartY, count, maxValue, medianValue, minValue, tickLabel, x }) => {
           const tooltipY = chartY < 92 ? Math.min(chartY + 12, 168) : Math.max(chartY - 86, 6);
 
           return (
-            <g className="capacity-point-group" key={run.artifactFile} tabIndex={0}>
+            <g className="capacity-point-group" key={`aggregate-${String(x)}`} tabIndex={0}>
               <circle
-                className={`capacity-point${run.pass ? "" : " preview"}`}
+                className="capacity-point"
                 cx={chartX}
                 cy={chartY}
-                fill={run.pass ? "#2e9462" : "#b75f4b"}
+                fill="#2e9462"
                 r={4}
               />
               <foreignObject
                 className="capacity-point-tooltip"
-                height="60"
+                height="78"
                 width="132"
                 x={Math.min(Math.max(chartX - 54, 10), 214)}
                 y={tooltipY}
               >
                 <div className="capacity-point-tooltip-card">
                   <strong>{tickLabel}</strong>
-                  <span>{formatPlotHoverValue(values[index], unit)}</span>
-                  <span>{formatScenarioTags(run)}</span>
+                  <span>median {formatPlotHoverValue(medianValue, unit)}</span>
+                  <span>
+                    {count} run{count === 1 ? "" : "s"} · min {formatPlotHoverValue(minValue, unit)}
+                  </span>
+                  <span>max {formatPlotHoverValue(maxValue, unit)}</span>
                 </div>
               </foreignObject>
-              <title>{hoverText}</title>
+              <title>{`${tickLabel}: ${count} run${count === 1 ? "" : "s"}, median ${formatPlotHoverValue(medianValue, unit)}, min ${formatPlotHoverValue(minValue, unit)}, max ${formatPlotHoverValue(maxValue, unit)}`}</title>
             </g>
           );
         })}
-        {plottedPoints.map(({ run, chartX, tickLabel }) => (
-          <text className="capacity-axis-label" key={run.artifactFile} x={chartX} y="200">
+        {aggregatedPoints.map(({ chartX, tickLabel, x }) => (
+          <text className="capacity-axis-label" key={`label-${String(x)}`} x={chartX} y="200">
             {tickLabel}
           </text>
         ))}
