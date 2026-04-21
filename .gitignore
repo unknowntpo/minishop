@@ -12,3 +12,4 @@ coverage/
 .env*.local
 benchmark-results/
 profiles/*.jfr
+.idea/
