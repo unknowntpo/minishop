@@ -214,6 +214,12 @@ async function processProjections() {
     }),
   });
 
+  if (response.status === 409) {
+    return {
+      locked: false,
+    } as const;
+  }
+
   if (!response.ok) {
     throw new Error(await readError(response));
   }
@@ -222,9 +228,7 @@ async function processProjections() {
     locked: boolean;
   };
 
-  if (!body.locked) {
-    throw new Error("Projection processing is busy. Please try again.");
-  }
+  return body;
 }
 
 async function waitForCheckoutIntentProjection(checkoutIntentId: string) {
