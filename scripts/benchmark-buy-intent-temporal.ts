@@ -1327,22 +1327,23 @@ async function readIntentCreationMetrics(
   const occurredAtByCheckoutIntentId = new Map(
     result.rows.map((row) => [row.aggregate_id, Date.parse(row.occurred_at)] as const),
   );
-  const latencies = intents
-    .map((entry) => {
-      const occurredAtMs = occurredAtByCheckoutIntentId.get(entry.checkoutIntentId);
-      if (!occurredAtMs || entry.requestStartedAtMs === null) {
-        return null;
-      }
+  const latencies: number[] = [];
+  let minRequestStartedAtMs = Number.POSITIVE_INFINITY;
+  let maxOccurredAtMs = 0;
 
-      return Math.max(0, occurredAtMs - entry.requestStartedAtMs);
-    })
-    .filter((value): value is number => value !== null);
-  const minRequestStartedAtMs = Math.min(
-    ...intents
-      .map((entry) => entry.requestStartedAtMs)
-      .filter((value): value is number => typeof value === "number"),
-  );
-  const maxOccurredAtMs = Math.max(...result.rows.map((row) => Date.parse(row.occurred_at)), 0);
+  for (const entry of intents) {
+    if (typeof entry.requestStartedAtMs === "number") {
+      minRequestStartedAtMs = Math.min(minRequestStartedAtMs, entry.requestStartedAtMs);
+    }
+
+    const occurredAtMs = occurredAtByCheckoutIntentId.get(entry.checkoutIntentId);
+    if (!occurredAtMs || entry.requestStartedAtMs === null) {
+      continue;
+    }
+
+    maxOccurredAtMs = Math.max(maxOccurredAtMs, occurredAtMs);
+    latencies.push(Math.max(0, occurredAtMs - entry.requestStartedAtMs));
+  }
 
   return {
     created: result.rows.length,
@@ -1369,29 +1370,31 @@ function readIntentCreationMetricsFromCreatedResults(
   const acceptedByCommandId = new Map(
     accepted.map((entry) => [entry.commandId, entry] as const),
   );
-  const latencies = createdResults
-    .map((result) => {
-      const acceptedEntry = acceptedByCommandId.get(result.commandId);
-      if (
-        !acceptedEntry ||
-        acceptedEntry.requestStartedAtMs === null ||
-        typeof result.completedAtMs !== "number"
-      ) {
-        return null;
-      }
+  const latencies: number[] = [];
+  let minRequestStartedAtMs = Number.POSITIVE_INFINITY;
+  let maxCompletedAtMs = 0;
 
-      return Math.max(0, result.completedAtMs - acceptedEntry.requestStartedAtMs);
-    })
-    .filter((value): value is number => value !== null);
-  const minRequestStartedAtMs = Math.min(
-    ...accepted
-      .map((entry) => entry.requestStartedAtMs)
-      .filter((value): value is number => typeof value === "number"),
-  );
-  const maxCompletedAtMs = Math.max(
-    ...createdResults.map((result) => result.completedAtMs ?? 0),
-    0,
-  );
+  for (const entry of accepted) {
+    if (typeof entry.requestStartedAtMs === "number") {
+      minRequestStartedAtMs = Math.min(minRequestStartedAtMs, entry.requestStartedAtMs);
+    }
+  }
+
+  for (const result of createdResults) {
+    const acceptedEntry = acceptedByCommandId.get(result.commandId);
+    const completedAtMs = result.completedAtMs ?? 0;
+    maxCompletedAtMs = Math.max(maxCompletedAtMs, completedAtMs);
+
+    if (
+      !acceptedEntry ||
+      acceptedEntry.requestStartedAtMs === null ||
+      typeof result.completedAtMs !== "number"
+    ) {
+      continue;
+    }
+
+    latencies.push(Math.max(0, result.completedAtMs - acceptedEntry.requestStartedAtMs));
+  }
 
   return {
     created: createdResults.length,
@@ -1468,7 +1471,7 @@ function summarizeLatencies(values: number[]) {
     p50: percentile(values, 50),
     p95: percentile(values, 95),
     p99: percentile(values, 99),
-    max: Math.max(0, ...values),
+    max: values.length === 0 ? 0 : values.reduce((max, value) => Math.max(max, value), 0),
   };
 }
 
