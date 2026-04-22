@@ -463,3 +463,69 @@ Conclusion:
 - for this rerun, there is no strong throughput winner; `10ms`, `50ms`, and `250ms` are effectively in the same band
 - if forced to choose one setting from this rerun alone, `250ms` is the safest default because it stayed near the top throughput band while also giving the best p95
 - because these results materially differ from the earlier local sweep, `GO_SECKILL_RESULT_SINK_MAX_WAIT_MS` should currently be treated as **sensitive to environment / run conditions**, not as a settled single-knob win
+
+## Partition routing finding
+
+The earlier low or unstable HTTP-path seckill throughput was materially affected by a partition-routing bug, not just by normal ingress-runtime cost.
+
+What was wrong:
+
+- the seckill design expected `bucket_id -> Kafka partition`
+- but the Go producers were using `franz-go` without `ManualPartitioner()`
+- this meant setting `record.Partition` did not actually force the intended partition
+- at the same time, some services and benchmark paths were still defaulting to `16` buckets while the rebuilt request/result topics had been reduced to `4` partitions
+
+Observed failure shape before the fix:
+
+- Go HTTP benchmark sometimes returned large numbers of `HTTP 500`
+- `go-backend` logs showed:
+  - `invalid record partitioning choice of 14 from 4 available`
+- request-topic traffic shape was visibly wrong or unstable, because the producer-side partition intent and actual broker-side partitioning were not aligned
+
+Why this mattered for throughput:
+
+- work was not consistently routed to the intended shard
+- some requests failed at publish time
+- some runs mixed `16-bucket` routing decisions with `4-partition` topics
+- this depressed measured HTTP-path throughput and made the earlier results noisier than they should have been
+
+Fix:
+
+- add `kgo.RecordPartitioner(kgo.ManualPartitioner())` to the Go producers
+- explicitly publish seckill requests to `partition = bucket_id`
+- align the seckill bucket/topic defaults so benchmark, Go backend, Go ingress, worker, and sink all use the same `bucket=4` / `partitions=4` shape
+
+Post-fix evidence:
+
+- direct Kafka seckill topology benchmark (`10010` requests) now shows clean 4-way spread:
+  - request topic:
+    - `p0 = 2508`
+    - `p1 = 2508`
+    - `p2 = 2504`
+    - `p3 = 2504`
+  - result topic:
+    - `p0 = 2521`
+    - `p1 = 2521`
+    - `p2 = 2518`
+    - `p3 = 2518`
+- the same direct Kafka topology run reached:
+  - `queued/sec = 7496.95`
+  - `result topic throughput = 7855.19`
+  - `p95 = 70.34ms`
+- after the fix, the Go HTTP benchmark no longer produced request-path 500s:
+  - `accepted = 10010 / 10010`
+  - `errors = 0`
+  - `queued/sec = 1694.06`
+  - `p95 = 287.25ms`
+
+Interpretation:
+
+- yes, the earlier lower HTTP throughput was materially caused by partition-routing misconfiguration
+- the gap was not only "Go HTTP is slower than direct Kafka"
+- part of the observed loss came from publishing to the wrong or invalid partition shape
+- after the fix, the remaining gap between `direct_kafka` and `http` is a cleaner measurement of real HTTP/backend overhead rather than a routing bug
+
+Blog note:
+
+- a good short framing for a future blog post is:
+  - "We thought the bottleneck was Go-vs-Node ingress runtime. The bigger bug was that our Kafka partition intent was not actually being enforced. Once `bucket -> partition` became explicit and the whole stack agreed on the same bucket count, the seckill topology spread evenly and the misleading HTTP-path failures disappeared."
