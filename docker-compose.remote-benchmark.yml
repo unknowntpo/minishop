@@ -1,0 +1,45 @@
+services:
+  app:
+    command: >
+      sh -lc "pnpm --config.engine-strict=false db:migrate &&
+      SEED_DEV_CATALOG_ON_HAND_OVERRIDES=sku_hot_001:200000 npx tsx scripts/seed-dev-catalog.ts &&
+      pnpm start"
+    environment:
+      OTEL_ENABLED: "0"
+
+  go-seckill-ingress:
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redpanda:
+        condition: service_started
+    environment:
+      OTEL_ENABLED: "0"
+      OTEL_EXPORTER_OTLP_ENDPOINT: ""
+
+  worker-seckill:
+    environment:
+      OTEL_TRACES_EXPORTER: none
+      OTEL_METRICS_EXPORTER: none
+      OTEL_LOGS_EXPORTER: none
+      OTEL_EXPORTER_OTLP_ENDPOINT: ""
+
+  go-seckill-result-sink:
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redpanda:
+        condition: service_started
+    environment:
+      OTEL_ENABLED: "0"
+      OTEL_EXPORTER_OTLP_ENDPOINT: ""
+
+  benchmark-runner:
+    volumes:
+      - benchmark_results:/app/benchmark-results
+    environment:
+      OTEL_ENABLED: "0"
+      OTEL_EXPORTER_OTLP_ENDPOINT: ""
+
+volumes:
+  benchmark_results:
