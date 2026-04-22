@@ -56,6 +56,7 @@ type config struct {
 	kafkaLingerMs        int
 	kafkaCompression     string
 	seckillConfigTTL     time.Duration
+	forcedSeckillSKUs    map[string]int
 	serviceName          string
 	otlpEndpoint         string
 	otelEnabled          bool
@@ -536,6 +537,7 @@ func readConfig() config {
 		kafkaLingerMs:        envInt("KAFKA_SECKILL_CLIENT_LINGER_MS", 1),
 		kafkaCompression:     envDefault("KAFKA_SECKILL_CLIENT_COMPRESSION", "none"),
 		seckillConfigTTL:     time.Duration(envInt("KAFKA_SECKILL_CONFIG_CACHE_TTL_MS", 60000)) * time.Millisecond,
+		forcedSeckillSKUs:    readForcedSeckillSKUs(),
 		serviceName:          envDefault("OTEL_SERVICE_NAME", "go-backend"),
 		otlpEndpoint:         envDefault("OTEL_EXPORTER_OTLP_ENDPOINT", "http://tempo:4318"),
 		otelEnabled:          envDefault("OTEL_ENABLED", "1") != "0",
@@ -941,6 +943,14 @@ func (a *app) classifyItemsForSeckill(ctx context.Context, items []requestItem) 
 			return seckillRoutingDecision{}, errMixedCartWithSeckill
 		}
 		return seckillRoutingDecision{kind: "default"}, nil
+	}
+
+	if stockLimit, ok := a.cfg.forcedSeckillSKUs[items[0].SkuID]; ok && stockLimit > 0 {
+		return seckillRoutingDecision{
+			kind:       "single_seckill",
+			skuID:      items[0].SkuID,
+			stockLimit: stockLimit,
+		}, nil
 	}
 
 	cfg, err := a.readSeckillConfig(ctx, items[0].SkuID)
@@ -1939,6 +1949,42 @@ func selectPrimaryBucket(stableKey string, bucketCount int) int {
 
 func buildProcessingKey(skuID string, bucketID int) string {
 	return fmt.Sprintf("%s#%02d", skuID, bucketID)
+}
+
+func readForcedSeckillSKUs() map[string]int {
+	raw := strings.TrimSpace(os.Getenv("GO_BACKEND_FORCE_SECKILL_SKUS"))
+	if raw == "" {
+		return nil
+	}
+
+	defaultStockLimit := envInt("GO_BACKEND_FORCE_SECKILL_STOCK_LIMIT", 0)
+	configs := make(map[string]int)
+	for _, token := range strings.Split(raw, ",") {
+		entry := strings.TrimSpace(token)
+		if entry == "" {
+			continue
+		}
+
+		skuID := entry
+		stockLimit := defaultStockLimit
+		if strings.Contains(entry, ":") {
+			parts := strings.SplitN(entry, ":", 2)
+			skuID = strings.TrimSpace(parts[0])
+			if parsed, err := strconv.Atoi(strings.TrimSpace(parts[1])); err == nil && parsed > 0 {
+				stockLimit = parsed
+			}
+		}
+
+		if skuID == "" || stockLimit <= 0 {
+			continue
+		}
+		configs[skuID] = stockLimit
+	}
+
+	if len(configs) == 0 {
+		return nil
+	}
+	return configs
 }
 
 func normalizeSeckillPartition(bucketID int) int32 {
