@@ -20,7 +20,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
-	"github.com/segmentio/kafka-go"
+	"github.com/twmb/franz-go/pkg/kgo"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -130,7 +130,7 @@ type skuConfigCache struct {
 type app struct {
 	cfg      config
 	db       *sql.DB
-	writer   *kafka.Writer
+	writer   *kgo.Client
 	cache    *skuConfigCache
 	tracer   trace.Tracer
 	shutdown func(context.Context) error
@@ -158,17 +158,15 @@ func main() {
 	db.SetMaxIdleConns(cfg.databasePoolMax)
 	db.SetConnMaxLifetime(5 * time.Minute)
 
-	writer := &kafka.Writer{
-		Addr:         kafka.TCP(cfg.kafkaBrokers...),
-		Topic:        cfg.kafkaRequestTopic,
-		Balancer:     &kafka.LeastBytes{},
-		BatchTimeout: time.Duration(cfg.kafkaLingerMs) * time.Millisecond,
-		BatchSize:    cfg.kafkaBatchSize,
-		RequiredAcks: kafka.RequireAll,
-		Async:        false,
-		Transport: &kafka.Transport{
-			ClientID: cfg.kafkaClientID,
-		},
+	writer, err := kgo.NewClient(
+		kgo.SeedBrokers(cfg.kafkaBrokers...),
+		kgo.ClientID(cfg.kafkaClientID),
+		kgo.RequiredAcks(kgo.AllISRAcks()),
+		kgo.ProducerLinger(time.Duration(cfg.kafkaLingerMs)*time.Millisecond),
+		kgo.MaxBufferedRecords(cfg.kafkaBatchSize),
+	)
+	if err != nil {
+		log.Fatalf("create kafka client: %v", err)
 	}
 
 	instance := &app{
@@ -212,7 +210,7 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = server.Shutdown(ctx)
-	_ = writer.Close()
+	writer.Close()
 	_ = db.Close()
 }
 
@@ -244,15 +242,10 @@ func (a *app) warmUp(ctx context.Context) error {
 	}
 	_ = conn.Close()
 
-	dialer := &kafka.Dialer{
-		ClientID: a.cfg.kafkaClientID,
-		Timeout:  5 * time.Second,
+	if err := a.writer.Ping(ctx); err != nil {
+		return fmt.Errorf("kafka ping: %w", err)
 	}
-	connKafka, err := dialer.DialContext(ctx, "tcp", a.cfg.kafkaBrokers[0])
-	if err != nil {
-		return fmt.Errorf("kafka dial: %w", err)
-	}
-	return connKafka.Close()
+	return nil
 }
 
 func (a *app) handleBuyIntents(w http.ResponseWriter, r *http.Request) {
@@ -395,10 +388,10 @@ func (a *app) handleBuyIntents(w http.ResponseWriter, r *http.Request) {
 		attribute.Int("messaging.kafka.batch_timeout_ms", a.cfg.kafkaLingerMs),
 		attribute.Int("messaging.kafka.broker_count", len(a.cfg.kafkaBrokers)),
 	)
-	headers := make([]kafka.Header, 0, 3)
+	headers := make([]kgo.RecordHeader, 0, 3)
 	for _, key := range []string{"traceparent", "tracestate", "baggage"} {
 		if value := traceCarrier[key]; value != "" {
-			headers = append(headers, kafka.Header{Key: key, Value: []byte(value)})
+			headers = append(headers, kgo.RecordHeader{Key: key, Value: []byte(value)})
 		}
 	}
 	writeCtx, writeSpan := a.tracer.Start(publishCtx, "kafka.write_messages")
@@ -406,12 +399,14 @@ func (a *app) handleBuyIntents(w http.ResponseWriter, r *http.Request) {
 		attribute.String("messaging.destination.name", a.cfg.kafkaRequestTopic),
 		attribute.String("messaging.kafka.message_key", request.ProcessingKey),
 	)
-	err = a.writer.WriteMessages(writeCtx, kafka.Message{
-		Key:     []byte(request.ProcessingKey),
-		Value:   payload,
-		Time:    time.Now().UTC(),
-		Headers: headers,
-	})
+	record := &kgo.Record{
+		Topic:     a.cfg.kafkaRequestTopic,
+		Key:       []byte(request.ProcessingKey),
+		Value:     payload,
+		Timestamp: time.Now().UTC(),
+		Headers:   headers,
+	}
+	err = a.writer.ProduceSync(writeCtx, record).FirstErr()
 	if err != nil {
 		writeSpan.RecordError(err)
 		writeSpan.SetStatus(codes.Error, "write_failed")
