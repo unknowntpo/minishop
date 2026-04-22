@@ -75,3 +75,11 @@ rules:
       sku: "$1"
       bucket: "$2"
     type: GAUGE
+  - pattern: 'dev.minishop.seckill<type=RetryEdgeMetrics, sku="([^"]+)", from_bucket=([^,]+), to_bucket=([^,]+), attempt=([^,]+)><>ScheduledTotal'
+    name: minishop_seckill_retry_edge_scheduled_total
+    labels:
+      sku: "$1"
+      from_bucket: "$2"
+      to_bucket: "$3"
+      attempt: "$4"
+    type: COUNTER

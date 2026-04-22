@@ -45,6 +45,7 @@ private const val DEDUPE_STORE_NAME = "dedupe-store"
 private const val RETRY_KEY_PREFIX = "retry|"
 private const val RESULT_KEY_PREFIX = "result|"
 private val bucketMetricsRegistry = SeckillBucketMetricsRegistry()
+private val retryEdgeMetricsRegistry = SeckillRetryEdgeMetricsRegistry()
 
 fun main() {
     val config = AppConfig.fromEnv()
@@ -301,6 +302,14 @@ class SeckillDecisionProcessor(
         if (request.attempt + 1 < request.max_probe && request.bucket_count > 1) {
             val nextBucketId = (request.primary_bucket_id + request.attempt + 1) % request.bucket_count
             bucketMetrics.incrementRetryScheduled()
+            retryEdgeMetricsRegistry
+                .forEdge(
+                    skuId = request.sku_id,
+                    fromBucketId = request.bucket_id,
+                    toBucketId = nextBucketId,
+                    nextAttempt = request.attempt + 1,
+                )
+                .incrementScheduled()
             val retryRequest = request.copy(
                 bucket_id = nextBucketId,
                 attempt = request.attempt + 1,
@@ -379,6 +388,10 @@ interface SeckillBucketMetricsMBean {
     fun getConfiguredStockLimit(): Int
     fun getAcceptedUnits(): Int
     fun getRemaining(): Int
+}
+
+interface SeckillRetryEdgeMetricsMBean {
+    fun getScheduledTotal(): Long
 }
 
 class SeckillBucketMetrics(
@@ -461,12 +474,52 @@ class SeckillBucketMetrics(
     override fun getRemaining(): Int = remaining.get()
 }
 
+class SeckillRetryEdgeMetrics(
+    private val skuId: String,
+    private val fromBucketId: Int,
+    private val toBucketId: Int,
+    private val nextAttempt: Int,
+) : SeckillRetryEdgeMetricsMBean {
+    private val scheduledTotal = AtomicLong()
+
+    fun register(): SeckillRetryEdgeMetrics {
+        val server = ManagementFactory.getPlatformMBeanServer()
+        val objectName = ObjectName(
+            "dev.minishop.seckill:type=RetryEdgeMetrics,sku=${ObjectName.quote(skuId)},from_bucket=${fromBucketId.toString().padStart(2, '0')},to_bucket=${toBucketId.toString().padStart(2, '0')},attempt=${nextAttempt.toString().padStart(2, '0')}",
+        )
+        if (!server.isRegistered(objectName)) {
+            server.registerMBean(this, objectName)
+        }
+        return this
+    }
+
+    fun incrementScheduled() {
+        scheduledTotal.incrementAndGet()
+    }
+
+    override fun getScheduledTotal(): Long = scheduledTotal.get()
+}
+
 class SeckillBucketMetricsRegistry {
     private val metrics = ConcurrentHashMap<String, SeckillBucketMetrics>()
 
     fun forBucket(skuId: String, bucketId: Int): SeckillBucketMetrics =
         metrics.computeIfAbsent("$skuId#$bucketId") {
             SeckillBucketMetrics(skuId, bucketId).register()
+        }
+}
+
+class SeckillRetryEdgeMetricsRegistry {
+    private val metrics = ConcurrentHashMap<String, SeckillRetryEdgeMetrics>()
+
+    fun forEdge(
+        skuId: String,
+        fromBucketId: Int,
+        toBucketId: Int,
+        nextAttempt: Int,
+    ): SeckillRetryEdgeMetrics =
+        metrics.computeIfAbsent("$skuId#$fromBucketId#$toBucketId#$nextAttempt") {
+            SeckillRetryEdgeMetrics(skuId, fromBucketId, toBucketId, nextAttempt).register()
         }
 }
 
