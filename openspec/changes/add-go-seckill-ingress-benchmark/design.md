@@ -622,3 +622,39 @@ Blog note:
 
 - a good short framing for a future blog post is:
   - "We thought the bottleneck was Go-vs-Node ingress runtime. The bigger bug was that our Kafka partition intent was not actually being enforced. Once `bucket -> partition` became explicit and the whole stack agreed on the same bucket count, the seckill topology spread evenly and the misleading HTTP-path failures disappeared."
+
+## Hardcoded seckill fast-path experiment
+
+One remaining hypothesis was that Go HTTP ingress was still paying too much for seckill classification and its SKU config lookup / cache path.
+
+To test only that part, the Go backend added a benchmark-only fast path:
+
+- `GO_BACKEND_FORCE_SECKILL_SKUS=sku_hot_001:10010`
+- for those configured SKUs:
+  - skip DB-backed seckill classification
+  - skip the normal seckill config cache lookup
+  - force the request into the seckill HTTP path with the configured stock limit
+
+Under the same clean benchmark conditions as the reference Go HTTP run:
+
+- artifact:
+  - `benchmark-results/buy-intent-hot-seckill/2026-04-22T16-07-50-093Z_go_http_fastpath_20260422T160733Z.json`
+- result:
+  - `accepted = 10010 / 10010`
+  - `errors = 0`
+  - `queued/sec = 1595.10`
+  - `result topic throughput = 1604.74`
+  - `p95 = 204.76ms`
+  - `commandLifecycle.statusDistribution = created: 10010`
+
+Interpretation:
+
+- the forced seckill fast path did **not** improve Go HTTP throughput
+- compared with the clean reference Go HTTP run:
+  - `queued/sec` moved from `1828.17` down to `1595.10`
+  - `p95` moved from `198.29ms` up to `204.76ms`
+- this means the remaining `direct_kafka -> go_http` gap is **not** primarily explained by the seckill config DB/cache lookup
+- the next suspects should be treated as:
+  - HTTP runtime / middleware overhead
+  - request decoding / validation / shaping overhead
+  - backend-side Kafka publish path under HTTP load
