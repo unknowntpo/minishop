@@ -21,6 +21,7 @@ import (
 	hserver "github.com/cloudwego/hertz/pkg/app/server"
 	"github.com/cloudwego/hertz/pkg/common/hlog"
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
+	gojson "github.com/goccy/go-json"
 	"github.com/google/uuid"
 	pyroscope "github.com/grafana/pyroscope-go"
 	"github.com/jackc/pgx/v5"
@@ -2005,7 +2006,7 @@ func decodeRequestBody[T any](r *http.Request) (T, error) {
 	if err != nil {
 		return body, err
 	}
-	if err := json.Unmarshal(data, &body); err != nil {
+	if err := gojson.Unmarshal(data, &body); err != nil {
 		return body, err
 	}
 	return body, nil
@@ -2024,7 +2025,7 @@ func decodeLooseBody(r *http.Request) (map[string]any, error) {
 
 func decodeHertzBody[T any](c *hertzapp.RequestContext) (T, error) {
 	var body T
-	if err := json.Unmarshal(c.Request.Body(), &body); err != nil {
+	if err := gojson.Unmarshal(c.Request.Body(), &body); err != nil {
 		return body, err
 	}
 	return body, nil
