@@ -57,6 +57,32 @@ This separation is necessary for the Go benchmark because the Go service only ow
 
 `BENCHMARK_INGRESS_HEALTH_PATH` makes ingress preflight generic, so non-Next.js services can expose a lightweight health endpoint such as `/healthz`.
 
+Operational note:
+
+- seckill benchmark runs should always use the `benchmark-runner` container instead of the host Node runtime
+- this avoids local Node ABI drift breaking native modules such as `@confluentinc/kafka-javascript`
+
+## Payload size estimate
+
+The current seckill Kafka payloads are small enough that compression should be treated as a hypothesis to verify, not an assumed win.
+
+Representative JSON payload sizes:
+
+- request payload:
+  - `~889 bytes` uncompressed
+  - `~400 bytes` with `gzip`
+  - compression ratio `~0.45`
+- result payload:
+  - `~1105 bytes` uncompressed
+  - `~466 bytes` with `gzip`
+  - compression ratio `~0.42`
+
+Interpretation:
+
+- the payloads are compressible
+- but the absolute byte volume is still modest for this local benchmark topology
+- this means compression may reduce broker/network bytes without improving end-to-end throughput
+
 ## Tracing
 
 The Go service:
@@ -209,6 +235,56 @@ Interpretation:
 - a longer producer linger clearly helps the Go ingress
 - extremely large producer batch caps were not always beneficial
 - the best observed shape so far is **longer linger + medium batch cap**
+
+### Go ingress compression experiment
+
+With the Go ingress producer fixed at:
+
+- `KAFKA_SECKILL_CLIENT_LINGER_MS = 50`
+- `KAFKA_SECKILL_CLIENT_BATCH_NUM_MESSAGES = 5000`
+
+and with the Go result sink fixed at the current throughput-oriented fetch setting:
+
+- `GO_SECKILL_RESULT_SINK_MAX_WAIT_MS = 100`
+
+the benchmark was rerun through the `benchmark-runner` container for:
+
+- `scenario=buy-intent-hot-seckill`
+- `style=steady_state`
+- `concurrency=200`
+- `bucket=4`
+- `maxProbe=4`
+- `ingress=http`
+- `path=seckill_only`
+
+Codec sweep results:
+
+| `KAFKA_SECKILL_CLIENT_COMPRESSION` | queued/sec | result topic throughput | p95 |
+| --- | ---: | ---: | ---: |
+| `none` | `1924.4` | `1928.27` | `168.59ms` |
+| `snappy` | `2016.0` | `2013.28` | `154.5ms` |
+| `lz4` | `1850.8` | `1850.22` | `180.65ms` |
+| `zstd` | `1518.0` | `1517.21` | `225.63ms` |
+
+Artifacts:
+
+- `none`: `benchmark-results/buy-intent-hot-seckill/2026-04-22T01-53-25-246Z_bench_1776822789084.json`
+- `snappy`: `benchmark-results/buy-intent-hot-seckill/2026-04-22T01-54-00-701Z_bench_1776822824616.json`
+- `lz4`: `benchmark-results/buy-intent-hot-seckill/2026-04-22T01-54-34-495Z_bench_1776822858329.json`
+- `zstd`: `benchmark-results/buy-intent-hot-seckill/2026-04-22T01-55-08-538Z_bench_1776822892363.json`
+
+Interpretation:
+
+- `snappy` was only slightly better than `none`
+- the gap between `none` and `snappy` is small enough that it should be treated as benchmark noise until repeated
+- `lz4` was worse than `none`
+- `zstd` was materially worse on both throughput and p95
+
+Conclusion:
+
+- compression is **not** the next clear throughput lever for this workload
+- keep the default Go ingress producer compression at `none`
+- if compression is revisited later, `snappy` is the only codec from this sweep worth retesting
 
 ### Best observed Node ingress config under the same downstream path
 
