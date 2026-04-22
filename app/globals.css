@@ -1490,6 +1490,40 @@ button.design-preview {
   gap: 8px;
 }
 
+.benchmark-diagnostic-assertions {
+  display: grid;
+  gap: 10px;
+}
+
+.benchmark-diagnostic-assertion {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--ms-line-soft);
+  border-radius: var(--ms-radius);
+  background: color-mix(in srgb, var(--ms-surface) 94%, white 6%);
+}
+
+.benchmark-diagnostic-assertion-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.benchmark-diagnostic-assertion strong {
+  color: var(--ms-ink);
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.benchmark-diagnostic-assertion p {
+  margin: 0;
+  color: var(--ms-muted);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
 .benchmark-diagnostic-label {
   color: var(--ms-muted);
   font-size: 12px;

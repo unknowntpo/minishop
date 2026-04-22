@@ -778,12 +778,18 @@ function RunDiagnosticSummary({
       {summary.message ? <p>{summary.message}</p> : null}
       {summary.failedChecks.length > 0 ? (
         <div className="benchmark-diagnostic-group">
-          <span className="benchmark-diagnostic-label">Failed checks</span>
-          <div className="benchmark-status-summary">
+          <span className="benchmark-diagnostic-label">Failed assertions</span>
+          <div className="benchmark-diagnostic-assertions">
             {summary.failedChecks.map((check) => (
-              <span className="badge danger" key={check.key}>
-                {check.label}
-              </span>
+              <article className="benchmark-diagnostic-assertion" key={check.key}>
+                <div className="benchmark-diagnostic-assertion-header">
+                  <span className={`badge ${check.severity === "warn" ? "neutral" : "danger"}`}>
+                    {check.severity}
+                  </span>
+                  <strong>{check.label}</strong>
+                </div>
+                {check.message ? <p>{check.message}</p> : null}
+              </article>
             ))}
           </div>
         </div>
