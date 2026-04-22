@@ -26,6 +26,16 @@ type CachedSeckillSkuConfig = {
   expiresAtMs: number;
 };
 
+export type SeckillRoutingDecision =
+  | {
+      kind: "default";
+    }
+  | {
+      kind: "single_seckill";
+      skuId: string;
+      stockLimit: number;
+    };
+
 const seckillSkuConfigCache = new Map<string, CachedSeckillSkuConfig>();
 
 export class MixedCartWithSeckillNotSupportedError extends Error {
@@ -65,17 +75,17 @@ export function invalidateSeckillSkuConfigCache(skuId?: string) {
   seckillSkuConfigCache.clear();
 }
 
-async function toSeckillRequest(
-  command: BuyIntentCommand,
-  pool: Pool,
-  bucketCount: number,
-  maxProbe: number,
-  seckillSkuConfigTtlMs: number,
-) {
-  if (command.items.length !== 1) {
+export async function classifyBuyIntentItemsForSeckill(input: {
+  items: BuyIntentCommand["items"];
+  pool: Pool;
+  seckillSkuConfigTtlMs: number;
+}): Promise<SeckillRoutingDecision> {
+  const { items, pool, seckillSkuConfigTtlMs } = input;
+
+  if (items.length !== 1) {
     const hasSeckillSku = await containsSeckillSku(
       pool,
-      command.items.map((item) => item.sku_id),
+      items.map((item) => item.sku_id),
       seckillSkuConfigTtlMs,
     );
 
@@ -83,23 +93,52 @@ async function toSeckillRequest(
       throw new MixedCartWithSeckillNotSupportedError();
     }
 
+    return {
+      kind: "default",
+    };
+  }
+
+  const [item] = items;
+  const config = await readSeckillSkuConfig(pool, item.sku_id, seckillSkuConfigTtlMs);
+
+  if (!config.enabled || config.stockLimit === null) {
+    return {
+      kind: "default",
+    };
+  }
+
+  return {
+    kind: "single_seckill",
+    skuId: item.sku_id,
+    stockLimit: config.stockLimit,
+  };
+}
+
+async function toSeckillRequest(
+  command: BuyIntentCommand,
+  pool: Pool,
+  bucketCount: number,
+  maxProbe: number,
+  seckillSkuConfigTtlMs: number,
+) {
+  const routing = await classifyBuyIntentItemsForSeckill({
+    items: command.items,
+    pool,
+    seckillSkuConfigTtlMs,
+  });
+
+  if (routing.kind !== "single_seckill") {
     return null;
   }
 
   const [item] = command.items;
-  const config = await readSeckillSkuConfig(pool, item.sku_id, seckillSkuConfigTtlMs);
-
-  if (!config.enabled || config.stockLimit === null) {
-    return null;
-  }
-
   const stableKey = command.idempotency_key ?? command.command_id;
   const primaryBucketId = selectPrimaryBucket(stableKey, bucketCount);
 
   return {
     sku_id: item.sku_id,
     quantity: item.quantity,
-    seckill_stock_limit: config.stockLimit,
+    seckill_stock_limit: routing.stockLimit,
     bucket_count: bucketCount,
     primary_bucket_id: primaryBucketId,
     bucket_id: primaryBucketId,

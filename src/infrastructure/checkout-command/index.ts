@@ -4,7 +4,10 @@ import { createNoopBuyIntentCommandOrchestrator } from "@/src/infrastructure/che
 import { createPostgresBuyIntentCommandBus } from "@/src/infrastructure/checkout-command/postgres-buy-intent-command-bus";
 import { createPostgresBuyIntentCommandGateway } from "@/src/infrastructure/checkout-command/postgres-buy-intent-command-gateway";
 import { createRoutingBuyIntentCommandBus } from "@/src/infrastructure/checkout-command/routing-buy-intent-command-bus";
-export { MixedCartWithSeckillNotSupportedError } from "@/src/infrastructure/checkout-command/routing-buy-intent-command-bus";
+export {
+  classifyBuyIntentItemsForSeckill,
+  MixedCartWithSeckillNotSupportedError,
+} from "@/src/infrastructure/checkout-command/routing-buy-intent-command-bus";
 import { createKafkaSeckillCommandBus } from "@/src/infrastructure/seckill/kafka-seckill-command-bus";
 import type { BuyIntentCommandBus } from "@/src/ports/buy-intent-command-bus";
 import type {
