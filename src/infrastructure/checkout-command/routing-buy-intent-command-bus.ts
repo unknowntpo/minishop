@@ -1,7 +1,10 @@
 import type { Pool } from "pg";
 
 import type { BuyIntentCommand } from "@/src/domain/checkout-command/buy-intent-command";
-import type { SeckillBuyIntentRequest } from "@/src/domain/seckill/seckill-buy-intent-request";
+import type {
+  SeckillBuyIntentCommand,
+  SeckillBuyIntentRequest,
+} from "@/src/domain/seckill/seckill-buy-intent-request";
 import type { BuyIntentCommandBus } from "@/src/ports/buy-intent-command-bus";
 
 type RoutingBuyIntentCommandBusOptions = {
@@ -145,8 +148,25 @@ async function toSeckillRequest(
     attempt: 0,
     max_probe: maxProbe,
     processing_key: buildProcessingKey(item.sku_id, primaryBucketId),
-    command,
+    command: toSeckillCommand(command),
   } satisfies SeckillBuyIntentRequest;
+}
+
+function toSeckillCommand(command: BuyIntentCommand): SeckillBuyIntentCommand {
+  return {
+    command_id: command.command_id,
+    correlation_id: command.correlation_id,
+    buyer_id: command.buyer_id,
+    items: command.items,
+    ...(command.idempotency_key ? { idempotency_key: command.idempotency_key } : {}),
+    metadata: {
+      request_id: command.metadata.request_id,
+      trace_id: command.metadata.trace_id,
+      source: command.metadata.source,
+      actor_id: command.metadata.actor_id,
+    },
+    issued_at: command.issued_at,
+  };
 }
 
 async function readSeckillSkuConfig(pool: Pool, skuId: string, seckillSkuConfigTtlMs: number) {
