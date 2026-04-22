@@ -61,6 +61,8 @@ Operational note:
 
 - seckill benchmark runs should always use the `benchmark-runner` container instead of the host Node runtime
 - this avoids local Node ABI drift breaking native modules such as `@confluentinc/kafka-javascript`
+- seckill benchmark runs should start `worker-seckill` with a fresh `KAFKA_SECKILL_APPLICATION_ID` and a fresh result-sink consumer group id
+- this prevents Kafka Streams changelog restore and stale consumer offsets from contaminating a supposedly reset benchmark run
 
 ## Payload size estimate
 
