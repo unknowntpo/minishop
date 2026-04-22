@@ -20,7 +20,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
+	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kgo"
+	"github.com/twmb/franz-go/pkg/kmsg"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -34,21 +36,22 @@ import (
 )
 
 type config struct {
-	addr              string
-	databaseURL       string
-	databasePoolMax   int
-	kafkaBrokers      []string
-	kafkaRequestTopic string
-	kafkaBucketCount  int
-	kafkaMaxProbe     int
-	kafkaClientID     string
-	kafkaBatchSize    int
-	kafkaLingerMs     int
-	kafkaCompression  string
-	cacheTTL          time.Duration
-	serviceName       string
-	otlpEndpoint      string
-	otelEnabled       bool
+	addr                 string
+	databaseURL          string
+	databasePoolMax      int
+	kafkaBrokers         []string
+	kafkaRequestTopic    string
+	kafkaTopicPartitions int
+	kafkaBucketCount     int
+	kafkaMaxProbe        int
+	kafkaClientID        string
+	kafkaBatchSize       int
+	kafkaLingerMs        int
+	kafkaCompression     string
+	cacheTTL             time.Duration
+	serviceName          string
+	otlpEndpoint         string
+	otelEnabled          bool
 }
 
 type requestBody struct {
@@ -62,6 +65,52 @@ type requestItem struct {
 	Quantity             int    `json:"quantity"`
 	UnitPriceAmountMinor int    `json:"unitPriceAmountMinor"`
 	Currency             string `json:"currency"`
+}
+
+type requestBodyAlias struct {
+	BuyerID             string        `json:"buyerId"`
+	BuyerIDSnake        string        `json:"buyer_id"`
+	Items               []requestItem `json:"items"`
+	IdempotencyKey      string        `json:"idempotencyKey,omitempty"`
+	IdempotencyKeySnake string        `json:"idempotency_key,omitempty"`
+}
+
+type requestItemAlias struct {
+	SkuID                     string `json:"skuId"`
+	SkuIDSnake                string `json:"sku_id"`
+	Quantity                  int    `json:"quantity"`
+	UnitPriceAmountMinor      int    `json:"unitPriceAmountMinor"`
+	UnitPriceAmountMinorSnake int    `json:"unit_price_amount_minor"`
+	Currency                  string `json:"currency"`
+}
+
+func (body *requestBody) UnmarshalJSON(data []byte) error {
+	var raw requestBodyAlias
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	body.BuyerID = firstNonEmpty(raw.BuyerID, raw.BuyerIDSnake)
+	body.Items = raw.Items
+	body.IdempotencyKey = firstNonEmpty(raw.IdempotencyKey, raw.IdempotencyKeySnake)
+	return nil
+}
+
+func (item *requestItem) UnmarshalJSON(data []byte) error {
+	var raw requestItemAlias
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	item.SkuID = firstNonEmpty(raw.SkuID, raw.SkuIDSnake)
+	item.Quantity = raw.Quantity
+	if raw.UnitPriceAmountMinor != 0 || raw.UnitPriceAmountMinorSnake == 0 {
+		item.UnitPriceAmountMinor = raw.UnitPriceAmountMinor
+	} else {
+		item.UnitPriceAmountMinor = raw.UnitPriceAmountMinorSnake
+	}
+	item.Currency = raw.Currency
+	return nil
 }
 
 type acceptResponse struct {
@@ -163,6 +212,7 @@ func main() {
 		kgo.SeedBrokers(cfg.kafkaBrokers...),
 		kgo.ClientID(cfg.kafkaClientID),
 		kgo.RequiredAcks(kgo.AllISRAcks()),
+		kgo.RecordPartitioner(kgo.ManualPartitioner()),
 		kgo.ProducerLinger(time.Duration(cfg.kafkaLingerMs)*time.Millisecond),
 		kgo.MaxBufferedRecords(cfg.kafkaBatchSize),
 		kgo.ProducerBatchCompression(kafkaCompressionCodec(cfg.kafkaCompression)),
@@ -218,21 +268,22 @@ func main() {
 
 func readConfig() config {
 	return config{
-		addr:              envDefault("GO_SECKILL_INGRESS_ADDR", ":3000"),
-		databaseURL:       requiredEnv("DATABASE_URL"),
-		databasePoolMax:   envInt("DATABASE_POOL_MAX", 4),
-		kafkaBrokers:      splitCSV(envDefault("KAFKA_BROKERS", "redpanda:9092")),
-		kafkaRequestTopic: envDefault("KAFKA_SECKILL_REQUEST_TOPIC", "inventory.seckill.requested"),
-		kafkaBucketCount:  envInt("KAFKA_SECKILL_BUCKET_COUNT", 16),
-		kafkaMaxProbe:     envInt("KAFKA_SECKILL_MAX_PROBE", 4),
-		kafkaClientID:     envDefault("KAFKA_CLIENT_ID", "minishop-go-seckill-ingress"),
-		kafkaBatchSize:    envInt("KAFKA_SECKILL_CLIENT_BATCH_NUM_MESSAGES", 10000),
-		kafkaLingerMs:     envInt("KAFKA_SECKILL_CLIENT_LINGER_MS", 1),
-		kafkaCompression:  envDefault("KAFKA_SECKILL_CLIENT_COMPRESSION", "none"),
-		cacheTTL:          time.Duration(envInt("KAFKA_SECKILL_CONFIG_CACHE_TTL_MS", 60000)) * time.Millisecond,
-		serviceName:       envDefault("OTEL_SERVICE_NAME", "go-seckill-ingress"),
-		otlpEndpoint:      envDefault("OTEL_EXPORTER_OTLP_ENDPOINT", "http://tempo:4318"),
-		otelEnabled:       envDefault("OTEL_ENABLED", "1") != "0",
+		addr:                 envDefault("GO_SECKILL_INGRESS_ADDR", ":3000"),
+		databaseURL:          requiredEnv("DATABASE_URL"),
+		databasePoolMax:      envInt("DATABASE_POOL_MAX", 4),
+		kafkaBrokers:         splitCSV(envDefault("KAFKA_BROKERS", "redpanda:9092")),
+		kafkaRequestTopic:    envDefault("KAFKA_SECKILL_REQUEST_TOPIC", "inventory.seckill.requested"),
+		kafkaTopicPartitions: envInt("KAFKA_SECKILL_REQUEST_TOPIC_PARTITIONS", envInt("SECKILL_BUCKET_COUNT", envInt("KAFKA_SECKILL_BUCKET_COUNT", 4))),
+		kafkaBucketCount:     envInt("KAFKA_SECKILL_BUCKET_COUNT", envInt("SECKILL_BUCKET_COUNT", 4)),
+		kafkaMaxProbe:        envInt("KAFKA_SECKILL_MAX_PROBE", 4),
+		kafkaClientID:        envDefault("KAFKA_CLIENT_ID", "minishop-go-seckill-ingress"),
+		kafkaBatchSize:       envInt("KAFKA_SECKILL_CLIENT_BATCH_NUM_MESSAGES", 10000),
+		kafkaLingerMs:        envInt("KAFKA_SECKILL_CLIENT_LINGER_MS", 1),
+		kafkaCompression:     envDefault("KAFKA_SECKILL_CLIENT_COMPRESSION", "none"),
+		cacheTTL:             time.Duration(envInt("KAFKA_SECKILL_CONFIG_CACHE_TTL_MS", 60000)) * time.Millisecond,
+		serviceName:          envDefault("OTEL_SERVICE_NAME", "go-seckill-ingress"),
+		otlpEndpoint:         envDefault("OTEL_EXPORTER_OTLP_ENDPOINT", "http://tempo:4318"),
+		otelEnabled:          envDefault("OTEL_ENABLED", "1") != "0",
 	}
 }
 
@@ -245,6 +296,13 @@ func (a *app) warmUp(ctx context.Context) error {
 	}
 	_ = conn.Close()
 
+	if err := ensureKafkaTopics(ctx, a.writer, []string{
+		a.cfg.kafkaRequestTopic,
+		envDefault("KAFKA_SECKILL_RESULT_TOPIC", "inventory.seckill.result"),
+		envDefault("KAFKA_SECKILL_DLQ_TOPIC", "inventory.seckill.dlq"),
+	}, a.cfg.kafkaTopicPartitions); err != nil {
+		return fmt.Errorf("ensure kafka topics: %w", err)
+	}
 	if err := a.writer.Ping(ctx); err != nil {
 		return fmt.Errorf("kafka ping: %w", err)
 	}
@@ -405,6 +463,7 @@ func (a *app) handleBuyIntents(w http.ResponseWriter, r *http.Request) {
 	)
 	record := &kgo.Record{
 		Topic:     a.cfg.kafkaRequestTopic,
+		Partition: normalizeSeckillPartition(request.BucketID),
 		Key:       []byte(request.ProcessingKey),
 		Value:     payload,
 		Timestamp: time.Now().UTC(),
@@ -574,6 +633,16 @@ func injectTraceCarrier(ctx context.Context) map[string]string {
 	return map[string]string(carrier)
 }
 
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
 func writeJSON(w http.ResponseWriter, status int, traceID string, requestID string, body any) {
 	w.Header().Set("content-type", "application/json")
 	w.Header().Set("x-request-id", requestID)
@@ -610,6 +679,46 @@ func selectPrimaryBucket(stableKey string, bucketCount int) int {
 
 func buildProcessingKey(skuID string, bucketID int) string {
 	return fmt.Sprintf("%s#%02d", skuID, bucketID)
+}
+
+func normalizeSeckillPartition(bucketID int) int32 {
+	if bucketID < 0 {
+		return 0
+	}
+	return int32(bucketID)
+}
+
+func ensureKafkaTopics(ctx context.Context, client *kgo.Client, topics []string, partitions int) error {
+	req := kmsg.NewPtrCreateTopicsRequest()
+	req.TimeoutMillis = 5000
+
+	for _, topic := range topics {
+		if strings.TrimSpace(topic) == "" {
+			continue
+		}
+		reqTopic := kmsg.NewCreateTopicsRequestTopic()
+		reqTopic.Topic = topic
+		reqTopic.NumPartitions = int32(partitions)
+		reqTopic.ReplicationFactor = 1
+		req.Topics = append(req.Topics, reqTopic)
+	}
+
+	if len(req.Topics) == 0 {
+		return nil
+	}
+
+	resp, err := req.RequestWith(ctx, client)
+	if err != nil {
+		return err
+	}
+	for _, topic := range resp.Topics {
+		err = kerr.ErrorForCode(topic.ErrorCode)
+		if err == nil || errors.Is(err, kerr.TopicAlreadyExists) {
+			continue
+		}
+		return fmt.Errorf("create topic %s: %w", topic.Topic, err)
+	}
+	return nil
 }
 
 func splitCSV(value string) []string {

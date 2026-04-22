@@ -49,6 +49,7 @@ export type KafkaConsumerLike = {
   run(args: {
     partitionsConsumedConcurrently?: number;
     eachMessage: (payload: {
+      partition: number;
       message: {
         value: Buffer | null;
         timestamp: string;

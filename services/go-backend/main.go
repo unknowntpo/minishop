@@ -20,7 +20,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nats-io/nats.go"
+	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kgo"
+	"github.com/twmb/franz-go/pkg/kmsg"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/codes"
@@ -33,29 +35,30 @@ import (
 )
 
 type config struct {
-	addr               string
-	corsAllowedOrigins []string
-	databaseURL        string
-	databasePoolMax    int
-	natsURL            string
-	natsStreamName     string
-	natsSubject        string
-	natsRetrySubject   string
-	natsDLQSubject     string
-	kafkaBrokers       []string
-	kafkaClientID      string
-	kafkaRequestTopic  string
-	kafkaResultTopic   string
-	kafkaDLQTopic      string
-	kafkaBucketCount   int
-	kafkaMaxProbe      int
-	kafkaBatchSize     int
-	kafkaLingerMs      int
-	kafkaCompression   string
-	seckillConfigTTL   time.Duration
-	serviceName        string
-	otlpEndpoint       string
-	otelEnabled        bool
+	addr                 string
+	corsAllowedOrigins   []string
+	databaseURL          string
+	databasePoolMax      int
+	natsURL              string
+	natsStreamName       string
+	natsSubject          string
+	natsRetrySubject     string
+	natsDLQSubject       string
+	kafkaBrokers         []string
+	kafkaClientID        string
+	kafkaRequestTopic    string
+	kafkaResultTopic     string
+	kafkaDLQTopic        string
+	kafkaTopicPartitions int
+	kafkaBucketCount     int
+	kafkaMaxProbe        int
+	kafkaBatchSize       int
+	kafkaLingerMs        int
+	kafkaCompression     string
+	seckillConfigTTL     time.Duration
+	serviceName          string
+	otlpEndpoint         string
+	otelEnabled          bool
 }
 
 type app struct {
@@ -95,6 +98,52 @@ type requestItem struct {
 	Quantity             int    `json:"quantity"`
 	UnitPriceAmountMinor int    `json:"unitPriceAmountMinor"`
 	Currency             string `json:"currency"`
+}
+
+type requestBodyAlias struct {
+	BuyerID             string        `json:"buyerId"`
+	BuyerIDSnake        string        `json:"buyer_id"`
+	Items               []requestItem `json:"items"`
+	IdempotencyKey      string        `json:"idempotencyKey,omitempty"`
+	IdempotencyKeySnake string        `json:"idempotency_key,omitempty"`
+}
+
+type requestItemAlias struct {
+	SkuID                     string `json:"skuId"`
+	SkuIDSnake                string `json:"sku_id"`
+	Quantity                  int    `json:"quantity"`
+	UnitPriceAmountMinor      int    `json:"unitPriceAmountMinor"`
+	UnitPriceAmountMinorSnake int    `json:"unit_price_amount_minor"`
+	Currency                  string `json:"currency"`
+}
+
+func (body *requestBody) UnmarshalJSON(data []byte) error {
+	var raw requestBodyAlias
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	body.BuyerID = firstNonEmpty(raw.BuyerID, raw.BuyerIDSnake)
+	body.Items = raw.Items
+	body.IdempotencyKey = firstNonEmpty(raw.IdempotencyKey, raw.IdempotencyKeySnake)
+	return nil
+}
+
+func (item *requestItem) UnmarshalJSON(data []byte) error {
+	var raw requestItemAlias
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	item.SkuID = firstNonEmpty(raw.SkuID, raw.SkuIDSnake)
+	item.Quantity = raw.Quantity
+	if raw.UnitPriceAmountMinor != 0 || raw.UnitPriceAmountMinorSnake == 0 {
+		item.UnitPriceAmountMinor = raw.UnitPriceAmountMinor
+	} else {
+		item.UnitPriceAmountMinor = raw.UnitPriceAmountMinorSnake
+	}
+	item.Currency = raw.Currency
+	return nil
 }
 
 type checkoutItem struct {
@@ -396,6 +445,7 @@ func main() {
 		kgo.SeedBrokers(cfg.kafkaBrokers...),
 		kgo.ClientID(cfg.kafkaClientID),
 		kgo.RequiredAcks(kgo.AllISRAcks()),
+		kgo.RecordPartitioner(kgo.ManualPartitioner()),
 		kgo.ProducerLinger(time.Duration(cfg.kafkaLingerMs)*time.Millisecond),
 		kgo.MaxBufferedRecords(cfg.kafkaBatchSize),
 		kgo.ProducerBatchCompression(kafkaCompressionCodec(cfg.kafkaCompression)),
@@ -465,29 +515,30 @@ func main() {
 
 func readConfig() config {
 	return config{
-		addr:               envDefault("GO_BACKEND_ADDR", ":3000"),
-		corsAllowedOrigins: splitCSV(envDefault("GO_BACKEND_CORS_ALLOWED_ORIGINS", "*")),
-		databaseURL:        requiredEnv("DATABASE_URL"),
-		databasePoolMax:    envInt("DATABASE_POOL_MAX", 8),
-		natsURL:            envDefault("NATS_URL", "nats://nats:4222"),
-		natsStreamName:     envDefault("NATS_BUY_INTENT_STREAM", "BUY_INTENT_COMMANDS"),
-		natsSubject:        envDefault("NATS_BUY_INTENT_SUBJECT", "buy-intent.command"),
-		natsRetrySubject:   envDefault("NATS_BUY_INTENT_RETRY_SUBJECT", "buy-intent.retry"),
-		natsDLQSubject:     envDefault("NATS_BUY_INTENT_DLQ_SUBJECT", "buy-intent.dlq"),
-		kafkaBrokers:       splitCSV(envDefault("KAFKA_BROKERS", "redpanda:9092")),
-		kafkaClientID:      envDefault("KAFKA_CLIENT_ID", "minishop-go-backend"),
-		kafkaRequestTopic:  envDefault("KAFKA_SECKILL_REQUEST_TOPIC", "inventory.seckill.requested"),
-		kafkaResultTopic:   envDefault("KAFKA_SECKILL_RESULT_TOPIC", "inventory.seckill.result"),
-		kafkaDLQTopic:      envDefault("KAFKA_SECKILL_DLQ_TOPIC", "inventory.seckill.dlq"),
-		kafkaBucketCount:   envInt("KAFKA_SECKILL_BUCKET_COUNT", 16),
-		kafkaMaxProbe:      envInt("KAFKA_SECKILL_MAX_PROBE", 4),
-		kafkaBatchSize:     envInt("KAFKA_SECKILL_CLIENT_BATCH_NUM_MESSAGES", 10000),
-		kafkaLingerMs:      envInt("KAFKA_SECKILL_CLIENT_LINGER_MS", 1),
-		kafkaCompression:   envDefault("KAFKA_SECKILL_CLIENT_COMPRESSION", "none"),
-		seckillConfigTTL:   time.Duration(envInt("KAFKA_SECKILL_CONFIG_CACHE_TTL_MS", 60000)) * time.Millisecond,
-		serviceName:        envDefault("OTEL_SERVICE_NAME", "go-backend"),
-		otlpEndpoint:       envDefault("OTEL_EXPORTER_OTLP_ENDPOINT", "http://tempo:4318"),
-		otelEnabled:        envDefault("OTEL_ENABLED", "1") != "0",
+		addr:                 envDefault("GO_BACKEND_ADDR", ":3000"),
+		corsAllowedOrigins:   splitCSV(envDefault("GO_BACKEND_CORS_ALLOWED_ORIGINS", "*")),
+		databaseURL:          requiredEnv("DATABASE_URL"),
+		databasePoolMax:      envInt("DATABASE_POOL_MAX", 8),
+		natsURL:              envDefault("NATS_URL", "nats://nats:4222"),
+		natsStreamName:       envDefault("NATS_BUY_INTENT_STREAM", "BUY_INTENT_COMMANDS"),
+		natsSubject:          envDefault("NATS_BUY_INTENT_SUBJECT", "buy-intent.command"),
+		natsRetrySubject:     envDefault("NATS_BUY_INTENT_RETRY_SUBJECT", "buy-intent.retry"),
+		natsDLQSubject:       envDefault("NATS_BUY_INTENT_DLQ_SUBJECT", "buy-intent.dlq"),
+		kafkaBrokers:         splitCSV(envDefault("KAFKA_BROKERS", "redpanda:9092")),
+		kafkaClientID:        envDefault("KAFKA_CLIENT_ID", "minishop-go-backend"),
+		kafkaRequestTopic:    envDefault("KAFKA_SECKILL_REQUEST_TOPIC", "inventory.seckill.requested"),
+		kafkaResultTopic:     envDefault("KAFKA_SECKILL_RESULT_TOPIC", "inventory.seckill.result"),
+		kafkaDLQTopic:        envDefault("KAFKA_SECKILL_DLQ_TOPIC", "inventory.seckill.dlq"),
+		kafkaTopicPartitions: envInt("KAFKA_SECKILL_REQUEST_TOPIC_PARTITIONS", envInt("SECKILL_BUCKET_COUNT", envInt("KAFKA_SECKILL_BUCKET_COUNT", 4))),
+		kafkaBucketCount:     envInt("KAFKA_SECKILL_BUCKET_COUNT", envInt("SECKILL_BUCKET_COUNT", 4)),
+		kafkaMaxProbe:        envInt("KAFKA_SECKILL_MAX_PROBE", 4),
+		kafkaBatchSize:       envInt("KAFKA_SECKILL_CLIENT_BATCH_NUM_MESSAGES", 10000),
+		kafkaLingerMs:        envInt("KAFKA_SECKILL_CLIENT_LINGER_MS", 1),
+		kafkaCompression:     envDefault("KAFKA_SECKILL_CLIENT_COMPRESSION", "none"),
+		seckillConfigTTL:     time.Duration(envInt("KAFKA_SECKILL_CONFIG_CACHE_TTL_MS", 60000)) * time.Millisecond,
+		serviceName:          envDefault("OTEL_SERVICE_NAME", "go-backend"),
+		otlpEndpoint:         envDefault("OTEL_EXPORTER_OTLP_ENDPOINT", "http://tempo:4318"),
+		otelEnabled:          envDefault("OTEL_ENABLED", "1") != "0",
 	}
 }
 
@@ -497,6 +548,13 @@ func (a *app) warmUp(ctx context.Context) error {
 
 	if err := a.db.Ping(ctx); err != nil {
 		return fmt.Errorf("db ping: %w", err)
+	}
+	if err := ensureKafkaTopics(ctx, a.kafka, []string{
+		a.cfg.kafkaRequestTopic,
+		a.cfg.kafkaResultTopic,
+		a.cfg.kafkaDLQTopic,
+	}, a.cfg.kafkaTopicPartitions); err != nil {
+		return fmt.Errorf("ensure kafka topics: %w", err)
 	}
 	if err := a.kafka.Ping(ctx); err != nil {
 		return fmt.Errorf("kafka ping: %w", err)
@@ -520,17 +578,21 @@ func (a *app) handleBuyIntents(w http.ResponseWriter, r *http.Request) {
 	defer span.End()
 
 	reqCtx := requestContextFromRequest(ctx, r)
+	log.Printf("go-backend buy_intents_enter request_id=%s", reqCtx.requestID)
 	body, err := decodeRequestBody[requestBody](r)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "invalid_json")
-		writeError(w, reqCtx, http.StatusInternalServerError, "Buy intent command could not be accepted. Please try again.")
+		log.Printf("go-backend decode_request_failed request_id=%s err=%v", reqCtx.requestID, err)
+		writeError(w, reqCtx, http.StatusBadRequest, "Request body must be valid JSON.")
 		return
 	}
+	log.Printf("go-backend decoded_request request_id=%s buyer_id=%q items=%d", reqCtx.requestID, body.BuyerID, len(body.Items))
 	if err := validateCreateCheckoutIntentRequest(body); err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "invalid_request")
-		writeError(w, reqCtx, http.StatusInternalServerError, "Buy intent command could not be accepted. Please try again.")
+		log.Printf("go-backend validate_request_failed request_id=%s err=%v body=%+v", reqCtx.requestID, err, body)
+		writeError(w, reqCtx, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -542,9 +604,11 @@ func (a *app) handleBuyIntents(w http.ResponseWriter, r *http.Request) {
 		}
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "routing_failed")
+		log.Printf("go-backend classify_seckill_failed request_id=%s err=%v", reqCtx.requestID, err)
 		writeError(w, reqCtx, http.StatusInternalServerError, "Buy intent command could not be accepted. Please try again.")
 		return
 	}
+	log.Printf("go-backend classify_seckill_ok request_id=%s kind=%s", reqCtx.requestID, decision.kind)
 
 	commandID := uuid.NewString()
 	correlationID := uuid.NewString()
@@ -577,6 +641,7 @@ func (a *app) handleBuyIntents(w http.ResponseWriter, r *http.Request) {
 		if err := a.publishSeckillCommand(ctx, body, command, decision.stockLimit, reqCtx); err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, "publish_failed")
+			log.Printf("go-backend publish_seckill_failed request_id=%s command_id=%s err=%v", reqCtx.requestID, commandID, err)
 			writeError(w, reqCtx, http.StatusInternalServerError, "Buy intent command could not be accepted. Please try again.")
 			return
 		}
@@ -584,6 +649,7 @@ func (a *app) handleBuyIntents(w http.ResponseWriter, r *http.Request) {
 		if err := a.publishBuyIntentCommand(ctx, command); err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, "publish_failed")
+			log.Printf("go-backend publish_regular_failed request_id=%s command_id=%s err=%v", reqCtx.requestID, commandID, err)
 			writeError(w, reqCtx, http.StatusInternalServerError, "Buy intent command could not be accepted. Please try again.")
 			return
 		}
@@ -652,6 +718,7 @@ func (a *app) publishSeckillCommand(
 	}
 	record := &kgo.Record{
 		Topic:     a.cfg.kafkaRequestTopic,
+		Partition: normalizeSeckillPartition(primaryBucketID),
 		Key:       []byte(buildProcessingKey(item.SkuID, primaryBucketID)),
 		Value:     payload,
 		Timestamp: time.Now().UTC(),
@@ -1779,6 +1846,16 @@ func requestContextFromRequest(ctx context.Context, r *http.Request) requestCont
 	}
 }
 
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
 func traceIDFromContext(ctx context.Context) string {
 	span := trace.SpanFromContext(ctx)
 	if !span.SpanContext().IsValid() {
@@ -1862,6 +1939,46 @@ func selectPrimaryBucket(stableKey string, bucketCount int) int {
 
 func buildProcessingKey(skuID string, bucketID int) string {
 	return fmt.Sprintf("%s#%02d", skuID, bucketID)
+}
+
+func normalizeSeckillPartition(bucketID int) int32 {
+	if bucketID < 0 {
+		return 0
+	}
+	return int32(bucketID)
+}
+
+func ensureKafkaTopics(ctx context.Context, client *kgo.Client, topics []string, partitions int) error {
+	req := kmsg.NewPtrCreateTopicsRequest()
+	req.TimeoutMillis = 5000
+
+	for _, topic := range topics {
+		if strings.TrimSpace(topic) == "" {
+			continue
+		}
+		reqTopic := kmsg.NewCreateTopicsRequestTopic()
+		reqTopic.Topic = topic
+		reqTopic.NumPartitions = int32(partitions)
+		reqTopic.ReplicationFactor = 1
+		req.Topics = append(req.Topics, reqTopic)
+	}
+
+	if len(req.Topics) == 0 {
+		return nil
+	}
+
+	resp, err := req.RequestWith(ctx, client)
+	if err != nil {
+		return err
+	}
+	for _, topic := range resp.Topics {
+		err = kerr.ErrorForCode(topic.ErrorCode)
+		if err == nil || errors.Is(err, kerr.TopicAlreadyExists) {
+			continue
+		}
+		return fmt.Errorf("create topic %s: %w", topic.Topic, err)
+	}
+	return nil
 }
 
 func fnv1a32(value string) int {

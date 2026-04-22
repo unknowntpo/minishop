@@ -1308,6 +1308,7 @@ async function startDirectSeckillRequestPublisher(config: BenchmarkConfig) {
           {
             topic: config.seckillRequestTopic,
             messages: requests.map((request) => ({
+              partition: normalizeSeckillPartition(request.bucket_id),
               key: request.processing_key,
               value: JSON.stringify(request),
             })),
@@ -2370,7 +2371,10 @@ function readConfig(): BenchmarkConfig {
     ensureSeckillEnabled:
       process.env.BENCHMARK_ENSURE_SECKILL_ENABLED === "1" ||
       (process.env.BENCHMARK_ENSURE_SECKILL_ENABLED !== "0" && scenarioName.includes("seckill")),
-    seckillBucketCount: readPositiveIntegerEnv("BENCHMARK_SECKILL_BUCKET_COUNT", 16),
+    seckillBucketCount: readPositiveIntegerEnv(
+      "BENCHMARK_SECKILL_BUCKET_COUNT",
+      readPositiveIntegerEnv("SECKILL_BUCKET_COUNT", 4),
+    ),
     seckillMaxProbe: readPositiveIntegerEnv("BENCHMARK_SECKILL_MAX_PROBE", 4),
     directKafkaBatchSize: readPositiveIntegerEnv("BENCHMARK_DIRECT_KAFKA_BATCH_SIZE", 500),
     kafkaClient: process.env.BENCHMARK_KAFKA_CLIENT ?? "confluent-kafka-javascript",
@@ -2484,21 +2488,34 @@ async function ensureKafkaTopics(
   },
   config: BenchmarkConfig,
 ) {
+  const topicPartitions = readPositiveIntegerEnv(
+    "KAFKA_SECKILL_REQUEST_TOPIC_PARTITIONS",
+    config.seckillBucketCount,
+  );
+  const resultTopicPartitions = readPositiveIntegerEnv(
+    "KAFKA_SECKILL_RESULT_TOPIC_PARTITIONS",
+    config.seckillBucketCount,
+  );
+  const dlqTopicPartitions = readPositiveIntegerEnv(
+    "KAFKA_SECKILL_DLQ_TOPIC_PARTITIONS",
+    config.seckillBucketCount,
+  );
+
   await admin.createTopics({
     topics: [
       {
         topic: config.seckillRequestTopic,
-        numPartitions: 6,
+        numPartitions: topicPartitions,
         replicationFactor: 1,
       },
       {
         topic: config.seckillResultTopic,
-        numPartitions: 6,
+        numPartitions: resultTopicPartitions,
         replicationFactor: 1,
       },
       {
         topic: config.seckillDlqTopic,
-        numPartitions: 6,
+        numPartitions: dlqTopicPartitions,
         replicationFactor: 1,
       },
     ],
@@ -2554,6 +2571,10 @@ function selectPrimaryBucket(stableKey: string, bucketCount: number) {
 
 function buildProcessingKey(skuId: string, bucketId: number) {
   return `${skuId}#${bucketId.toString().padStart(2, "0")}`;
+}
+
+function normalizeSeckillPartition(bucketId: number) {
+  return Number.isInteger(bucketId) && bucketId >= 0 ? bucketId : 0;
 }
 
 function fnv1a32(value: string) {
