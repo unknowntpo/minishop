@@ -136,3 +136,44 @@ Conclusion:
 - the current repository is not benchmark-ready on Bun
 - no valid Bun benchmark artifact was produced
 - Bun should currently be treated as an incompatible runtime experiment rather than a completed ingress comparison
+
+## `franz-go` producer experiment
+
+The Go seckill ingress producer was also reimplemented with `franz-go` to compare it with the original `segmentio/kafka-go` producer under the same benchmark conditions:
+
+- `scenario=buy-intent-hot-seckill`
+- `style=steady_state`
+- `concurrency=200`
+- `bucket=4`
+- `maxProbe=4`
+- `path=seckill_only`
+- existing Kotlin `worker-seckill` unchanged
+- existing Go result sink unchanged
+
+Reference baseline (`kafka-go` producer, Go ingress + Go sink):
+
+- `queued/sec = 2111.6`
+- `result topic throughput = 2064.76`
+- `p95 = 239.68ms`
+
+Three `franz-go` reruns under the same conditions produced:
+
+- run 1:
+  - `queued/sec = 2132.6`
+  - `result topic throughput = 2096.62`
+  - `p95 = 271.98ms`
+- run 2:
+  - `queued/sec = 1208.2`
+  - `result topic throughput = 1187.32`
+  - `p95 = 373.95ms`
+- run 3:
+  - `queued/sec = 2489.4`
+  - `result topic throughput = 2469.52`
+  - `p95 = 199.18ms`
+
+Interpretation:
+
+- `franz-go` did not show a stable, repeatable throughput win in this setup
+- observed variance was larger than the mean difference from the `kafka-go` baseline
+- the median `franz-go` run was effectively at parity with the prior Go ingress baseline
+- this reinforces the earlier trace-guided conclusion that ingress producer choice is no longer the dominant bottleneck; retry / reroute in `worker-seckill` remains the larger limiter
