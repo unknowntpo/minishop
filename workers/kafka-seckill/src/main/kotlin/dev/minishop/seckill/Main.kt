@@ -24,8 +24,11 @@ import org.apache.kafka.streams.state.Stores
 import org.slf4j.LoggerFactory
 import java.lang.management.ManagementFactory
 import java.net.URI
+import java.nio.file.Files
+import java.nio.file.Path
 import java.sql.DriverManager
 import java.time.Instant
+import java.util.Comparator
 import java.util.Properties
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
@@ -49,6 +52,7 @@ private val retryEdgeMetricsRegistry = SeckillRetryEdgeMetricsRegistry()
 
 fun main() {
     val config = AppConfig.fromEnv()
+    maybeClearStateDir(config)
     ensureTopics(config)
     val bootstrapGateway = PostgresBootstrapGateway(config)
 
@@ -130,6 +134,7 @@ data class AppConfig(
     val processingExceptionHandler: String,
     val productionExceptionHandler: String,
     val stateDir: String,
+    val clearStateOnStart: Boolean,
     val jdbcUrl: String,
     val jdbcUser: String,
     val jdbcPassword: String,
@@ -183,6 +188,7 @@ data class AppConfig(
                     "org.apache.kafka.streams.errors.DefaultProductionExceptionHandler",
                 ),
                 stateDir = env("KAFKA_SECKILL_STATE_DIR", "/var/lib/minishop-seckill/state"),
+                clearStateOnStart = env("KAFKA_SECKILL_CLEAR_STATE_ON_START", "0") == "1",
                 jdbcUrl = jdbcUrl,
                 jdbcUser = env("DATABASE_USER", "postgres"),
                 jdbcPassword = env("DATABASE_PASSWORD", "postgres"),
@@ -197,6 +203,26 @@ data class AppConfig(
                 ?: default
                 ?: error("$name is required")
     }
+}
+
+private fun maybeClearStateDir(config: AppConfig) {
+    if (!config.clearStateOnStart) {
+        return
+    }
+
+    val path = Path.of(config.stateDir, config.applicationId)
+    if (!Files.exists(path)) {
+        logger.info("Kafka seckill worker state dir does not exist yet: {}", path)
+        return
+    }
+
+    Files.walk(path)
+        .sorted(Comparator.reverseOrder())
+        .forEach { current ->
+            Files.deleteIfExists(current)
+        }
+
+    logger.info("Cleared Kafka seckill worker state dir {}", path)
 }
 
 class SeckillDecisionProcessor(
