@@ -165,9 +165,51 @@ Conclusion:
 - no valid Bun benchmark artifact was produced
 - Bun should currently be treated as an incompatible runtime experiment rather than a completed ingress comparison
 
-## `franz-go` producer experiment
+## Go producer baseline
 
-The Go seckill ingress producer was also reimplemented with `franz-go` to compare it with the original `segmentio/kafka-go` producer under the same benchmark conditions:
+The Go seckill ingress producer now uses `franz-go` as the baseline producer client.
+
+This baseline decision should be separated into two questions:
+
+- raw Kafka producer capability
+- end-to-end seckill pipeline performance
+
+For the raw Kafka producer question, a dedicated benchmark scenario `go-kafka-producer-raw` was added so the client libraries can be compared without HTTP, seckill routing, Kafka Streams retry/reroute, or result-sink persistence layered on top.
+
+Recent raw benchmark sweep conditions:
+
+- clients:
+  - `sarama`
+  - `franz-go`
+- message sizes:
+  - `1024B`
+  - `4096B`
+- repeats:
+  - `3`
+- per run:
+  - `messages=20000`
+  - `concurrency=512`
+  - `linger=5ms`
+  - `compression=none`
+
+Observed median results:
+
+| client | messageBytes | throughput median (/s) | producer p95 median (ms) |
+| --- | ---: | ---: | ---: |
+| `franz-go` | `1024` | `48306.15` | `18.98` |
+| `sarama` | `1024` | `44411.97` | `14.75` |
+| `franz-go` | `4096` | `34135.11` | `23.45` |
+| `sarama` | `4096` | `29357.71` | `22.12` |
+
+Interpretation:
+
+- `franz-go` is the current raw throughput winner at both tested payload sizes
+- `sarama` still showed slightly lower p95 latency in the smaller-payload run
+- for producer baseline selection, throughput is the more important discriminator here, so `franz-go` is the chosen Go producer baseline
+
+## Earlier `franz-go` pipeline experiment
+
+Before the raw producer benchmark existed, the Go seckill ingress producer had already been reimplemented with `franz-go` and compared with the original `segmentio/kafka-go` producer under the full seckill benchmark conditions:
 
 - `scenario=buy-intent-hot-seckill`
 - `style=steady_state`
@@ -201,10 +243,11 @@ Three `franz-go` reruns under the same conditions produced:
 
 Interpretation:
 
-- `franz-go` did not show a stable, repeatable throughput win in this setup
-- observed variance was larger than the mean difference from the `kafka-go` baseline
-- the median `franz-go` run was effectively at parity with the prior Go ingress baseline
-- this reinforces the earlier trace-guided conclusion that ingress producer choice is no longer the dominant bottleneck; retry / reroute in `worker-seckill` remains the larger limiter
+- those earlier full-pipeline runs were dominated by downstream variance and were not clean enough to settle the producer-library question by themselves
+- the newer `go-kafka-producer-raw` scenario is the better basis for choosing the producer baseline
+- even after choosing `franz-go` as the producer baseline, the larger end-to-end bottleneck still appears lower in the stack:
+  - `worker-seckill` retry / reroute
+  - result-sink persistence
 
 ## Current ingress tuning comparison
 
