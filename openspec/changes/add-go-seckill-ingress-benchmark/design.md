@@ -796,3 +796,71 @@ Interpretation:
 - payload size **does** matter on this seckill HTTP path
 - the biggest safe payload win came from removing duplicated metadata from the Kafka request, not from changing the external HTTP API format
 - this also means a custom pipe-delimited wire format is not required yet; there was still substantial headroom inside the existing JSON contract once redundant fields were removed
+
+### Node.js ingress with the same slim payload
+
+The existing Next.js / Node.js seckill ingress was then updated to send the same slim seckill Kafka payload shape:
+
+- `metadata.request_id`
+- `metadata.trace_id`
+- `metadata.source`
+- `metadata.actor_id`
+
+while removing the same duplicated metadata fields from the request topic payload.
+
+Two valid reruns under the same benchmark conditions:
+
+- `scenario=buy-intent-hot-seckill`
+- `ingress=http`
+- `style=steady_state`
+- `requests=10010`
+- `concurrency=200`
+- `bucket=4`
+- `maxProbe=4`
+- Go result sink enabled
+
+Artifacts:
+
+- `benchmark-results/buy-intent-hot-seckill/2026-04-22T23-39-58-879Z_node_http_slim_payload_final_20260422T233851Z.json`
+- `benchmark-results/buy-intent-hot-seckill/2026-04-22T23-41-35-928Z_node_http_slim_payload_rerun_20260422T234029Z.json`
+
+Observed Node slim-payload results:
+
+- run 1:
+  - `queued/sec = 1246.6`
+  - `result topic throughput = 1242.37`
+  - `p95 = 221.77ms`
+- run 2:
+  - `queued/sec = 1181.07`
+  - `result topic throughput = 1175.89`
+  - `p95 = 248.65ms`
+
+Interpretation:
+
+- the same payload reduction is compatible with the old Node seckill path
+- Node does not schema-reject the slimmer payload shape
+- however, even with the same payload savings, Node HTTP ingress remains materially behind Go HTTP ingress
+- relative to the current Go slim-payload reference (`2830.6 / 2830.75 / 104.86ms`), Node lands at roughly:
+  - `~42% to ~44%` of Go throughput
+  - `~2x` Go p95 latency
+
+### Seckill benchmark wrapper hygiene fixes
+
+While validating the Node reruns, three benchmark-wrapper issues were fixed because they were producing misleading failures unrelated to the payload change itself.
+
+The wrapper now:
+
+- waits for the Kafka Streams worker group and result-sink group to become `Stable` before starting the benchmark runner
+- uses a minimal seckill-only compose stack instead of starting unrelated regular-path workers
+- forwards the benchmark env vars through to the runner container instead of silently falling back to the script defaults
+
+Without these fixes, the benchmark could:
+
+- start sending traffic while `worker-seckill` was still in `PreparingRebalance` / `CompletingRebalance`
+- hit Docker networking conflicts from unrelated worker containers
+- accidentally run with default values such as `requests=20`, `concurrency=10`, and `style=burst`
+
+Interpretation:
+
+- these were benchmark-harness bugs, not seckill payload regressions
+- stable consumer groups and explicit env forwarding are required for trustworthy seckill comparisons
