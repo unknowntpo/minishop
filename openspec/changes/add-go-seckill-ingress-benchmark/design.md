@@ -291,10 +291,59 @@ Important interpretation:
   - DB persist behavior
 - it should **not** be framed as a producer linger / batch comparison, because both result sinks are Kafka consumers
 
-The next focused benchmark should sweep `GO_SECKILL_RESULT_SINK_MAX_WAIT_MS` while keeping the best known Go ingress producer setting fixed:
+## Go result sink `MaxWait` sweep
+
+The next focused benchmark was run with the requested fixed ingress shape:
 
 - ingress:
   - `KAFKA_SECKILL_CLIENT_LINGER_MS = 50`
   - `KAFKA_SECKILL_CLIENT_BATCH_NUM_MESSAGES = 5000`
-- sink:
+- benchmark conditions:
+  - `scenario=buy-intent-hot-seckill`
+  - `style=steady_state`
+  - `concurrency=200`
+  - `bucket=4`
+  - `maxProbe=4`
+  - `ingress=http`
+  - `path=seckill_only`
+- sink sweep:
   - `GO_SECKILL_RESULT_SINK_MAX_WAIT_MS = 10 / 50 / 100 / 250`
+
+Observed results:
+
+| `GO_SECKILL_RESULT_SINK_MAX_WAIT_MS` | queued/sec | result topic throughput | p95 |
+| --- | ---: | ---: | ---: |
+| `10ms` | `2044.2` | `2044.07` | `161.64ms` |
+| `50ms` | `1247.6` | `1247.72` | `367.79ms` |
+| `100ms` | `2640.2` | `2639.93` | `146.34ms` |
+| `250ms` | `2499.6` | `2499.72` | `135.37ms` |
+
+Artifacts:
+
+- `10ms`: `benchmark-results/buy-intent-hot-seckill/2026-04-22T01-40-34-015Z_bench_1776822009898.json`
+- `50ms`: `benchmark-results/buy-intent-hot-seckill/2026-04-22T01-41-22-848Z_bench_1776822066528.json`
+- `100ms`: `benchmark-results/buy-intent-hot-seckill/2026-04-22T01-41-57-651Z_bench_1776822101536.json`
+- `250ms`: `benchmark-results/buy-intent-hot-seckill/2026-04-22T01-42-31-301Z_bench_1776822135236.json`
+
+Interpretation:
+
+- `100ms` produced the best throughput on both `queued/sec` and `result topic throughput`.
+- `250ms` produced the best p95 latency, and its throughput stayed close to `100ms`.
+- `10ms` was clearly below the `100ms` / `250ms` group on throughput.
+- `50ms` was the worst setting in the first sweep and looked suspiciously weak, so it was rerun once more.
+
+`50ms` rerun:
+
+- artifact:
+  - `benchmark-results/buy-intent-hot-seckill/2026-04-22T01-43-21-131Z_bench_1776822185055.json`
+- result:
+  - `queued/sec = 2287.4`
+  - `result topic throughput = 2287.6`
+  - `p95 = 169.3ms`
+
+Updated interpretation:
+
+- `50ms` improved on rerun, but it still remained below the `100ms` / `250ms` group.
+- the best practical region for the Go result sink fetch wait is currently `100-250ms`
+- if the goal is maximum throughput, prefer `100ms`
+- if the goal is the best p95 with only a small throughput tradeoff, prefer `250ms`
