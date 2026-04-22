@@ -143,17 +143,34 @@ type eventMetadata struct {
 	Baggage       string `json:"baggage,omitempty"`
 }
 
+type seckillEventMetadata struct {
+	RequestID string `json:"request_id"`
+	TraceID   string `json:"trace_id"`
+	Source    string `json:"source"`
+	ActorID   string `json:"actor_id"`
+}
+
+type seckillBuyIntentCommand struct {
+	CommandID      string               `json:"command_id"`
+	CorrelationID  string               `json:"correlation_id"`
+	BuyerID        string               `json:"buyer_id"`
+	Items          []checkoutItem       `json:"items"`
+	IdempotencyKey string               `json:"idempotency_key,omitempty"`
+	Metadata       seckillEventMetadata `json:"metadata"`
+	IssuedAt       string               `json:"issued_at"`
+}
+
 type seckillBuyIntentRequest struct {
-	SkuID             string           `json:"sku_id"`
-	Quantity          int              `json:"quantity"`
-	SeckillStockLimit int              `json:"seckill_stock_limit"`
-	BucketCount       int              `json:"bucket_count"`
-	PrimaryBucketID   int              `json:"primary_bucket_id"`
-	BucketID          int              `json:"bucket_id"`
-	Attempt           int              `json:"attempt"`
-	MaxProbe          int              `json:"max_probe"`
-	ProcessingKey     string           `json:"processing_key"`
-	Command           buyIntentCommand `json:"command"`
+	SkuID             string                  `json:"sku_id"`
+	Quantity          int                     `json:"quantity"`
+	SeckillStockLimit int                     `json:"seckill_stock_limit"`
+	BucketCount       int                     `json:"bucket_count"`
+	PrimaryBucketID   int                     `json:"primary_bucket_id"`
+	BucketID          int                     `json:"bucket_id"`
+	Attempt           int                     `json:"attempt"`
+	MaxProbe          int                     `json:"max_probe"`
+	ProcessingKey     string                  `json:"processing_key"`
+	Command           seckillBuyIntentCommand `json:"command"`
 }
 
 type acceptResponse struct {
@@ -888,7 +905,20 @@ func (a *app) publishSeckillCommand(
 		Attempt:           0,
 		MaxProbe:          a.cfg.kafkaMaxProbe,
 		ProcessingKey:     buildProcessingKey(item.SkuID, primaryBucketID),
-		Command:           command,
+		Command: seckillBuyIntentCommand{
+			CommandID:      command.CommandID,
+			CorrelationID:  command.CorrelationID,
+			BuyerID:        command.BuyerID,
+			Items:          command.Items,
+			IdempotencyKey: command.IdempotencyKey,
+			Metadata: seckillEventMetadata{
+				RequestID: command.Metadata.RequestID,
+				TraceID:   command.Metadata.TraceID,
+				Source:    command.Metadata.Source,
+				ActorID:   command.Metadata.ActorID,
+			},
+			IssuedAt: command.IssuedAt,
+		},
 	})
 	if err != nil {
 		return err

@@ -710,3 +710,89 @@ Interpretation:
   - about `19.2%` worse on ingress `p95`
 - under this minishop seckill HTTP path, switching frameworks alone does **not** look like the next winning move
 - the remaining gap from `direct_kafka` to HTTP still appears to be dominated by the full request path rather than the specific Go HTTP framework
+
+## Profiling-driven Go HTTP hot-path reductions
+
+CPU profiling on the Go backend HTTP handler showed that the next useful work was not a framework swap, but reducing avoidable work inside the current hot path.
+
+### Step 1: request decode and hot-path log cleanup
+
+The first useful profiling-guided cleanup kept `net/http`, but:
+
+- removed the double-decode compatibility path from the request body
+- removed success-path `log.Printf` calls from the seckill accept handler
+- switched request decoding to `goccy/go-json`
+
+Reference artifact:
+
+- `benchmark-results/buy-intent-hot-seckill/2026-04-22T17-07-13-860Z_go_http_goccy_json_20260422T170653Z.json`
+
+Result:
+
+- `queued/sec = 2034.43`
+- `result topic throughput = 2043.04`
+- `p95 = 151.24ms`
+
+Interpretation:
+
+- this was the first profiling-guided HTTP step that clearly improved the clean Go HTTP baseline
+- it outperformed the earlier clean Go HTTP reference (`1828.17 / 1833.66 / 198.29ms`)
+- request decoding and hot-path logging were real costs, but still not enough on their own to close the direct-Kafka gap
+
+### Step 2: slim the seckill Kafka request payload
+
+Profiling still showed the publish path doing meaningful work on every accepted request, so the next safe change was to reduce the seckill Kafka payload itself without changing the external HTTP contract.
+
+The Go producers now send a slimmer seckill command shape to `inventory.seckill.requested`:
+
+- kept:
+  - `command_id`
+  - `correlation_id`
+  - `buyer_id`
+  - `items`
+  - `idempotency_key`
+  - `issued_at`
+  - `metadata.request_id`
+  - `metadata.trace_id`
+  - `metadata.source`
+  - `metadata.actor_id`
+- removed from the seckill Kafka payload only:
+  - duplicated `metadata.command_id`
+  - duplicated `metadata.correlation_id`
+  - `metadata.traceparent`
+  - `metadata.tracestate`
+  - `metadata.baggage`
+
+This is safe for the current seckill topology because:
+
+- the Kotlin `worker-seckill` request model only reads the four base metadata fields
+- the trace carrier already travels in Kafka headers
+- `command_id` and `correlation_id` are already present at the top level of the command
+
+Representative request payload size for a benchmark seckill request moved from:
+
+- `876 bytes` to `640 bytes`
+- savings: `236 bytes` (`26.94%`)
+
+Reference artifact:
+
+- `benchmark-results/buy-intent-hot-seckill/2026-04-22T17-27-41-274Z_go_http_slim_metadata_manual2_20260422T172700Z.json`
+
+Result:
+
+- `queued/sec = 2830.6`
+- `result topic throughput = 2830.75`
+- `p95 = 104.86ms`
+- `acceptedDuringWindow = 42459`
+
+Compared with the previous best Go HTTP step (`goccy/go-json` request decode only):
+
+- `queued/sec` improved from `2034.43` to `2830.6` (`+39.1%`)
+- `result topic throughput` improved from `2043.04` to `2830.75` (`+38.6%`)
+- `p95` improved from `151.24ms` to `104.86ms` (`-30.7%`)
+
+Interpretation:
+
+- payload size **does** matter on this seckill HTTP path
+- the biggest safe payload win came from removing duplicated metadata from the Kafka request, not from changing the external HTTP API format
+- this also means a custom pipe-delimited wire format is not required yet; there was still substantial headroom inside the existing JSON contract once redundant fields were removed
