@@ -36,7 +36,7 @@ services:
 
   benchmark-runner:
     volumes:
-      - benchmark_results:/app/benchmark-results
+      - benchmark_results:/tmp/benchmark-results
     environment:
       OTEL_ENABLED: "0"
       OTEL_EXPORTER_OTLP_ENDPOINT: ""

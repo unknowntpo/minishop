@@ -70,14 +70,14 @@ for max_wait in "${max_waits[@]}"; do
     -e KAFKA_SECKILL_CLIENT_LINGER_MS=50 \
     -e KAFKA_SECKILL_CLIENT_BATCH_NUM_MESSAGES=5000 \
     -e GO_SECKILL_RESULT_SINK_MAX_WAIT_MS="$max_wait" \
-    -e BENCHMARK_RESULTS_DIR=/app/benchmark-results \
+    -e BENCHMARK_RESULTS_DIR=/tmp/benchmark-results \
     benchmark-runner \
     pnpm --config.engine-strict=false benchmark:buy-intent
 
   echo "[remote-benchmark] max_wait=${max_wait}ms: copying artifacts to $local_result_dir"
   rm -rf "$local_result_dir"
   mkdir -p "$local_result_dir"
-  docker --context "$context" cp "$runner_name:/app/benchmark-results/." "$local_result_dir"
+  docker --context "$context" cp "$runner_name:/tmp/benchmark-results/." "$local_result_dir"
 
   docker --context "$context" rm "$runner_name" >/dev/null
 done
