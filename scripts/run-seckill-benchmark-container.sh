@@ -64,6 +64,7 @@ docker "${compose_args[@]}" run --rm --build --no-deps \
   -e BENCHMARK_RUN_ID="${run_id}" \
   -e BENCHMARK_APP_REPLICAS="${app_replicas}" \
   -e BENCHMARK_APP_URL="${BENCHMARK_APP_URL:-http://app:3000}" \
+  -e BENCHMARK_PROMETHEUS_URL="${BENCHMARK_PROMETHEUS_URL:-http://prometheus:9090}" \
   -e KAFKA_SECKILL_APPLICATION_ID="${KAFKA_SECKILL_APPLICATION_ID}" \
   -e KAFKA_SECKILL_RESULT_SINK_GROUP_ID="${KAFKA_SECKILL_RESULT_SINK_GROUP_ID}" \
   benchmark-runner \

@@ -13,6 +13,7 @@ type BenchmarkConfig = {
   appUrls: string[];
   ingressAppUrl: string;
   ingressAppUrls: string[];
+  prometheusUrl?: string;
   databaseUrl: string;
   kafkaBrokers: string[];
   scenarioFamily?: string;
@@ -181,6 +182,40 @@ type KafkaTopicSnapshot = {
   totalOffset: number;
 };
 
+type PrometheusVectorSample = {
+  metric?: Record<string, string>;
+  value?: [number, string];
+};
+
+type PrometheusCounterSnapshot = {
+  sampledAt: string;
+  primaryRequestsTotal: number;
+  retryScheduledTotal: number;
+  retriedRequestsTotal: number;
+  resultTotal: number;
+  retryEdgeDistribution: Record<string, number>;
+  retryAttemptDistribution: Record<string, number>;
+  retrySourceBucketDistribution: Record<string, number>;
+  retryTargetBucketDistribution: Record<string, number>;
+};
+
+type SeckillWorkerReport = {
+  available: boolean;
+  sampledAt?: string;
+  primaryRequests?: number;
+  retryScheduled?: number;
+  retriedRequests?: number;
+  results?: number;
+  retryScheduledPerPrimary?: number;
+  retriedPerPrimary?: number;
+  resultPerPrimary?: number;
+  retryEdgeDistribution?: Record<string, number>;
+  retryAttemptDistribution?: Record<string, number>;
+  retrySourceBucketDistribution?: Record<string, number>;
+  retryTargetBucketDistribution?: Record<string, number>;
+  error?: string;
+};
+
 const config = readConfig();
 
 async function main() {
@@ -193,6 +228,7 @@ async function main() {
     await assertAppsReachable(config.ingressAppUrls, config.ingressHealthPath);
   }
   const kafkaBefore = await readKafkaBenchmarkSnapshot(config).catch(() => null);
+  const seckillWorkerBefore = await readSeckillWorkerCounterSnapshot(config).catch(() => null);
   const seckillCollector =
     config.createdSource === "kafka_seckill_result"
       ? await startSeckillOutcomeCollector(config)
@@ -328,6 +364,7 @@ async function main() {
 
       const natsSnapshot = await readNatsSnapshot();
       const kafkaAfter = await readKafkaBenchmarkSnapshot(config).catch(() => null);
+      const seckillWorkerAfter = await readSeckillWorkerCounterSnapshot(config).catch(() => null);
       profiling = await maybeStopProfiling(profilingPlan, profiling);
       const finishedAtIso = new Date().toISOString();
       const seckillSemanticAssertion = buildSeckillSemanticAssertion({
@@ -389,6 +426,7 @@ async function main() {
           benchmarkStyle: config.benchmarkStyle,
         },
         kafka: buildKafkaReport(config, kafkaBefore, kafkaAfter),
+        seckillWorker: buildSeckillWorkerReport(seckillWorkerBefore, seckillWorkerAfter),
         steadyState,
         requestPath: {
           accepted: accepted.length,
@@ -478,6 +516,7 @@ async function main() {
       profiling = await maybeStopProfiling(profilingPlan, profiling);
       const natsSnapshot = await readNatsSnapshot().catch(() => ({ available: false }));
       const kafkaAfter = await readKafkaBenchmarkSnapshot(config).catch(() => null);
+      const seckillWorkerAfter = await readSeckillWorkerCounterSnapshot(config).catch(() => null);
       const finishedAtIso = new Date().toISOString();
       const failureMessage = error instanceof Error ? error.message : "unknown benchmark failure";
       const intentCreation =
@@ -554,6 +593,7 @@ async function main() {
           benchmarkStyle: config.benchmarkStyle,
         },
         kafka: buildKafkaReport(config, kafkaBefore, kafkaAfter),
+        seckillWorker: buildSeckillWorkerReport(seckillWorkerBefore, seckillWorkerAfter),
         steadyState,
         requestPath: {
           accepted: accepted.length,
@@ -725,6 +765,193 @@ function buildDiagnosticsForReport(report: {
   return {
     assertions,
   } satisfies BenchmarkDiagnostics;
+}
+
+async function readSeckillWorkerCounterSnapshot(
+  config: BenchmarkConfig,
+): Promise<PrometheusCounterSnapshot | null> {
+  if (!config.scenarioName.includes("seckill") || !config.prometheusUrl) {
+    return null;
+  }
+
+  try {
+    const [
+      primaryRequestsTotal,
+      retryScheduledTotal,
+      retriedRequestsTotal,
+      resultTotal,
+      retryEdgeDistribution,
+      retryAttemptDistribution,
+      retrySourceBucketDistribution,
+      retryTargetBucketDistribution,
+    ] = await Promise.all([
+      readPrometheusScalar(config.prometheusUrl, "sum(minishop_seckill_bucket_primary_requests_total)"),
+      readPrometheusScalar(config.prometheusUrl, "sum(minishop_seckill_bucket_retry_scheduled_total)"),
+      readPrometheusScalar(config.prometheusUrl, "sum(minishop_seckill_bucket_retried_requests_total)"),
+      readPrometheusScalar(config.prometheusUrl, "sum(minishop_seckill_bucket_result_total)"),
+      readPrometheusDistribution(
+        config.prometheusUrl,
+        "sum by (from_bucket, to_bucket) (minishop_seckill_retry_edge_scheduled_total)",
+        (metric) => `${metric.from_bucket ?? "?"}->${metric.to_bucket ?? "?"}`,
+      ),
+      readPrometheusDistribution(
+        config.prometheusUrl,
+        "sum by (attempt) (minishop_seckill_retry_edge_scheduled_total)",
+        (metric) => `attempt_${metric.attempt ?? "?"}`,
+      ),
+      readPrometheusDistribution(
+        config.prometheusUrl,
+        "sum by (from_bucket) (minishop_seckill_retry_edge_scheduled_total)",
+        (metric) => metric.from_bucket ?? "?",
+      ),
+      readPrometheusDistribution(
+        config.prometheusUrl,
+        "sum by (to_bucket) (minishop_seckill_retry_edge_scheduled_total)",
+        (metric) => metric.to_bucket ?? "?",
+      ),
+    ]);
+
+    return {
+      sampledAt: new Date().toISOString(),
+      primaryRequestsTotal,
+      retryScheduledTotal,
+      retriedRequestsTotal,
+      resultTotal,
+      retryEdgeDistribution,
+      retryAttemptDistribution,
+      retrySourceBucketDistribution,
+      retryTargetBucketDistribution,
+    };
+  } catch (error) {
+    console.warn(
+      `[benchmark] failed to read seckill worker counters from Prometheus: ${
+        error instanceof Error ? error.message : "unknown error"
+      }`,
+    );
+    return null;
+  }
+}
+
+async function readPrometheusScalar(prometheusUrl: string, query: string) {
+  const samples = await readPrometheusVector(prometheusUrl, query);
+  const first = samples[0]?.value?.[1];
+  const parsed = first ? Number.parseFloat(first) : 0;
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+async function readPrometheusDistribution(
+  prometheusUrl: string,
+  query: string,
+  keyForMetric: (metric: Record<string, string>) => string,
+) {
+  const samples = await readPrometheusVector(prometheusUrl, query);
+  const distribution: Record<string, number> = {};
+
+  for (const sample of samples) {
+    const key = keyForMetric(sample.metric ?? {});
+    const rawValue = sample.value?.[1];
+    const parsed = rawValue ? Number.parseFloat(rawValue) : 0;
+    if (!key || !Number.isFinite(parsed)) {
+      continue;
+    }
+    distribution[key] = parsed;
+  }
+
+  return distribution;
+}
+
+async function readPrometheusVector(prometheusUrl: string, query: string) {
+  const baseUrl = prometheusUrl.replace(/\/+$/, "");
+  const url = new URL(`${baseUrl}/api/v1/query`);
+  url.searchParams.set("query", query);
+
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Prometheus query failed with HTTP ${response.status}`);
+  }
+
+  const body = (await response.json()) as {
+    status?: string;
+    data?: { resultType?: string; result?: PrometheusVectorSample[] };
+    error?: string;
+  };
+
+  if (body.status !== "success" || body.data?.resultType !== "vector") {
+    throw new Error(body.error ?? "unexpected Prometheus response");
+  }
+
+  return body.data.result ?? [];
+}
+
+function buildSeckillWorkerReport(
+  before: PrometheusCounterSnapshot | null,
+  after: PrometheusCounterSnapshot | null,
+): SeckillWorkerReport | null {
+  if (!before || !after) {
+    return null;
+  }
+
+  const primaryRequests = counterDelta(before.primaryRequestsTotal, after.primaryRequestsTotal);
+  const retryScheduled = counterDelta(before.retryScheduledTotal, after.retryScheduledTotal);
+  const retriedRequests = counterDelta(before.retriedRequestsTotal, after.retriedRequestsTotal);
+  const results = counterDelta(before.resultTotal, after.resultTotal);
+
+  return {
+    available: true,
+    sampledAt: after.sampledAt,
+    primaryRequests,
+    retryScheduled,
+    retriedRequests,
+    results,
+    retryScheduledPerPrimary: ratio(retryScheduled, primaryRequests),
+    retriedPerPrimary: ratio(retriedRequests, primaryRequests),
+    resultPerPrimary: ratio(results, primaryRequests),
+    retryEdgeDistribution: counterDistributionDelta(
+      before.retryEdgeDistribution,
+      after.retryEdgeDistribution,
+    ),
+    retryAttemptDistribution: counterDistributionDelta(
+      before.retryAttemptDistribution,
+      after.retryAttemptDistribution,
+    ),
+    retrySourceBucketDistribution: counterDistributionDelta(
+      before.retrySourceBucketDistribution,
+      after.retrySourceBucketDistribution,
+    ),
+    retryTargetBucketDistribution: counterDistributionDelta(
+      before.retryTargetBucketDistribution,
+      after.retryTargetBucketDistribution,
+    ),
+  };
+}
+
+function counterDistributionDelta(
+  before: Record<string, number>,
+  after: Record<string, number>,
+): Record<string, number> {
+  const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+  const delta: Record<string, number> = {};
+
+  for (const key of keys) {
+    const value = counterDelta(before[key] ?? 0, after[key] ?? 0);
+    if (value > 0) {
+      delta[key] = value;
+    }
+  }
+
+  return delta;
+}
+
+function counterDelta(before: number, after: number) {
+  return Math.max(0, after - before);
+}
+
+function ratio(numerator: number, denominator: number) {
+  if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator <= 0) {
+    return 0;
+  }
+
+  return numerator / denominator;
 }
 
 async function startSeckillOutcomeCollector(config: BenchmarkConfig) {
@@ -1697,6 +1924,10 @@ function buildMeasurementsFromReport(report: {
   intentCreation?: {
     createdThroughputPerSecond?: number;
   };
+  seckillWorker?: {
+    retryScheduledPerPrimary?: number;
+    resultPerPrimary?: number;
+  } | null;
   projections?: {
     checkpointLagEvents?: number;
     projectionLagEvents?: number;
@@ -1712,6 +1943,8 @@ function buildMeasurementsFromReport(report: {
   const ingressThroughput = report.requestPath?.acceptRequestsPerSecond ?? 0;
   const ingressP95 = report.requestPath?.acceptLatencyMs?.p95 ?? 0;
   const resultThroughput = report.intentCreation?.createdThroughputPerSecond ?? 0;
+  const retryPerPrimary = report.seckillWorker?.retryScheduledPerPrimary;
+  const resultPerPrimary = report.seckillWorker?.resultPerPrimary;
   const projectionLag =
     report.projections?.checkpointLagEvents ?? report.projections?.projectionLagEvents;
   const measurements: BenchmarkMeasurement[] = [];
@@ -1752,6 +1985,32 @@ function buildMeasurementsFromReport(report: {
         ? "Compare this with result topic throughput to see how much durable queued work reaches final output."
         : "Compare this with downstream throughput to see how much admitted work becomes durable business facts.",
   });
+
+  if (typeof retryPerPrimary === "number") {
+    measurements.push({
+      key: "retry_per_primary",
+      label: "retry per primary",
+      unit: "",
+      value: retryPerPrimary,
+      definition: "Average number of retries the seckill worker scheduled for each primary request.",
+      calculation: "retryScheduled / primaryRequests",
+      interpretation:
+        "Values near zero mean requests usually complete on the first probe. Values near maxProbe-1 mean nearly every request is rerouted through the full probe path.",
+    });
+  }
+
+  if (typeof resultPerPrimary === "number") {
+    measurements.push({
+      key: "result_per_primary",
+      label: "result per primary",
+      unit: "",
+      value: resultPerPrimary,
+      definition: "Average number of final seckill results produced for each primary request.",
+      calculation: "results / primaryRequests",
+      interpretation:
+        "Healthy runs should stay near 1.0. Lower values indicate work is accepted faster than the worker emits final outcomes.",
+    });
+  }
 
   measurements.push({
     key: "ingress_p95_latency",
@@ -2070,6 +2329,7 @@ function readConfig(): BenchmarkConfig {
     appUrls,
     ingressAppUrl: ingressAppUrls[0] ?? appUrls[0] ?? "http://localhost:3000",
     ingressAppUrls,
+    prometheusUrl: process.env.BENCHMARK_PROMETHEUS_URL?.trim() || "http://localhost:9090",
     databaseUrl: requiredEnv("DATABASE_URL"),
     scenarioFamily: process.env.BENCHMARK_SCENARIO_FAMILY?.trim() || undefined,
     kafkaBrokers: (process.env.BENCHMARK_KAFKA_BROKERS ?? "localhost:19092")
