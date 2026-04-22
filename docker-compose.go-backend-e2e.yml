@@ -1,0 +1,219 @@
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: minishop
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d minishop"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - go_backend_e2e_postgres:/var/lib/postgresql/data
+
+  nats:
+    image: nats:2.11
+    command: ["-js", "-sd", "/data", "-m", "8222"]
+    volumes:
+      - go_backend_e2e_nats:/data
+
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.2.18
+    command:
+      - redpanda
+      - start
+      - --overprovisioned
+      - --smp
+      - "1"
+      - --memory
+      - "1G"
+      - --reserve-memory
+      - "0M"
+      - --node-id
+      - "0"
+      - --check=false
+      - --kafka-addr
+      - PLAINTEXT://0.0.0.0:9092
+      - --advertise-kafka-addr
+      - PLAINTEXT://redpanda:9092
+
+  go-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.go-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_started
+      redpanda:
+        condition: service_started
+    environment:
+      GO_BACKEND_ADDR: :3000
+      GO_BACKEND_CORS_ALLOWED_ORIGINS: "*"
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/minishop
+      DATABASE_POOL_MAX: 8
+      NATS_URL: nats://nats:4222
+      NATS_BUY_INTENT_STREAM: BUY_INTENT_COMMANDS
+      NATS_BUY_INTENT_SUBJECT: buy-intent.command
+      NATS_BUY_INTENT_RETRY_SUBJECT: buy-intent.retry
+      NATS_BUY_INTENT_DLQ_SUBJECT: buy-intent.dlq
+      KAFKA_BROKERS: redpanda:9092
+      KAFKA_CLIENT_ID: minishop-go-backend-e2e
+      KAFKA_SECKILL_REQUEST_TOPIC: inventory.seckill.requested
+      KAFKA_SECKILL_RESULT_TOPIC: inventory.seckill.result
+      KAFKA_SECKILL_DLQ_TOPIC: inventory.seckill.dlq
+      KAFKA_SECKILL_BUCKET_COUNT: 4
+      KAFKA_SECKILL_MAX_PROBE: 4
+      KAFKA_SECKILL_CONFIG_CACHE_TTL_MS: 0
+      KAFKA_SECKILL_CLIENT_LINGER_MS: 50
+      KAFKA_SECKILL_CLIENT_BATCH_NUM_MESSAGES: 5000
+      KAFKA_SECKILL_CLIENT_COMPRESSION: none
+      OTEL_ENABLED: "0"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/healthz >/dev/null"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  worker-buy-intents-ingest:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/minishop
+      DATABASE_POOL_MAX: 8
+      NATS_URL: nats://nats:4222
+      NATS_BUY_INTENT_STREAM: BUY_INTENT_COMMANDS
+      NATS_BUY_INTENT_SUBJECT: buy-intent.command
+      NATS_BUY_INTENT_RETRY_SUBJECT: buy-intent.retry
+      NATS_BUY_INTENT_DLQ_SUBJECT: buy-intent.dlq
+      NATS_BUY_INTENT_DURABLE_CONSUMER: buy-intent-ingest
+      NATS_BUY_INTENT_INGEST_BATCH_SIZE: 100
+      NATS_BUY_INTENT_INGEST_EXPIRES_MS: 25
+      NATS_BUY_INTENT_INGEST_RETRY_DELAY_MS: 1000
+      NATS_BUY_INTENT_ACK_WAIT_MS: 30000
+      NATS_BUY_INTENT_INGEST_CONTINUOUS: "1"
+      OTEL_ENABLED: "0"
+      NEXT_TELEMETRY_DISABLED: "1"
+    command: ["pnpm", "worker:buy-intents:ingest:nats"]
+
+  worker-staged-buy-intents-process:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/minishop
+      DATABASE_POOL_MAX: 16
+      BUY_INTENT_COMMAND_ORCHESTRATOR_MODE: noop
+      BUY_INTENT_BATCH_SIZE: 100
+      BUY_INTENT_PROCESS_CONCURRENCY: 16
+      BUY_INTENT_PROCESS_POLL_INTERVAL_MS: 10
+      OTEL_ENABLED: "0"
+      NEXT_TELEMETRY_DISABLED: "1"
+    command: ["pnpm", "worker:staged-buy-intents:process:loop"]
+
+  worker-projections:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/minishop
+      DATABASE_POOL_MAX: 8
+      PROJECTION_NAME: main
+      PROJECTION_BATCH_SIZE: 100
+      PROJECTION_POLL_INTERVAL_MS: 60000
+      OTEL_ENABLED: "0"
+      NEXT_TELEMETRY_DISABLED: "1"
+    command: ["pnpm", "worker:projections"]
+
+  worker-seckill:
+    build:
+      context: .
+      dockerfile: Dockerfile.seckill-worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redpanda:
+        condition: service_started
+    environment:
+      JDBC_DATABASE_URL: jdbc:postgresql://postgres:5432/minishop
+      DATABASE_USER: postgres
+      DATABASE_PASSWORD: postgres
+      KAFKA_BROKERS: redpanda:9092
+      KAFKA_SECKILL_APPLICATION_ID: ${KAFKA_SECKILL_APPLICATION_ID:-minishop-seckill-e2e}
+      KAFKA_SECKILL_REQUEST_TOPIC: inventory.seckill.requested
+      KAFKA_SECKILL_RESULT_TOPIC: inventory.seckill.result
+      KAFKA_SECKILL_DLQ_TOPIC: inventory.seckill.dlq
+      KAFKA_SECKILL_DESERIALIZATION_EXCEPTION_HANDLER: org.apache.kafka.streams.errors.LogAndContinueExceptionHandler
+      KAFKA_SECKILL_PROCESSING_EXCEPTION_HANDLER: org.apache.kafka.streams.errors.LogAndContinueProcessingExceptionHandler
+      KAFKA_SECKILL_PRODUCTION_EXCEPTION_HANDLER: org.apache.kafka.streams.errors.DefaultProductionExceptionHandler
+      KAFKA_SECKILL_STATE_DIR: /var/lib/minishop-seckill/state
+      KAFKA_SECKILL_CLEAR_STATE_ON_START: "1"
+      OTEL_TRACES_EXPORTER: none
+      OTEL_METRICS_EXPORTER: none
+      OTEL_LOGS_EXPORTER: none
+      JAVA_TOOL_OPTIONS: ""
+    volumes:
+      - go_backend_e2e_seckill_state:/var/lib/minishop-seckill/state
+
+  go-seckill-result-sink:
+    build:
+      context: .
+      dockerfile: Dockerfile.go-seckill-result-sink
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redpanda:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/minishop
+      DATABASE_POOL_MAX: 8
+      KAFKA_BROKERS: redpanda:9092
+      KAFKA_SECKILL_RESULT_TOPIC: inventory.seckill.result
+      KAFKA_SECKILL_RESULT_SINK_GROUP_ID: ${KAFKA_SECKILL_RESULT_SINK_GROUP_ID:-minishop-seckill-result-e2e}
+      KAFKA_SECKILL_RESULT_SINK_CLIENT_ID: minishop-go-seckill-result-sink-e2e
+      KAFKA_SECKILL_RESULT_SINK_PARTITIONS_CONCURRENTLY: 2
+      GO_SECKILL_RESULT_SINK_MIN_BYTES: 1
+      GO_SECKILL_RESULT_SINK_MAX_BYTES: 10000000
+      GO_SECKILL_RESULT_SINK_MAX_WAIT_MS: 100
+      GO_SECKILL_RESULT_SINK_COMMIT_INTERVAL_MS: 0
+      OTEL_ENABLED: "0"
+
+  go-backend-e2e-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile.go-backend-e2e
+    depends_on:
+      postgres:
+        condition: service_healthy
+      go-backend:
+        condition: service_healthy
+    environment:
+      GO_BACKEND_E2E_BASE_URL: http://go-backend:3000
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/minishop
+      GO_BACKEND_E2E_REPO_ROOT: /workspace
+
+volumes:
+  go_backend_e2e_postgres:
+  go_backend_e2e_nats:
+  go_backend_e2e_seckill_state:

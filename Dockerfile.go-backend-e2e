@@ -1,0 +1,13 @@
+FROM golang:1.24.3-bookworm
+
+WORKDIR /workspace
+
+COPY . .
+
+RUN go install github.com/onsi/ginkgo/v2/ginkgo@v2.25.3
+
+WORKDIR /workspace/services/go-backend-e2e
+
+RUN go mod download
+
+CMD ["ginkgo", "-r", "-v", "--label-filter=full"]
