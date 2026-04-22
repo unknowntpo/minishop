@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"os/signal"
 	"strconv"
@@ -21,6 +22,7 @@ import (
 	"github.com/cloudwego/hertz/pkg/common/hlog"
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
 	"github.com/google/uuid"
+	pyroscope "github.com/grafana/pyroscope-go"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nats-io/nats.go"
@@ -65,6 +67,11 @@ type config struct {
 	serviceName          string
 	otlpEndpoint         string
 	otelEnabled          bool
+	pprofEnabled         bool
+	pprofAddr            string
+	pyroscopeEnabled     bool
+	pyroscopeServerURL   string
+	pyroscopeAppName     string
 }
 
 type app struct {
@@ -104,52 +111,6 @@ type requestItem struct {
 	Quantity             int    `json:"quantity"`
 	UnitPriceAmountMinor int    `json:"unitPriceAmountMinor"`
 	Currency             string `json:"currency"`
-}
-
-type requestBodyAlias struct {
-	BuyerID             string        `json:"buyerId"`
-	BuyerIDSnake        string        `json:"buyer_id"`
-	Items               []requestItem `json:"items"`
-	IdempotencyKey      string        `json:"idempotencyKey,omitempty"`
-	IdempotencyKeySnake string        `json:"idempotency_key,omitempty"`
-}
-
-type requestItemAlias struct {
-	SkuID                     string `json:"skuId"`
-	SkuIDSnake                string `json:"sku_id"`
-	Quantity                  int    `json:"quantity"`
-	UnitPriceAmountMinor      int    `json:"unitPriceAmountMinor"`
-	UnitPriceAmountMinorSnake int    `json:"unit_price_amount_minor"`
-	Currency                  string `json:"currency"`
-}
-
-func (body *requestBody) UnmarshalJSON(data []byte) error {
-	var raw requestBodyAlias
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
-	}
-
-	body.BuyerID = firstNonEmpty(raw.BuyerID, raw.BuyerIDSnake)
-	body.Items = raw.Items
-	body.IdempotencyKey = firstNonEmpty(raw.IdempotencyKey, raw.IdempotencyKeySnake)
-	return nil
-}
-
-func (item *requestItem) UnmarshalJSON(data []byte) error {
-	var raw requestItemAlias
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
-	}
-
-	item.SkuID = firstNonEmpty(raw.SkuID, raw.SkuIDSnake)
-	item.Quantity = raw.Quantity
-	if raw.UnitPriceAmountMinor != 0 || raw.UnitPriceAmountMinorSnake == 0 {
-		item.UnitPriceAmountMinor = raw.UnitPriceAmountMinor
-	} else {
-		item.UnitPriceAmountMinor = raw.UnitPriceAmountMinorSnake
-	}
-	item.Currency = raw.Currency
-	return nil
 }
 
 type checkoutItem struct {
@@ -489,6 +450,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("start server: %v", err)
 	}
+	profiler, err := instance.startPyroscopeProfiler()
+	if err != nil {
+		log.Fatalf("start pyroscope profiler: %v", err)
+	}
+	pprofShutdown, err := instance.startPprofServer()
+	if err != nil {
+		log.Fatalf("start pprof server: %v", err)
+	}
 
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
@@ -497,6 +466,10 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = shutdown(ctx)
+	_ = pprofShutdown(ctx)
+	if profiler != nil {
+		_ = profiler.Stop()
+	}
 	kafkaClient.Close()
 	_ = nc.Drain()
 	db.Close()
@@ -530,7 +503,76 @@ func readConfig() config {
 		serviceName:          envDefault("OTEL_SERVICE_NAME", "go-backend"),
 		otlpEndpoint:         envDefault("OTEL_EXPORTER_OTLP_ENDPOINT", "http://tempo:4318"),
 		otelEnabled:          envDefault("OTEL_ENABLED", "1") != "0",
+		pprofEnabled:         envDefault("GO_BACKEND_PPROF_ENABLED", "0") == "1",
+		pprofAddr:            envDefault("GO_BACKEND_PPROF_ADDR", ":6060"),
+		pyroscopeEnabled:     envDefault("PYROSCOPE_ENABLED", "0") == "1",
+		pyroscopeServerURL:   envDefault("PYROSCOPE_SERVER_ADDRESS", "http://pyroscope:4040"),
+		pyroscopeAppName:     envDefault("PYROSCOPE_APPLICATION_NAME", envDefault("OTEL_SERVICE_NAME", "go-backend")),
 	}
+}
+
+func (a *app) startPprofServer() (func(context.Context) error, error) {
+	if !a.cfg.pprofEnabled {
+		return func(context.Context) error { return nil }, nil
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/debug/pprof/", pprof.Index)
+	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	mux.Handle("/debug/pprof/allocs", pprof.Handler("allocs"))
+	mux.Handle("/debug/pprof/block", pprof.Handler("block"))
+	mux.Handle("/debug/pprof/goroutine", pprof.Handler("goroutine"))
+	mux.Handle("/debug/pprof/heap", pprof.Handler("heap"))
+	mux.Handle("/debug/pprof/mutex", pprof.Handler("mutex"))
+	mux.Handle("/debug/pprof/threadcreate", pprof.Handler("threadcreate"))
+
+	server := &http.Server{
+		Addr:              a.cfg.pprofAddr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	go func() {
+		log.Printf("go-backend pprof listening on %s", a.cfg.pprofAddr)
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatalf("pprof listen: %v", err)
+		}
+	}()
+	return server.Shutdown, nil
+}
+
+func (a *app) startPyroscopeProfiler() (*pyroscope.Profiler, error) {
+	if !a.cfg.pyroscopeEnabled {
+		return nil, nil
+	}
+	profiler, err := pyroscope.Start(pyroscope.Config{
+		ApplicationName: a.cfg.pyroscopeAppName,
+		ServerAddress:   a.cfg.pyroscopeServerURL,
+		Logger:          pyroscope.StandardLogger,
+		Tags: map[string]string{
+			"http_engine": a.cfg.httpEngine,
+			"service":     a.cfg.serviceName,
+		},
+		ProfileTypes: []pyroscope.ProfileType{
+			pyroscope.ProfileCPU,
+			pyroscope.ProfileAllocObjects,
+			pyroscope.ProfileAllocSpace,
+			pyroscope.ProfileInuseObjects,
+			pyroscope.ProfileInuseSpace,
+			pyroscope.ProfileGoroutines,
+			pyroscope.ProfileMutexCount,
+			pyroscope.ProfileMutexDuration,
+			pyroscope.ProfileBlockCount,
+			pyroscope.ProfileBlockDuration,
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	log.Printf("go-backend pyroscope enabled server=%s app=%s engine=%s", a.cfg.pyroscopeServerURL, a.cfg.pyroscopeAppName, a.cfg.httpEngine)
+	return profiler, nil
 }
 
 func (a *app) startServer() (func(context.Context) error, error) {
@@ -635,7 +677,6 @@ func (a *app) handleBuyIntents(w http.ResponseWriter, r *http.Request) {
 	defer span.End()
 
 	reqCtx := requestContextFromRequest(ctx, r)
-	log.Printf("go-backend buy_intents_enter request_id=%s", reqCtx.requestID)
 	body, err := decodeRequestBody[requestBody](r)
 	if err != nil {
 		span.RecordError(err)
@@ -644,7 +685,6 @@ func (a *app) handleBuyIntents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, reqCtx, http.StatusBadRequest, "Request body must be valid JSON.")
 		return
 	}
-	log.Printf("go-backend decoded_request request_id=%s buyer_id=%q items=%d", reqCtx.requestID, body.BuyerID, len(body.Items))
 	if err := validateCreateCheckoutIntentRequest(body); err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "invalid_request")
@@ -665,7 +705,6 @@ func (a *app) handleBuyIntents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, reqCtx, http.StatusInternalServerError, "Buy intent command could not be accepted. Please try again.")
 		return
 	}
-	log.Printf("go-backend classify_seckill_ok request_id=%s kind=%s", reqCtx.requestID, decision.kind)
 
 	commandID := uuid.NewString()
 	correlationID := uuid.NewString()
@@ -724,7 +763,6 @@ func (a *app) handleBuyIntentsHertz(base context.Context, c *hertzapp.RequestCon
 	defer span.End()
 
 	reqCtx := requestContextFromHertz(ctx, c)
-	log.Printf("go-backend buy_intents_enter request_id=%s", reqCtx.requestID)
 	body, err := decodeHertzBody[requestBody](c)
 	if err != nil {
 		span.RecordError(err)
@@ -733,7 +771,6 @@ func (a *app) handleBuyIntentsHertz(base context.Context, c *hertzapp.RequestCon
 		writeErrorHertz(c, reqCtx, consts.StatusBadRequest, "Request body must be valid JSON.")
 		return
 	}
-	log.Printf("go-backend decoded_request request_id=%s buyer_id=%q items=%d", reqCtx.requestID, body.BuyerID, len(body.Items))
 	if err := validateCreateCheckoutIntentRequest(body); err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "invalid_request")
@@ -754,7 +791,6 @@ func (a *app) handleBuyIntentsHertz(base context.Context, c *hertzapp.RequestCon
 		writeErrorHertz(c, reqCtx, consts.StatusInternalServerError, "Buy intent command could not be accepted. Please try again.")
 		return
 	}
-	log.Printf("go-backend classify_seckill_ok request_id=%s kind=%s", reqCtx.requestID, decision.kind)
 
 	commandID := uuid.NewString()
 	correlationID := uuid.NewString()
@@ -1965,7 +2001,11 @@ func validateCreateCheckoutIntentRequest(body requestBody) error {
 
 func decodeRequestBody[T any](r *http.Request) (T, error) {
 	var body T
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		return body, err
+	}
+	if err := json.Unmarshal(data, &body); err != nil {
 		return body, err
 	}
 	return body, nil
@@ -2024,16 +2064,6 @@ func requestContextFromHertz(ctx context.Context, c *hertzapp.RequestContext) re
 		requestID: requestID,
 		traceID:   traceID,
 	}
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		trimmed := strings.TrimSpace(value)
-		if trimmed != "" {
-			return trimmed
-		}
-	}
-	return ""
 }
 
 func traceIDFromContext(ctx context.Context) string {
