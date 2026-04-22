@@ -44,6 +44,7 @@ type config struct {
 	kafkaClientID     string
 	kafkaBatchSize    int
 	kafkaLingerMs     int
+	kafkaCompression  string
 	cacheTTL          time.Duration
 	serviceName       string
 	otlpEndpoint      string
@@ -164,6 +165,7 @@ func main() {
 		kgo.RequiredAcks(kgo.AllISRAcks()),
 		kgo.ProducerLinger(time.Duration(cfg.kafkaLingerMs)*time.Millisecond),
 		kgo.MaxBufferedRecords(cfg.kafkaBatchSize),
+		kgo.ProducerBatchCompression(kafkaCompressionCodec(cfg.kafkaCompression)),
 	)
 	if err != nil {
 		log.Fatalf("create kafka client: %v", err)
@@ -226,6 +228,7 @@ func readConfig() config {
 		kafkaClientID:     envDefault("KAFKA_CLIENT_ID", "minishop-go-seckill-ingress"),
 		kafkaBatchSize:    envInt("KAFKA_SECKILL_CLIENT_BATCH_NUM_MESSAGES", 10000),
 		kafkaLingerMs:     envInt("KAFKA_SECKILL_CLIENT_LINGER_MS", 1),
+		kafkaCompression:  envDefault("KAFKA_SECKILL_CLIENT_COMPRESSION", "none"),
 		cacheTTL:          time.Duration(envInt("KAFKA_SECKILL_CONFIG_CACHE_TTL_MS", 60000)) * time.Millisecond,
 		serviceName:       envDefault("OTEL_SERVICE_NAME", "go-seckill-ingress"),
 		otlpEndpoint:      envDefault("OTEL_EXPORTER_OTLP_ENDPOINT", "http://tempo:4318"),
@@ -386,6 +389,7 @@ func (a *app) handleBuyIntents(w http.ResponseWriter, r *http.Request) {
 		attribute.Int("messaging.message_payload_size_bytes", len(payload)),
 		attribute.Int("messaging.kafka.batch_size", a.cfg.kafkaBatchSize),
 		attribute.Int("messaging.kafka.batch_timeout_ms", a.cfg.kafkaLingerMs),
+		attribute.String("messaging.kafka.compression", a.cfg.kafkaCompression),
 		attribute.Int("messaging.kafka.broker_count", len(a.cfg.kafkaBrokers)),
 	)
 	headers := make([]kgo.RecordHeader, 0, 3)
@@ -618,6 +622,27 @@ func splitCSV(value string) []string {
 		}
 	}
 	return out
+}
+
+func kafkaCompressionCodec(value string) kgo.CompressionCodec {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "none":
+		return kgo.NoCompression()
+	case "gzip":
+		return kgo.GzipCompression()
+	case "snappy":
+		return kgo.SnappyCompression()
+	case "lz4":
+		return kgo.Lz4Compression()
+	case "zstd":
+		return kgo.ZstdCompression()
+	default:
+		log.Fatalf(
+			"invalid KAFKA_SECKILL_CLIENT_COMPRESSION=%q; expected one of: none, gzip, snappy, lz4, zstd",
+			value,
+		)
+		return kgo.NoCompression()
+	}
 }
 
 func envDefault(name string, fallback string) string {
