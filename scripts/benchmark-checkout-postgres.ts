@@ -103,6 +103,18 @@ type BenchmarkProfilingMetadata = {
   }>;
 };
 
+type BenchmarkAssertion = {
+  key: string;
+  label: string;
+  pass: boolean;
+  severity: "info" | "warn" | "error";
+  message?: string;
+};
+
+type BenchmarkDiagnostics = {
+  assertions: BenchmarkAssertion[];
+};
+
 const config = readConfig();
 
 async function main() {
@@ -166,7 +178,7 @@ async function main() {
       );
 
     const report = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       runId: config.runId,
       scenarioName: config.scenarioName,
       startedAt: startedAtIso,
@@ -244,11 +256,24 @@ async function main() {
         skuInventories: inventoryChecks,
       },
       profiling,
+      diagnostics: {
+        assertions: [] as BenchmarkAssertion[],
+      },
       notes: [
         "Kafka, Redis, SSE, WebSocket, and real payment providers are intentionally excluded.",
         "Until reservation workers are wired end-to-end, accepted intents may remain queued.",
       ],
     };
+    report.diagnostics = buildDiagnosticsForReport({
+      accepted,
+      afterEventCount,
+      appendedEvents,
+      checkpoint,
+      duplicateReplay,
+      inventoryChecks,
+      pass,
+      beforeEventCount,
+    });
 
     const artifactPath = await writeBenchmarkArtifact(report);
 
@@ -261,6 +286,80 @@ async function main() {
   } finally {
     await pool.end();
   }
+}
+
+function buildDiagnosticsForReport(input: {
+  accepted: number;
+  afterEventCount: number;
+  appendedEvents: number;
+  checkpoint: number;
+  duplicateReplay: {
+    status: number;
+    idempotentReplay?: boolean;
+  };
+  inventoryChecks: Array<{
+    skuId: string;
+    noOversell: boolean;
+    matchesAccounting: boolean;
+    unchangedFromSeed: boolean;
+  }>;
+  pass: boolean;
+  beforeEventCount: number;
+}) {
+  const assertions: BenchmarkAssertion[] = [
+    {
+      key: "run.completed_successfully",
+      label: "run completed successfully",
+      pass: input.pass,
+      severity: "error",
+      message: input.pass ? "Run satisfied all checkout benchmark assertions." : "Artifact reported pass=false.",
+    },
+    {
+      key: "request.duplicate_replay_idempotent",
+      label: "duplicate replay is idempotent",
+      pass: Boolean(input.duplicateReplay.idempotentReplay),
+      severity: "error",
+      message: `Duplicate replay returned HTTP ${input.duplicateReplay.status}.`,
+    },
+    {
+      key: "event_store.appended_events_match_accepted",
+      label: "appended events match accepted requests",
+      pass: input.appendedEvents === input.accepted,
+      severity: "error",
+      message: `accepted=${input.accepted}, appended=${input.appendedEvents}, before=${input.beforeEventCount}, after=${input.afterEventCount}`,
+    },
+    {
+      key: "projection.checkpoint_caught_up",
+      label: "projection checkpoint caught up",
+      pass: Math.max(0, input.afterEventCount - input.checkpoint) === 0,
+      severity: "error",
+      message: `checkpoint lag=${Math.max(0, input.afterEventCount - input.checkpoint)}`,
+    },
+    ...input.inventoryChecks.flatMap((item) => [
+      {
+        key: `inventory.${item.skuId}.no_oversell`,
+        label: `${item.skuId} no oversell`,
+        pass: item.noOversell,
+        severity: "error" as const,
+      },
+      {
+        key: `inventory.${item.skuId}.matches_accounting`,
+        label: `${item.skuId} matches accounting`,
+        pass: item.matchesAccounting,
+        severity: "error" as const,
+      },
+      {
+        key: `inventory.${item.skuId}.unchanged_from_seed`,
+        label: `${item.skuId} unchanged from seed`,
+        pass: item.unchangedFromSeed,
+        severity: "error" as const,
+      },
+    ]),
+  ];
+
+  return {
+    assertions,
+  } satisfies BenchmarkDiagnostics;
 }
 
 async function createCheckoutIntent(index: number): Promise<RequestResult> {

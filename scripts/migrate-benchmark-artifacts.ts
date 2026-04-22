@@ -30,9 +30,18 @@ type BenchmarkSeries = {
 };
 
 type BenchmarkArtifact = {
+  schemaVersion?: number;
   runId?: string;
+  pass?: boolean;
   scenarioName?: string;
   scenarioTags?: Record<string, string | number | boolean>;
+  failure?: {
+    stage?: string;
+    message?: string;
+  };
+  diagnostics?: {
+    assertions?: BenchmarkAssertion[];
+  };
   scenario?: {
     requestedBuyClicks?: number;
   };
@@ -65,6 +74,14 @@ type BenchmarkArtifact = {
   series?: BenchmarkSeries[];
 };
 
+type BenchmarkAssertion = {
+  key: string;
+  label: string;
+  pass: boolean;
+  severity: "info" | "warn" | "error";
+  message?: string;
+};
+
 const benchmarkResultsRoot = path.join(process.cwd(), "benchmark-results");
 
 async function main() {
@@ -79,6 +96,8 @@ async function main() {
       continue;
     }
 
+    artifact.schemaVersion = Math.max(artifact.schemaVersion ?? 1, 2);
+    artifact.diagnostics = buildDiagnosticsFromArtifact(artifact);
     artifact.measurements = buildMeasurementsFromArtifact(artifact);
     artifact.series = buildSeriesFromArtifact(artifact);
     await writeFile(file, `${JSON.stringify(artifact, null, 2)}\n`, "utf8");
@@ -243,6 +262,122 @@ function buildSeriesFromArtifact(artifact: BenchmarkArtifact): BenchmarkSeries[]
     calculation: measurement.calculation,
     interpretation: measurement.interpretation,
   }));
+}
+
+function buildDiagnosticsFromArtifact(artifact: BenchmarkArtifact) {
+  const assertions = new Map<string, BenchmarkAssertion>();
+
+  assertions.set("run.completed_successfully", {
+    key: "run.completed_successfully",
+    label: "run completed successfully",
+    pass: artifact.pass !== false,
+    severity: "error",
+    message:
+      artifact.failure?.message ??
+      (artifact.pass === false ? "Artifact reported pass=false." : "Run completed without recorded assertion failure."),
+  });
+
+  if (artifact.failure?.stage || artifact.failure?.message) {
+    assertions.set(`failure.${artifact.failure?.stage ?? "unknown"}`, {
+      key: `failure.${artifact.failure?.stage ?? "unknown"}`,
+      label: (artifact.failure?.stage ?? "run failure").replace(/[_-]+/g, " "),
+      pass: false,
+      severity: "error",
+      message: artifact.failure?.message,
+    });
+  }
+
+  for (const entry of inferredBooleanAssertionsForArtifact(artifact)) {
+    assertions.set(entry.key, entry);
+  }
+
+  return {
+    assertions: [...assertions.values()],
+  };
+}
+
+function inferredBooleanAssertionsForArtifact(artifact: BenchmarkArtifact) {
+  const result = new Map<string, BenchmarkAssertion>();
+  collectBooleanAssertions(artifact, [], result);
+  return [...result.values()];
+}
+
+function collectBooleanAssertions(
+  value: unknown,
+  path: string[],
+  result: Map<string, BenchmarkAssertion>,
+) {
+  if (value === null || typeof value === "undefined") {
+    return;
+  }
+
+  if (typeof value === "boolean") {
+    if (path.length > 0 && isAssertionLikeBooleanPath(path)) {
+      const key = path.join(".");
+      result.set(key, {
+        key,
+        label: formatLabel(path),
+        pass: value,
+        severity: "error",
+      });
+    }
+    return;
+  }
+
+  if (Array.isArray(value) || typeof value !== "object") {
+    return;
+  }
+
+  for (const [key, nestedValue] of Object.entries(value)) {
+    if (shouldSkipDiagnosticPath(key, path.length === 0)) {
+      continue;
+    }
+
+    collectBooleanAssertions(nestedValue, [...path, key], result);
+  }
+}
+
+function shouldSkipDiagnosticPath(segment: string, root: boolean) {
+  if (!root) {
+    return false;
+  }
+
+  return [
+    "artifactFile",
+    "runId",
+    "scenarioName",
+    "scenarioFamily",
+    "scenarioTags",
+    "measurements",
+    "series",
+    "startedAt",
+    "finishedAt",
+    "environment",
+    "conditions",
+    "diagnostics",
+    "pass",
+  ].includes(segment);
+}
+
+function isAssertionLikeBooleanPath(path: string[]) {
+  const label = path[path.length - 1] ?? "";
+
+  if (/enabled|disabled|available|profiling/i.test(label)) {
+    return false;
+  }
+
+  return /^(is[A-Z]|has[A-Z]|no[A-Z])/.test(label) || /matches|unchanged|idempotent|oversell|accounting|pass|valid|consistent|healthy|caught/i.test(label);
+}
+
+function formatLabel(path: string[]) {
+  return path
+    .map((segment) =>
+      segment
+        .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+        .replace(/[_-]+/g, " ")
+        .toLowerCase(),
+    )
+    .join(" ");
 }
 
 main().catch((error) => {

@@ -132,6 +132,18 @@ type BenchmarkSeries = {
   interpretation?: string;
 };
 
+type BenchmarkAssertion = {
+  key: string;
+  label: string;
+  pass: boolean;
+  severity: "info" | "warn" | "error";
+  message?: string;
+};
+
+type BenchmarkDiagnostics = {
+  assertions: BenchmarkAssertion[];
+};
+
 type CheckoutResult = {
   checkoutIntentId: string;
   status: string;
@@ -326,7 +338,7 @@ async function main() {
       });
 
       const report = {
-        schemaVersion: 1,
+        schemaVersion: 2,
         pass:
           acceptResults.length === accepted.length &&
           pendingCreatedCommandIds.length === 0 &&
@@ -448,9 +460,13 @@ async function main() {
               },
             }
           : {})),
+        diagnostics: {
+          assertions: [] as BenchmarkAssertion[],
+        },
         measurements: [] as BenchmarkMeasurement[],
         series: [] as BenchmarkSeries[],
       };
+      report.diagnostics = buildDiagnosticsForReport(report);
       report.measurements = buildMeasurementsFromReport(report);
       report.series = buildSeriesFromReport(report);
 
@@ -491,7 +507,7 @@ async function main() {
                 })),
             );
       const report = {
-        schemaVersion: 1,
+        schemaVersion: 2,
         pass: false,
         scenarioName: config.scenarioName,
         scenarioFamily: readScenarioFamily(config),
@@ -610,9 +626,13 @@ async function main() {
             ? "Bypass mode failure happened after intent creation; created-only throughput remains the primary signal."
               : "Intent creation benchmark failure happened after partial progress; created-only throughput remains the primary signal.",
         ],
+        diagnostics: {
+          assertions: [] as BenchmarkAssertion[],
+        },
         measurements: [] as BenchmarkMeasurement[],
         series: [] as BenchmarkSeries[],
       };
+      report.diagnostics = buildDiagnosticsForReport(report);
       report.measurements = buildMeasurementsFromReport(report);
       report.series = buildSeriesFromReport(report);
       const artifactPath = await writeBenchmarkArtifact(report);
@@ -673,6 +693,38 @@ function buildSeckillSemanticAssertion(input: {
   }
 
   return null;
+}
+
+function buildDiagnosticsForReport(report: {
+  pass: boolean;
+  failure?: {
+    message?: string;
+    stage?: string;
+  };
+}) {
+  const assertions: BenchmarkAssertion[] = [
+    {
+      key: "run.completed_successfully",
+      label: "run completed successfully",
+      pass: report.pass,
+      severity: "error",
+      message: report.failure?.message ?? (report.pass ? "Run completed without benchmark assertion failure." : "Artifact reported pass=false."),
+    },
+  ];
+
+  if (report.failure?.stage || report.failure?.message) {
+    assertions.push({
+      key: `failure.${report.failure?.stage ?? "unknown"}`,
+      label: (report.failure?.stage ?? "run failure").replace(/[_-]+/g, " "),
+      pass: false,
+      severity: "error",
+      message: report.failure?.message,
+    });
+  }
+
+  return {
+    assertions,
+  } satisfies BenchmarkDiagnostics;
 }
 
 async function startSeckillOutcomeCollector(config: BenchmarkConfig) {

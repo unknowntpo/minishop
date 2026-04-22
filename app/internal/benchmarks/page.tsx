@@ -49,6 +49,15 @@ type BenchmarkReport = {
     message?: string;
     details?: Record<string, unknown>;
   };
+  diagnostics?: {
+    assertions?: Array<{
+      key?: string;
+      label?: string;
+      pass?: boolean;
+      severity?: "info" | "warn" | "error";
+      message?: string;
+    }>;
+  };
   environment?: {
     runtime?: string;
     appUrl?: string;
@@ -1238,7 +1247,7 @@ function formatEvidenceNumber(path: string[], value: number) {
 }
 
 function diagnosticSummaryForRun(run: BenchmarkRun) {
-  const failedChecks = booleanEntriesForRun(run).filter((entry) => entry.value === false);
+  const failedAssertions = failedAssertionsForRun(run);
   const distributions = distributionEntriesForRun(run);
   const importantDistributions = distributions
     .filter((entry) => entry.total > 0)
@@ -1253,14 +1262,14 @@ function diagnosticSummaryForRun(run: BenchmarkRun) {
   const hasFailure = Boolean(run.failure?.stage || run.failure?.message);
   const dominantDistribution = importantDistributions.find((entry) => entry.dominantShare >= 0.95);
 
-  if (!hasFailure && failedChecks.length === 0 && importantDistributions.length === 0) {
+  if (!hasFailure && failedAssertions.length === 0 && importantDistributions.length === 0) {
     return null;
   }
 
   const inferredMessage =
     run.failure?.message ??
-    (failedChecks.length > 0
-      ? `${failedChecks.length} invariant check${failedChecks.length === 1 ? "" : "s"} reported false.`
+    (failedAssertions.length > 0
+      ? `${failedAssertions.length} assertion${failedAssertions.length === 1 ? "" : "s"} failed.`
       : dominantDistribution
         ? `${dominantDistribution.label} is dominated by ${dominantDistribution.dominantLabel} (${formatPercentage(
             dominantDistribution.dominantShare,
@@ -1270,9 +1279,9 @@ function diagnosticSummaryForRun(run: BenchmarkRun) {
   return {
     badge: hasFailure ? (run.failure?.stage ?? "failed").replace(/[_-]+/g, " ") : "diagnostic",
     distributions: importantDistributions,
-    failedChecks,
+    failedChecks: failedAssertions,
     message: inferredMessage,
-    severity: hasFailure || failedChecks.length > 0 ? "danger" : "neutral",
+    severity: hasFailure || failedAssertions.length > 0 ? "danger" : "neutral",
     title: hasFailure ? "Run failure" : "Run diagnostics",
   };
 }
@@ -1353,43 +1362,18 @@ function collectDistributionEntries(
   }
 }
 
-function booleanEntriesForRun(run: BenchmarkRun) {
-  const result = new Map<string, { key: string; label: string; value: boolean }>();
-  collectBooleanEntries(run, [], result);
-  return [...result.values()];
-}
+function failedAssertionsForRun(run: BenchmarkRun) {
+  const failed = (run.diagnostics?.assertions ?? [])
+    .filter((assertion) => assertion.pass === false)
+    .map((assertion, index) => ({
+      key: assertion.key ?? `assertion-${index}`,
+      label: assertion.label ?? assertion.key ?? `assertion ${index + 1}`,
+      message: assertion.message,
+      severity: assertion.severity ?? "error",
+    }));
 
-function collectBooleanEntries(
-  value: unknown,
-  path: string[],
-  result: Map<string, { key: string; label: string; value: boolean }>,
-) {
-  if (value === null || typeof value === "undefined") {
-    return;
-  }
-
-  if (typeof value === "boolean") {
-    if (path.length > 0) {
-      result.set(path.join("."), {
-        key: path.join("."),
-        label: formatEvidenceLabel(path),
-        value,
-      });
-    }
-    return;
-  }
-
-  if (Array.isArray(value) || typeof value !== "object") {
-    return;
-  }
-
-  for (const [key, nestedValue] of Object.entries(value)) {
-    if (isExcludedDiagnosticKey(key, path.length === 0)) {
-      continue;
-    }
-
-    collectBooleanEntries(nestedValue, [...path, key], result);
-  }
+  const specificFailures = failed.filter((assertion) => assertion.key !== "run.completed_successfully");
+  return specificFailures.length > 0 ? specificFailures : failed;
 }
 
 function isExcludedDiagnosticKey(key: string, root: boolean) {
