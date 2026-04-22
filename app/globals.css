@@ -1456,6 +1456,69 @@ button.design-preview {
   gap: 10px;
 }
 
+.benchmark-diagnostic-summary {
+  display: grid;
+  gap: 12px;
+  margin-top: 1rem;
+  padding: 14px 16px;
+  border: 1px solid var(--ms-line-soft);
+  border-radius: var(--ms-radius);
+  background: color-mix(in srgb, var(--ms-surface) 92%, white 8%);
+}
+
+.benchmark-diagnostic-summary.danger {
+  border-color: color-mix(in srgb, var(--ms-accent) 35%, var(--ms-line-soft));
+  background: color-mix(in srgb, var(--ms-accent-soft) 30%, white 70%);
+}
+
+.benchmark-diagnostic-summary-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.benchmark-diagnostic-summary p {
+  margin: 0;
+  color: var(--ms-ink);
+  line-height: 1.55;
+}
+
+.benchmark-diagnostic-group {
+  display: grid;
+  gap: 8px;
+}
+
+.benchmark-diagnostic-label {
+  color: var(--ms-muted);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.benchmark-diagnostic-distributions {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+}
+
+.benchmark-diagnostic-distributions div {
+  display: grid;
+  gap: 6px;
+}
+
+.benchmark-diagnostic-distributions dt {
+  color: var(--ms-muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.benchmark-diagnostic-distributions dd {
+  margin: 0;
+}
+
 .benchmark-comparison-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

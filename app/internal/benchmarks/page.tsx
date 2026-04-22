@@ -44,6 +44,11 @@ type BenchmarkReport = {
   startedAt?: string;
   finishedAt?: string;
   pass?: boolean;
+  failure?: {
+    stage?: string;
+    message?: string;
+    details?: Record<string, unknown>;
+  };
   environment?: {
     runtime?: string;
     appUrl?: string;
@@ -197,6 +202,7 @@ type BenchmarkReport = {
     created?: number;
     duplicates?: number;
     pending?: number;
+    statusDistribution?: Record<string, number>;
     createdThroughputPerSecond?: number;
     createdLatencyMs?: {
       p50?: number;
@@ -652,6 +658,7 @@ function SelectedRunPanel({
 }) {
   const profileFile = run.profiling?.files?.find((file) => Boolean(file.path))?.path;
   const runSeries = seriesForRun(run);
+  const diagnosticSummary = diagnosticSummaryForRun(run);
 
   return (
     <article className="capacity-chart-card benchmark-selected-run-card">
@@ -667,6 +674,8 @@ function SelectedRunPanel({
           {run.pass ? "pass" : "failed"}
         </span>
       </div>
+
+      {diagnosticSummary ? <RunDiagnosticSummary summary={diagnosticSummary} /> : null}
 
       {runSeries.length > 0 ? (
         <>
@@ -737,6 +746,55 @@ function SelectedRunPanel({
         )}
       </div>
     </article>
+  );
+}
+
+function RunDiagnosticSummary({
+  summary,
+}: {
+  summary: ReturnType<typeof diagnosticSummaryForRun>;
+}) {
+  if (!summary) {
+    return null;
+  }
+
+  return (
+    <section className={`benchmark-diagnostic-summary ${summary.severity}`}>
+      <div className="benchmark-diagnostic-summary-header">
+        <strong>{summary.title}</strong>
+        <span className={`badge ${summary.severity === "danger" ? "danger" : "neutral"}`}>
+          {summary.badge}
+        </span>
+      </div>
+      {summary.message ? <p>{summary.message}</p> : null}
+      {summary.failedChecks.length > 0 ? (
+        <div className="benchmark-diagnostic-group">
+          <span className="benchmark-diagnostic-label">Failed checks</span>
+          <div className="benchmark-status-summary">
+            {summary.failedChecks.map((check) => (
+              <span className="badge danger" key={check.key}>
+                {check.label}
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
+      {summary.distributions.length > 0 ? (
+        <div className="benchmark-diagnostic-group">
+          <span className="benchmark-diagnostic-label">Observed distributions</span>
+          <dl className="benchmark-diagnostic-distributions">
+            {summary.distributions.map((distribution) => (
+              <div key={distribution.key}>
+                <dt>{distribution.label}</dt>
+                <dd>
+                  <StatusSummary values={distribution.values} />
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+      ) : null}
+    </section>
   );
 }
 
@@ -1177,6 +1235,177 @@ function formatEvidenceNumber(path: string[], value: number) {
   }
 
   return formatNumber(value);
+}
+
+function diagnosticSummaryForRun(run: BenchmarkRun) {
+  const failedChecks = booleanEntriesForRun(run).filter((entry) => entry.value === false);
+  const distributions = distributionEntriesForRun(run);
+  const importantDistributions = distributions
+    .filter((entry) => entry.total > 0)
+    .sort((left, right) => {
+      if (left.dominantShare !== right.dominantShare) {
+        return right.dominantShare - left.dominantShare;
+      }
+
+      return right.total - left.total;
+    })
+    .slice(0, 4);
+  const hasFailure = Boolean(run.failure?.stage || run.failure?.message);
+  const dominantDistribution = importantDistributions.find((entry) => entry.dominantShare >= 0.95);
+
+  if (!hasFailure && failedChecks.length === 0 && importantDistributions.length === 0) {
+    return null;
+  }
+
+  const inferredMessage =
+    run.failure?.message ??
+    (failedChecks.length > 0
+      ? `${failedChecks.length} invariant check${failedChecks.length === 1 ? "" : "s"} reported false.`
+      : dominantDistribution
+        ? `${dominantDistribution.label} is dominated by ${dominantDistribution.dominantLabel} (${formatPercentage(
+            dominantDistribution.dominantShare,
+          )}).`
+        : undefined);
+
+  return {
+    badge: hasFailure ? (run.failure?.stage ?? "failed").replace(/[_-]+/g, " ") : "diagnostic",
+    distributions: importantDistributions,
+    failedChecks,
+    message: inferredMessage,
+    severity: hasFailure || failedChecks.length > 0 ? "danger" : "neutral",
+    title: hasFailure ? "Run failure" : "Run diagnostics",
+  };
+}
+
+function distributionEntriesForRun(run: BenchmarkRun) {
+  const result = new Map<
+    string,
+    {
+      key: string;
+      label: string;
+      values: Record<string, number>;
+      total: number;
+      dominantLabel: string;
+      dominantShare: number;
+    }
+  >();
+
+  collectDistributionEntries(run, [], result);
+  return [...result.values()];
+}
+
+function collectDistributionEntries(
+  value: unknown,
+  path: string[],
+  result: Map<
+    string,
+    {
+      key: string;
+      label: string;
+      values: Record<string, number>;
+      total: number;
+      dominantLabel: string;
+      dominantShare: number;
+    }
+  >,
+) {
+  if (value === null || typeof value === "undefined") {
+    return;
+  }
+
+  if (Array.isArray(value) || typeof value !== "object") {
+    return;
+  }
+
+  const entries = Object.entries(value);
+
+  if (entries.length === 0) {
+    return;
+  }
+
+  if (entries.every(([, nestedValue]) => typeof nestedValue === "number")) {
+    const values = Object.fromEntries(
+      entries.filter(([, nestedValue]) => Number.isFinite(nestedValue as number)),
+    ) as Record<string, number>;
+    const total = Object.values(values).reduce((sum, count) => sum + count, 0);
+    const dominantEntry = Object.entries(values).sort((left, right) => right[1] - left[1])[0];
+
+    if (path.length > 0 && total > 0 && dominantEntry) {
+      result.set(path.join("."), {
+        key: path.join("."),
+        label: formatEvidenceLabel(path),
+        values,
+        total,
+        dominantLabel: dominantEntry[0],
+        dominantShare: dominantEntry[1] / total,
+      });
+    }
+
+    return;
+  }
+
+  for (const [key, nestedValue] of entries) {
+    if (isExcludedDiagnosticKey(key, path.length === 0)) {
+      continue;
+    }
+
+    collectDistributionEntries(nestedValue, [...path, key], result);
+  }
+}
+
+function booleanEntriesForRun(run: BenchmarkRun) {
+  const result = new Map<string, { key: string; label: string; value: boolean }>();
+  collectBooleanEntries(run, [], result);
+  return [...result.values()];
+}
+
+function collectBooleanEntries(
+  value: unknown,
+  path: string[],
+  result: Map<string, { key: string; label: string; value: boolean }>,
+) {
+  if (value === null || typeof value === "undefined") {
+    return;
+  }
+
+  if (typeof value === "boolean") {
+    if (path.length > 0) {
+      result.set(path.join("."), {
+        key: path.join("."),
+        label: formatEvidenceLabel(path),
+        value,
+      });
+    }
+    return;
+  }
+
+  if (Array.isArray(value) || typeof value !== "object") {
+    return;
+  }
+
+  for (const [key, nestedValue] of Object.entries(value)) {
+    if (isExcludedDiagnosticKey(key, path.length === 0)) {
+      continue;
+    }
+
+    collectBooleanEntries(nestedValue, [...path, key], result);
+  }
+}
+
+function isExcludedDiagnosticKey(key: string, root: boolean) {
+  if (!root) {
+    return false;
+  }
+
+  return isExcludedEvidenceRootKey(key);
+}
+
+function formatPercentage(value: number) {
+  if (!Number.isFinite(value)) {
+    return "n/a";
+  }
+
+  return `${formatNumber(value * 100)}%`;
 }
 
 function axisLabelForUnit(unit: string) {
