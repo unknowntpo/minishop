@@ -186,6 +186,7 @@ services:
         condition: service_started
     environment:
       GO_BACKEND_ADDR: :3000
+      GO_BACKEND_HTTP_ENGINE: ${GO_BACKEND_HTTP_ENGINE:-nethttp}
       GO_BACKEND_CORS_ALLOWED_ORIGINS: ${GO_BACKEND_CORS_ALLOWED_ORIGINS:-http://localhost:3001}
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/minishop
       DATABASE_POOL_MAX: ${GO_BACKEND_DATABASE_POOL_MAX:-16}

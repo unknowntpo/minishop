@@ -16,6 +16,10 @@ import (
 	"syscall"
 	"time"
 
+	hertzapp "github.com/cloudwego/hertz/pkg/app"
+	hserver "github.com/cloudwego/hertz/pkg/app/server"
+	"github.com/cloudwego/hertz/pkg/common/hlog"
+	"github.com/cloudwego/hertz/pkg/protocol/consts"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -36,6 +40,7 @@ import (
 
 type config struct {
 	addr                 string
+	httpEngine           string
 	corsAllowedOrigins   []string
 	databaseURL          string
 	databasePoolMax      int
@@ -480,27 +485,10 @@ func main() {
 		log.Fatalf("warm up go-backend: %v", err)
 	}
 
-	mux := http.NewServeMux()
-	mux.Handle("/healthz", otelhttp.NewHandler(http.HandlerFunc(instance.handleHealthz), "GET /healthz"))
-	mux.Handle("/api/buy-intents", otelhttp.NewHandler(http.HandlerFunc(instance.handleBuyIntents), "POST /api/buy-intents"))
-	mux.Handle("/api/buy-intent-commands/", otelhttp.NewHandler(http.HandlerFunc(instance.handleGetBuyIntentCommand), "GET /api/buy-intent-commands/{commandId}"))
-	mux.Handle("/api/checkout-intents", otelhttp.NewHandler(http.HandlerFunc(instance.handleCreateCheckoutIntent), "POST /api/checkout-intents"))
-	mux.Handle("/api/checkout-intents/", otelhttp.NewHandler(http.HandlerFunc(instance.handleGetCheckoutIntent), "GET /api/checkout-intents/{checkoutIntentId}"))
-	mux.Handle("/api/internal/projections/process", otelhttp.NewHandler(http.HandlerFunc(instance.handleProcessProjections), "POST /api/internal/projections/process"))
-	mux.Handle("/api/internal/checkout-intents/", otelhttp.NewHandler(http.HandlerFunc(instance.handleCompleteDemoCheckout), "POST /api/internal/checkout-intents/{checkoutIntentId}/complete-demo"))
-
-	server := &http.Server{
-		Addr:              cfg.addr,
-		Handler:           withCORS(cfg, mux),
-		ReadHeaderTimeout: 5 * time.Second,
+	shutdown, err := instance.startServer()
+	if err != nil {
+		log.Fatalf("start server: %v", err)
 	}
-
-	go func() {
-		log.Printf("go-backend listening on %s", cfg.addr)
-		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("listen: %v", err)
-		}
-	}()
 
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
@@ -508,7 +496,7 @@ func main() {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_ = server.Shutdown(ctx)
+	_ = shutdown(ctx)
 	kafkaClient.Close()
 	_ = nc.Drain()
 	db.Close()
@@ -517,6 +505,7 @@ func main() {
 func readConfig() config {
 	return config{
 		addr:                 envDefault("GO_BACKEND_ADDR", ":3000"),
+		httpEngine:           strings.ToLower(envDefault("GO_BACKEND_HTTP_ENGINE", "nethttp")),
 		corsAllowedOrigins:   splitCSV(envDefault("GO_BACKEND_CORS_ALLOWED_ORIGINS", "*")),
 		databaseURL:          requiredEnv("DATABASE_URL"),
 		databasePoolMax:      envInt("DATABASE_POOL_MAX", 8),
@@ -542,6 +531,66 @@ func readConfig() config {
 		otlpEndpoint:         envDefault("OTEL_EXPORTER_OTLP_ENDPOINT", "http://tempo:4318"),
 		otelEnabled:          envDefault("OTEL_ENABLED", "1") != "0",
 	}
+}
+
+func (a *app) startServer() (func(context.Context) error, error) {
+	switch a.cfg.httpEngine {
+	case "nethttp", "":
+		return a.startNetHTTPServer()
+	case "hertz":
+		return a.startHertzServer()
+	default:
+		return nil, fmt.Errorf("unsupported GO_BACKEND_HTTP_ENGINE %q", a.cfg.httpEngine)
+	}
+}
+
+func (a *app) startNetHTTPServer() (func(context.Context) error, error) {
+	mux := http.NewServeMux()
+	mux.Handle("/healthz", otelhttp.NewHandler(http.HandlerFunc(a.handleHealthz), "GET /healthz"))
+	mux.Handle("/api/buy-intents", otelhttp.NewHandler(http.HandlerFunc(a.handleBuyIntents), "POST /api/buy-intents"))
+	mux.Handle("/api/buy-intent-commands/", otelhttp.NewHandler(http.HandlerFunc(a.handleGetBuyIntentCommand), "GET /api/buy-intent-commands/{commandId}"))
+	mux.Handle("/api/checkout-intents", otelhttp.NewHandler(http.HandlerFunc(a.handleCreateCheckoutIntent), "POST /api/checkout-intents"))
+	mux.Handle("/api/checkout-intents/", otelhttp.NewHandler(http.HandlerFunc(a.handleGetCheckoutIntent), "GET /api/checkout-intents/{checkoutIntentId}"))
+	mux.Handle("/api/internal/projections/process", otelhttp.NewHandler(http.HandlerFunc(a.handleProcessProjections), "POST /api/internal/projections/process"))
+	mux.Handle("/api/internal/checkout-intents/", otelhttp.NewHandler(http.HandlerFunc(a.handleCompleteDemoCheckout), "POST /api/internal/checkout-intents/{checkoutIntentId}/complete-demo"))
+
+	server := &http.Server{
+		Addr:              a.cfg.addr,
+		Handler:           withCORS(a.cfg, mux),
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+
+	go func() {
+		log.Printf("go-backend listening on %s engine=%s", a.cfg.addr, a.cfg.httpEngine)
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatalf("listen: %v", err)
+		}
+	}()
+
+	return server.Shutdown, nil
+}
+
+func (a *app) startHertzServer() (func(context.Context) error, error) {
+	hlog.SetLevel(hlog.LevelWarn)
+	server := hserver.Default(
+		hserver.WithHostPorts(a.cfg.addr),
+		hserver.WithDisablePrintRoute(true),
+		hserver.WithReadTimeout(5*time.Second),
+	)
+	server.Use(a.hertzCORS())
+	server.GET("/healthz", a.handleHealthzHertz)
+	server.POST("/api/buy-intents", a.handleBuyIntentsHertz)
+
+	go func() {
+		log.Printf("go-backend listening on %s engine=%s", a.cfg.addr, a.cfg.httpEngine)
+		if err := server.Run(); err != nil {
+			log.Fatalf("listen: %v", err)
+		}
+	}()
+
+	return func(context.Context) error {
+		return server.Shutdown(context.Background())
+	}, nil
 }
 
 func (a *app) warmUp(ctx context.Context) error {
@@ -573,6 +622,12 @@ func (a *app) warmUp(ctx context.Context) error {
 func (a *app) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte("ok"))
+}
+
+func (a *app) handleHealthzHertz(_ context.Context, c *hertzapp.RequestContext) {
+	c.SetStatusCode(consts.StatusOK)
+	c.SetContentTypeBytes([]byte("text/plain; charset=utf-8"))
+	c.WriteString("ok")
 }
 
 func (a *app) handleBuyIntents(w http.ResponseWriter, r *http.Request) {
@@ -658,6 +713,95 @@ func (a *app) handleBuyIntents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusAccepted, reqCtx, acceptResponse{
+		CommandID:     commandID,
+		CorrelationID: correlationID,
+		Status:        "accepted",
+	})
+}
+
+func (a *app) handleBuyIntentsHertz(base context.Context, c *hertzapp.RequestContext) {
+	ctx, span := a.tracer.Start(base, "buy_intent.accept")
+	defer span.End()
+
+	reqCtx := requestContextFromHertz(ctx, c)
+	log.Printf("go-backend buy_intents_enter request_id=%s", reqCtx.requestID)
+	body, err := decodeHertzBody[requestBody](c)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "invalid_json")
+		log.Printf("go-backend decode_request_failed request_id=%s err=%v", reqCtx.requestID, err)
+		writeErrorHertz(c, reqCtx, consts.StatusBadRequest, "Request body must be valid JSON.")
+		return
+	}
+	log.Printf("go-backend decoded_request request_id=%s buyer_id=%q items=%d", reqCtx.requestID, body.BuyerID, len(body.Items))
+	if err := validateCreateCheckoutIntentRequest(body); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "invalid_request")
+		log.Printf("go-backend validate_request_failed request_id=%s err=%v body=%+v", reqCtx.requestID, err, body)
+		writeErrorHertz(c, reqCtx, consts.StatusBadRequest, err.Error())
+		return
+	}
+
+	decision, err := a.classifyItemsForSeckill(ctx, body.Items)
+	if err != nil {
+		if errors.Is(err, errMixedCartWithSeckill) {
+			writeErrorHertz(c, reqCtx, consts.StatusBadRequest, err.Error())
+			return
+		}
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "routing_failed")
+		log.Printf("go-backend classify_seckill_failed request_id=%s err=%v", reqCtx.requestID, err)
+		writeErrorHertz(c, reqCtx, consts.StatusInternalServerError, "Buy intent command could not be accepted. Please try again.")
+		return
+	}
+	log.Printf("go-backend classify_seckill_ok request_id=%s kind=%s", reqCtx.requestID, decision.kind)
+
+	commandID := uuid.NewString()
+	correlationID := uuid.NewString()
+	idempotencyKey := strings.TrimSpace(string(c.Request.Header.Peek("idempotency-key")))
+	if idempotencyKey == "" {
+		idempotencyKey = strings.TrimSpace(body.IdempotencyKey)
+	}
+	traceCarrier := injectTraceCarrier(ctx)
+	command := buyIntentCommand{
+		CommandID:      commandID,
+		CorrelationID:  correlationID,
+		BuyerID:        body.BuyerID,
+		Items:          toCheckoutItems(body.Items),
+		IdempotencyKey: idempotencyKey,
+		Metadata: eventMetadata{
+			RequestID:     reqCtx.requestID,
+			TraceID:       reqCtx.traceID,
+			Source:        "web",
+			ActorID:       body.BuyerID,
+			CommandID:     commandID,
+			CorrelationID: correlationID,
+			Traceparent:   traceCarrier["traceparent"],
+			Tracestate:    traceCarrier["tracestate"],
+			Baggage:       traceCarrier["baggage"],
+		},
+		IssuedAt: time.Now().UTC().Format(time.RFC3339Nano),
+	}
+
+	if decision.kind == "single_seckill" {
+		if err := a.publishSeckillCommand(ctx, body, command, decision.stockLimit, reqCtx); err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "publish_failed")
+			log.Printf("go-backend publish_seckill_failed request_id=%s command_id=%s err=%v", reqCtx.requestID, commandID, err)
+			writeErrorHertz(c, reqCtx, consts.StatusInternalServerError, "Buy intent command could not be accepted. Please try again.")
+			return
+		}
+	} else {
+		if err := a.publishBuyIntentCommand(ctx, command); err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "publish_failed")
+			log.Printf("go-backend publish_regular_failed request_id=%s command_id=%s err=%v", reqCtx.requestID, commandID, err)
+			writeErrorHertz(c, reqCtx, consts.StatusInternalServerError, "Buy intent command could not be accepted. Please try again.")
+			return
+		}
+	}
+
+	writeJSONHertz(c, consts.StatusAccepted, reqCtx, acceptResponse{
 		CommandID:     commandID,
 		CorrelationID: correlationID,
 		Status:        "accepted",
@@ -1838,12 +1982,38 @@ func decodeLooseBody(r *http.Request) (map[string]any, error) {
 	return value, nil
 }
 
+func decodeHertzBody[T any](c *hertzapp.RequestContext) (T, error) {
+	var body T
+	if err := json.Unmarshal(c.Request.Body(), &body); err != nil {
+		return body, err
+	}
+	return body, nil
+}
+
 func requestContextFromRequest(ctx context.Context, r *http.Request) requestContext {
 	requestID := strings.TrimSpace(r.Header.Get("x-request-id"))
 	if requestID == "" {
 		requestID = uuid.NewString()
 	}
 	traceID := strings.TrimSpace(r.Header.Get("x-trace-id"))
+	if traceID == "" {
+		traceID = traceIDFromContext(ctx)
+	}
+	if traceID == "" {
+		traceID = requestID
+	}
+	return requestContext{
+		requestID: requestID,
+		traceID:   traceID,
+	}
+}
+
+func requestContextFromHertz(ctx context.Context, c *hertzapp.RequestContext) requestContext {
+	requestID := strings.TrimSpace(string(c.Request.Header.Peek("x-request-id")))
+	if requestID == "" {
+		requestID = uuid.NewString()
+	}
+	traceID := strings.TrimSpace(string(c.Request.Header.Peek("x-trace-id")))
 	if traceID == "" {
 		traceID = traceIDFromContext(ctx)
 	}
@@ -1895,6 +2065,28 @@ func writeError(w http.ResponseWriter, reqCtx requestContext, status int, messag
 	})
 }
 
+func writeJSONHertz(c *hertzapp.RequestContext, status int, reqCtx requestContext, body any) {
+	c.Response.Header.Set("content-type", "application/json")
+	c.Response.Header.Set("x-request-id", reqCtx.requestID)
+	c.Response.Header.Set("x-trace-id", reqCtx.traceID)
+	c.SetStatusCode(status)
+	payload, err := json.Marshal(body)
+	if err != nil {
+		c.Response.ResetBody()
+		c.SetStatusCode(consts.StatusInternalServerError)
+		c.Response.SetBodyString(`{"error":"response encoding failed"}`)
+		return
+	}
+	c.Response.SetBodyRaw(payload)
+}
+
+func writeErrorHertz(c *hertzapp.RequestContext, reqCtx requestContext, status int, message string) {
+	writeJSONHertz(c, status, reqCtx, errorResponse{
+		Error:     message,
+		RequestID: reqCtx.requestID,
+	})
+}
+
 func withCORS(cfg config, next http.Handler) http.Handler {
 	allowedOrigins := map[string]struct{}{}
 	allowAnyOrigin := false
@@ -1927,6 +2119,40 @@ func withCORS(cfg config, next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func (a *app) hertzCORS() hertzapp.HandlerFunc {
+	allowedOrigins := map[string]struct{}{}
+	allowAnyOrigin := false
+	for _, origin := range a.cfg.corsAllowedOrigins {
+		if origin == "*" {
+			allowAnyOrigin = true
+			continue
+		}
+		allowedOrigins[origin] = struct{}{}
+	}
+
+	return func(_ context.Context, c *hertzapp.RequestContext) {
+		origin := strings.TrimSpace(string(c.Request.Header.Peek("Origin")))
+		if allowAnyOrigin {
+			c.Response.Header.Set("Access-Control-Allow-Origin", "*")
+		} else if origin != "" {
+			if _, ok := allowedOrigins[origin]; ok {
+				c.Response.Header.Set("Access-Control-Allow-Origin", origin)
+				c.Response.Header.Set("Vary", "Origin")
+			}
+		}
+		c.Response.Header.Set("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
+		c.Response.Header.Set("Access-Control-Allow-Headers", "Content-Type,Idempotency-Key,X-Request-Id,X-Trace-Id")
+		c.Response.Header.Set("Access-Control-Expose-Headers", "X-Request-Id,X-Trace-Id")
+		c.Response.Header.Set("Access-Control-Max-Age", "600")
+
+		if string(c.Method()) == http.MethodOptions {
+			c.AbortWithStatus(consts.StatusNoContent)
+			return
+		}
+		c.Next(context.Background())
+	}
 }
 
 func toCheckoutItems(items []requestItem) []checkoutItem {
