@@ -13,5 +13,9 @@ coverage/
 benchmark-results/
 profiles/*.jfr
 .idea/
+.DS_Store
 workers/kafka-seckill/.gradle/
 services/rust-kafka-client-bench/target/
+services/go-backend/minishop-go-backend
+services/go-kafka-client-bench/go-kafka-client-bench
+services/go-seckill-result-sink/minishop-go-seckill-result-sink
