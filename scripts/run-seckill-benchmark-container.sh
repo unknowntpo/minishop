@@ -49,6 +49,42 @@ if [[ ${#runner_command[@]} -eq 0 ]]; then
   runner_command=(pnpm --config.engine-strict=false benchmark:buy-intent)
 fi
 
+runner_env_args=()
+add_runner_env_if_set() {
+  local name="$1"
+  if [[ -n "${!name:-}" ]]; then
+    runner_env_args+=(-e "${name}=${!name}")
+  fi
+}
+
+for env_name in \
+  BENCHMARK_SCENARIO_NAME \
+  BENCHMARK_SCENARIO_FAMILY \
+  BENCHMARK_REQUESTS \
+  BENCHMARK_HTTP_CONCURRENCY \
+  BENCHMARK_STYLE \
+  BENCHMARK_INGRESS_SOURCE \
+  BENCHMARK_PATH_TAG \
+  BENCHMARK_CREATED_TIMEOUT_MS \
+  BENCHMARK_SECKILL_BUCKET_COUNT \
+  BENCHMARK_SECKILL_MAX_PROBE \
+  BENCHMARK_RESULT_SINK_IMPL \
+  BENCHMARK_RESET_STATE \
+  BENCHMARK_PROFILE \
+  BENCHMARK_SKU_ID \
+  BENCHMARK_UNIT_PRICE_MINOR \
+  BENCHMARK_CURRENCY \
+  BENCHMARK_STEADY_STATE_WARMUP_MS \
+  BENCHMARK_STEADY_STATE_MEASURE_MS \
+  BENCHMARK_STEADY_STATE_COOLDOWN_MS \
+  SECKILL_BUCKET_COUNT \
+  KAFKA_SECKILL_REQUEST_TOPIC_PARTITIONS \
+  KAFKA_SECKILL_RESULT_TOPIC_PARTITIONS \
+  KAFKA_SECKILL_DLQ_TOPIC_PARTITIONS
+do
+  add_runner_env_if_set "$env_name"
+done
+
 echo "[seckill-benchmark] project=${project} run_id=${run_id}"
 echo "[seckill-benchmark] worker_app_id=${KAFKA_SECKILL_APPLICATION_ID}"
 echo "[seckill-benchmark] result_sink_group_id=${KAFKA_SECKILL_RESULT_SINK_GROUP_ID}"
@@ -125,5 +161,6 @@ docker "${compose_args[@]}" run --rm --build --no-deps \
   -e BENCHMARK_PROMETHEUS_URL="${BENCHMARK_PROMETHEUS_URL:-http://prometheus:9090}" \
   -e KAFKA_SECKILL_APPLICATION_ID="${KAFKA_SECKILL_APPLICATION_ID}" \
   -e KAFKA_SECKILL_RESULT_SINK_GROUP_ID="${KAFKA_SECKILL_RESULT_SINK_GROUP_ID}" \
+  "${runner_env_args[@]}" \
   benchmark-runner \
   "${runner_command[@]}"
