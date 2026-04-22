@@ -25,16 +25,29 @@ run_one() {
   echo "[go-kafka-client-bench:sweep] client=${client} size=${size} repeat=${repeat} run_id=${run_id}"
 
   local output
-  output="$(
-    cd "$repo_root/services/go-kafka-client-bench" && \
-    GO_KAFKA_BENCH_CLIENT="$client" \
-    GO_KAFKA_BENCH_MESSAGE_BYTES="$size" \
-    GO_KAFKA_BENCH_RUN_ID="$run_id" \
-    BENCHMARK_SCENARIO_NAME="$scenario_name" \
-    BENCHMARK_RESULTS_DIR="$results_root" \
-    GO_KAFKA_BENCH_BROKERS="${GO_KAFKA_BENCH_BROKERS:-${KAFKA_BROKERS:-localhost:19092}}" \
-    go run .
-  )"
+  if [[ "$client" == "rust-rdkafka" ]]; then
+    output="$(
+      cd "$repo_root/services/rust-kafka-client-bench" && \
+      GO_KAFKA_BENCH_CLIENT="$client" \
+      GO_KAFKA_BENCH_MESSAGE_BYTES="$size" \
+      GO_KAFKA_BENCH_RUN_ID="$run_id" \
+      BENCHMARK_SCENARIO_NAME="$scenario_name" \
+      BENCHMARK_RESULTS_DIR="$results_root" \
+      GO_KAFKA_BENCH_BROKERS="${GO_KAFKA_BENCH_BROKERS:-${KAFKA_BROKERS:-localhost:19092}}" \
+      cargo run --quiet
+    )"
+  else
+    output="$(
+      cd "$repo_root/services/go-kafka-client-bench" && \
+      GO_KAFKA_BENCH_CLIENT="$client" \
+      GO_KAFKA_BENCH_MESSAGE_BYTES="$size" \
+      GO_KAFKA_BENCH_RUN_ID="$run_id" \
+      BENCHMARK_SCENARIO_NAME="$scenario_name" \
+      BENCHMARK_RESULTS_DIR="$results_root" \
+      GO_KAFKA_BENCH_BROKERS="${GO_KAFKA_BENCH_BROKERS:-${KAFKA_BROKERS:-localhost:19092}}" \
+      go run .
+    )"
+  fi
 
   printf '%s\n' "$output"
   local artifact_path
