@@ -1991,6 +1991,10 @@ function scenarioNameFor(run: BenchmarkRun) {
 
 
 function scenarioDescription(name: string) {
+  if (name === "go-kafka-producer-raw") {
+    return "Raw Kafka producer benchmark for Go client libraries. It compares acknowledged publish throughput, producer p95 latency, payload bytes/sec, and error rate without the seckill workflow layered on top.";
+  }
+
   if (name === "checkout-postgres-baseline") {
     return "Single hot SKU checkout intent ingress benchmark. It measures API acceptance, durable event append, projection catch-up, idempotency, and no synchronous inventory decrement.";
   }
