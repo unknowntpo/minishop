@@ -389,37 +389,28 @@ Observed results:
 
 | `GO_SECKILL_RESULT_SINK_MAX_WAIT_MS` | queued/sec | result topic throughput | p95 |
 | --- | ---: | ---: | ---: |
-| `10ms` | `2044.2` | `2044.07` | `161.64ms` |
-| `50ms` | `1247.6` | `1247.72` | `367.79ms` |
-| `100ms` | `2640.2` | `2639.93` | `146.34ms` |
-| `250ms` | `2499.6` | `2499.72` | `135.37ms` |
+| `10ms` | `779.07` | `779.13` | `321.97ms` |
+| `50ms` | `789.73` | `789.83` | `349.76ms` |
+| `100ms` | `761.87` | `761.95` | `341.22ms` |
+| `250ms` | `775.13` | `775.20` | `314.64ms` |
 
 Artifacts:
 
-- `10ms`: `benchmark-results/buy-intent-hot-seckill/2026-04-22T01-40-34-015Z_bench_1776822009898.json`
-- `50ms`: `benchmark-results/buy-intent-hot-seckill/2026-04-22T01-41-22-848Z_bench_1776822066528.json`
-- `100ms`: `benchmark-results/buy-intent-hot-seckill/2026-04-22T01-41-57-651Z_bench_1776822101536.json`
-- `250ms`: `benchmark-results/buy-intent-hot-seckill/2026-04-22T01-42-31-301Z_bench_1776822135236.json`
+- `10ms`: `benchmark-results/remote-go-seckill-result-sink-maxwait/maxwait-10/buy-intent-hot-seckill/2026-04-22T01-58-06-314Z_go_sink_maxwait_10ms_20260422T015150Z.json`
+- `50ms`: `benchmark-results/remote-go-seckill-result-sink-maxwait/maxwait-50/buy-intent-hot-seckill/2026-04-22T02-00-47-680Z_go_sink_maxwait_50ms_20260422T015927Z.json`
+- `100ms`: `benchmark-results/remote-go-seckill-result-sink-maxwait/maxwait-100/buy-intent-hot-seckill/2026-04-22T02-02-31-496Z_go_sink_maxwait_100ms_20260422T020048Z.json`
+- `250ms`: `benchmark-results/remote-go-seckill-result-sink-maxwait/maxwait-250/buy-intent-hot-seckill/2026-04-22T02-05-17-498Z_go_sink_maxwait_250ms_20260422T020232Z.json`
 
 Interpretation:
 
-- `100ms` produced the best throughput on both `queued/sec` and `result topic throughput`.
-- `250ms` produced the best p95 latency, and its throughput stayed close to `100ms`.
-- `10ms` was clearly below the `100ms` / `250ms` group on throughput.
-- `50ms` was the worst setting in the first sweep and looked suspiciously weak, so it was rerun once more.
+- this isolated remote-compose rerun on `morefine` did **not** reproduce the earlier `2k+ /s` sweep numbers
+- the four settings clustered tightly on throughput, within roughly `3.6%` from best to worst
+- `50ms` was the best throughput setting in this rerun, but only by a small margin over `10ms` and `250ms`
+- `250ms` produced the best p95 latency in this rerun
+- `100ms` was the weakest throughput setting of the four in this rerun
 
-`50ms` rerun:
+Conclusion:
 
-- artifact:
-  - `benchmark-results/buy-intent-hot-seckill/2026-04-22T01-43-21-131Z_bench_1776822185055.json`
-- result:
-  - `queued/sec = 2287.4`
-  - `result topic throughput = 2287.6`
-  - `p95 = 169.3ms`
-
-Updated interpretation:
-
-- `50ms` improved on rerun, but it still remained below the `100ms` / `250ms` group.
-- the best practical region for the Go result sink fetch wait is currently `100-250ms`
-- if the goal is maximum throughput, prefer `100ms`
-- if the goal is the best p95 with only a small throughput tradeoff, prefer `250ms`
+- for this rerun, there is no strong throughput winner; `10ms`, `50ms`, and `250ms` are effectively in the same band
+- if forced to choose one setting from this rerun alone, `250ms` is the safest default because it stayed near the top throughput band while also giving the best p95
+- because these results materially differ from the earlier local sweep, `GO_SECKILL_RESULT_SINK_MAX_WAIT_MS` should currently be treated as **sensitive to environment / run conditions**, not as a settled single-knob win
