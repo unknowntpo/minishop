@@ -658,3 +658,55 @@ Interpretation:
   - HTTP runtime / middleware overhead
   - request decoding / validation / shaping overhead
   - backend-side Kafka publish path under HTTP load
+
+## Hertz A/B prototype
+
+To test whether the remaining Go HTTP gap was mostly caused by the `net/http` server stack itself, the Go backend added a minimal runtime switch:
+
+- `GO_BACKEND_HTTP_ENGINE=nethttp`
+- `GO_BACKEND_HTTP_ENGINE=hertz`
+
+The Hertz prototype intentionally kept the same benchmark lane:
+
+- same Go backend process
+- same seckill classification and publish path
+- same Kafka producer client (`franz-go`)
+- same request / result topics
+- same Kotlin `worker-seckill`
+- same Go result sink
+- same benchmark conditions:
+  - `10010 requests`
+  - `concurrency=200`
+  - `bucket=4`
+  - `maxProbe=4`
+  - clean topic reset before each run
+  - fresh worker app id / fresh sink group id
+
+Results:
+
+- `net/http`
+  - artifact:
+    - `benchmark-results/buy-intent-hot-seckill/2026-04-22T16-20-43-250Z_go_http_nethttp_20260422T161955Z.json`
+  - `queued/sec = 2653.05`
+  - `result topic throughput = 2664.69`
+  - `p95 = 123.65ms`
+  - `request topic delta = 10026`
+  - `result topic delta = 10082`
+- `hertz`
+  - artifact:
+    - `benchmark-results/buy-intent-hot-seckill/2026-04-22T16-21-59-007Z_go_http_hertz_20260422T162111Z.json`
+  - `queued/sec = 2244.85`
+  - `result topic throughput = 2259.50`
+  - `p95 = 147.45ms`
+  - `request topic delta = 10016`
+  - `result topic delta = 10068`
+
+Interpretation:
+
+- the Hertz prototype did **not** outperform the current `net/http` implementation
+- compared with `net/http`, Hertz was:
+  - about `15.4%` lower on `queued/sec`
+  - about `15.2%` lower on result throughput
+  - about `19.2%` worse on ingress `p95`
+- under this minishop seckill HTTP path, switching frameworks alone does **not** look like the next winning move
+- the remaining gap from `direct_kafka` to HTTP still appears to be dominated by the full request path rather than the specific Go HTTP framework
