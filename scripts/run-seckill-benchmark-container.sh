@@ -60,6 +60,28 @@ echo "[seckill-benchmark] result_sink_group_id=${KAFKA_SECKILL_RESULT_SINK_GROUP
 
 docker "${compose_args[@]}" up -d --build --scale "app=${app_replicas}" "${core_services[@]}"
 
+if [[ "${BENCHMARK_RESET_STATE:-1}" != "0" ]]; then
+  request_topic="${KAFKA_SECKILL_REQUEST_TOPIC:-inventory.seckill.requested}"
+  result_topic="${KAFKA_SECKILL_RESULT_TOPIC:-inventory.seckill.result}"
+  dlq_topic="${KAFKA_SECKILL_DLQ_TOPIC:-inventory.seckill.dlq}"
+  topic_partitions="${KAFKA_SECKILL_REQUEST_TOPIC_PARTITIONS:-${SECKILL_BUCKET_COUNT:-4}}"
+  result_partitions="${KAFKA_SECKILL_RESULT_TOPIC_PARTITIONS:-${SECKILL_BUCKET_COUNT:-4}}"
+  dlq_partitions="${KAFKA_SECKILL_DLQ_TOPIC_PARTITIONS:-${SECKILL_BUCKET_COUNT:-4}}"
+
+  echo "[seckill-benchmark] hard-reset topics"
+  docker "${compose_args[@]}" exec -T redpanda rpk topic delete "$request_topic" "$result_topic" "$dlq_topic" >/dev/null 2>&1 || true
+  docker "${compose_args[@]}" exec -T redpanda rpk topic create "$request_topic" -p "$topic_partitions" -r 1 >/dev/null
+  docker "${compose_args[@]}" exec -T redpanda rpk topic create "$result_topic" -p "$result_partitions" -r 1 >/dev/null
+  docker "${compose_args[@]}" exec -T redpanda rpk topic create "$dlq_topic" -p "$dlq_partitions" -r 1 >/dev/null
+
+  docker "${compose_args[@]}" up -d --force-recreate worker-seckill >/dev/null
+  if [[ "${BENCHMARK_RESULT_SINK_IMPL:-node}" == "go" ]]; then
+    docker "${compose_args[@]}" up -d --force-recreate go-seckill-result-sink >/dev/null
+  else
+    docker "${compose_args[@]}" up -d --force-recreate worker-seckill-result-sink >/dev/null
+  fi
+fi
+
 docker "${compose_args[@]}" run --rm --build --no-deps \
   -e BENCHMARK_RUN_ID="${run_id}" \
   -e BENCHMARK_APP_REPLICAS="${app_replicas}" \

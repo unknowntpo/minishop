@@ -2690,6 +2690,7 @@ async function ensureBenchmarkSeckillEnabled(pool: Pool, config: BenchmarkConfig
   );
 }
 
+
 main().catch((error) => {
   console.error(error);
   process.exitCode = 1;
