@@ -72,6 +72,11 @@ type CreatedResult = {
   completedAtMs?: number;
 };
 
+type SeckillSemanticAssertion = {
+  message: string;
+  stage: "semantic_assertion";
+};
+
 type SeckillCommandOutcome = {
   request: {
     commandId: string;
@@ -313,12 +318,19 @@ async function main() {
       const kafkaAfter = await readKafkaBenchmarkSnapshot(config).catch(() => null);
       profiling = await maybeStopProfiling(profilingPlan, profiling);
       const finishedAtIso = new Date().toISOString();
+      const seckillSemanticAssertion = buildSeckillSemanticAssertion({
+        config,
+        accepted,
+        createdResults,
+        startingInventoryAvailable: inventory.available,
+      });
 
       const report = {
         schemaVersion: 1,
         pass:
           acceptResults.length === accepted.length &&
-          pendingCreatedCommandIds.length === 0,
+          pendingCreatedCommandIds.length === 0 &&
+          !seckillSemanticAssertion,
         scenarioName: config.scenarioName,
         scenarioFamily: readScenarioFamily(config),
         scenarioTags: buildScenarioTags(config),
@@ -380,6 +392,7 @@ async function main() {
         intentCreation,
         commandLifecycle: {
           created: createdResults.filter((result) => result.status === "created").length,
+          statusDistribution: countBy(createdResults, (result) => result.status),
           pending: pendingCreatedCommandIds.length,
           duplicates: createdResults.filter((result) => result.isDuplicate).length,
           createdLatencyMs: summarizeLatencies(createdResults.map((result) => result.latencyMs)),
@@ -426,14 +439,15 @@ async function main() {
               ]
             : []),
         ],
-        ...(pendingCreatedCommandIds.length > 0
+        ...(seckillSemanticAssertion ??
+        (pendingCreatedCommandIds.length > 0
           ? {
               failure: {
                 message: `Created boundary did not fully converge before timeout: ${pendingCreatedCommandIds.slice(0, 10).join(", ")}${pendingCreatedCommandIds.length > 10 ? "..." : ""}`,
                 stage: "created",
               },
             }
-          : {}),
+          : {})),
         measurements: [] as BenchmarkMeasurement[],
         series: [] as BenchmarkSeries[],
       };
@@ -539,6 +553,7 @@ async function main() {
         intentCreation,
         commandLifecycle: {
           created: createdResults.filter((result) => result.status === "created").length,
+          statusDistribution: countBy(createdResults, (result) => result.status),
           duplicates: createdResults.filter((result) => result.isDuplicate).length,
           createdLatencyMs: summarizeLatencies(createdResults.map((result) => result.latencyMs)),
           createdThroughputPerSecond:
@@ -613,6 +628,51 @@ async function main() {
 
 function createKafkaClientId() {
   return `benchmark-seckill-result-${config.runId}`;
+}
+
+function buildSeckillSemanticAssertion(input: {
+  config: BenchmarkConfig;
+  accepted: Array<AcceptResult & { commandId: string; acceptedAtMs: number }>;
+  createdResults: CreatedResult[];
+  startingInventoryAvailable: number;
+}): { failure: SeckillSemanticAssertion } | null {
+  const { config, accepted, createdResults, startingInventoryAvailable } = input;
+
+  if (config.createdSource !== "kafka_seckill_result") {
+    return null;
+  }
+
+  if (!config.scenarioName.includes("seckill")) {
+    return null;
+  }
+
+  if (!config.ensureSeckillEnabled) {
+    return null;
+  }
+
+  if (accepted.length === 0 || createdResults.length === 0) {
+    return null;
+  }
+
+  const createdCount = createdResults.filter((result) => result.status === "created").length;
+  const failedCount = createdResults.filter((result) => result.status === "failed").length;
+
+  // In the benchmark seckill scenarios we intentionally seed a very large inventory.
+  // If the worker still turns every result into a failure, the benchmark should fail
+  // fast instead of reporting a healthy throughput number.
+  if (startingInventoryAvailable >= accepted.length && createdCount === 0 && failedCount > 0) {
+    return {
+      failure: {
+        message:
+          `Seckill semantic assertion failed: starting inventory (${startingInventoryAvailable}) ` +
+          `covered all accepted requests (${accepted.length}), but the result boundary produced ` +
+          `0 created / ${failedCount} failed outcomes.`,
+        stage: "semantic_assertion",
+      },
+    };
+  }
+
+  return null;
 }
 
 async function startSeckillOutcomeCollector(config: BenchmarkConfig) {
