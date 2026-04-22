@@ -36,6 +36,10 @@ type config struct {
 	kafkaGroupID                string
 	kafkaClientID               string
 	kafkaPartitionsConcurrently int
+	kafkaMinBytes               int
+	kafkaMaxBytes               int
+	kafkaMaxWait                time.Duration
+	kafkaCommitInterval         time.Duration
 	serviceName                 string
 	otlpEndpoint                string
 	otelEnabled                 bool
@@ -123,12 +127,12 @@ func main() {
 		Brokers:                cfg.kafkaBrokers,
 		GroupID:                cfg.kafkaGroupID,
 		Topic:                  cfg.kafkaResultTopic,
-		MinBytes:               1,
-		MaxBytes:               10e6,
-		MaxWait:                250 * time.Millisecond,
+		MinBytes:               cfg.kafkaMinBytes,
+		MaxBytes:               cfg.kafkaMaxBytes,
+		MaxWait:                cfg.kafkaMaxWait,
 		StartOffset:            kafka.LastOffset,
 		ReadLagInterval:        -1,
-		CommitInterval:         0,
+		CommitInterval:         cfg.kafkaCommitInterval,
 		WatchPartitionChanges:  true,
 		PartitionWatchInterval: 5 * time.Second,
 		Dialer: &kafka.Dialer{
@@ -171,6 +175,10 @@ func readConfig() config {
 		kafkaGroupID:                envDefault("KAFKA_SECKILL_RESULT_SINK_GROUP_ID", "minishop-seckill-result-sink"),
 		kafkaClientID:               envDefault("KAFKA_SECKILL_RESULT_SINK_CLIENT_ID", "minishop-go-seckill-result-sink"),
 		kafkaPartitionsConcurrently: envInt("KAFKA_SECKILL_RESULT_SINK_PARTITIONS_CONCURRENTLY", 6),
+		kafkaMinBytes:               envInt("GO_SECKILL_RESULT_SINK_MIN_BYTES", 1),
+		kafkaMaxBytes:               envInt("GO_SECKILL_RESULT_SINK_MAX_BYTES", 10_000_000),
+		kafkaMaxWait:                time.Duration(envInt("GO_SECKILL_RESULT_SINK_MAX_WAIT_MS", 250)) * time.Millisecond,
+		kafkaCommitInterval:         time.Duration(envInt("GO_SECKILL_RESULT_SINK_COMMIT_INTERVAL_MS", 0)) * time.Millisecond,
 		serviceName:                 envDefault("OTEL_SERVICE_NAME", "go-seckill-result-sink"),
 		otlpEndpoint:                envDefault("OTEL_EXPORTER_OTLP_ENDPOINT", "http://tempo:4318"),
 		otelEnabled:                 envDefault("OTEL_ENABLED", "1") != "0",
