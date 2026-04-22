@@ -525,6 +525,99 @@ Interpretation:
 - part of the observed loss came from publishing to the wrong or invalid partition shape
 - after the fix, the remaining gap between `direct_kafka` and `http` is a cleaner measurement of real HTTP/backend overhead rather than a routing bug
 
+## Benchmark hygiene finding
+
+The next misleading failure was not in Go HTTP ingress itself. It was in benchmark reset hygiene for the seckill Kafka path.
+
+What went wrong:
+
+- the benchmark began using fresh `KAFKA_SECKILL_APPLICATION_ID` values to avoid Kafka Streams changelog restore contamination
+- but the benchmark reset still left `inventory.seckill.requested`, `inventory.seckill.result`, and `inventory.seckill.dlq` intact
+- a fresh Kafka Streams app id on the same request topic replays the retained request history from the earliest offset
+
+Observed failure shape:
+
+- Go HTTP runs sometimes showed:
+  - `accepted = 10010 / 10010`
+  - `errors = 0`
+  - `statusDistribution = failed: 10010`
+- request-topic delta inflated to roughly `4x` the request count in bad runs
+- consuming recent request-topic messages showed many terminal attempts such as:
+  - `attempt = 3`
+  - `bucket_id != primary_bucket_id`
+- direct inspection of recent result payloads showed real worker outputs of:
+  - `status = rejected`
+  - `failureReason = seckill_out_of_stock`
+
+Root cause:
+
+- the worker was replaying old retained requests before the new benchmark run
+- by the time the current HTTP burst arrived, the worker-side per-bucket state had already been driven toward exhaustion by replayed history
+- this produced false benchmark failures that looked like Go HTTP or worker logic regressions, but were actually reset contamination
+
+Fix:
+
+- seckill benchmark orchestration must hard-reset the Kafka topics as well as the database state
+- `run-seckill-benchmark-container.sh` now:
+  - deletes and recreates:
+    - `inventory.seckill.requested`
+    - `inventory.seckill.result`
+    - `inventory.seckill.dlq`
+  - recreates `worker-seckill`
+  - recreates the selected result sink
+- this reset happens before the benchmark runner starts sending traffic
+
+Interpretation:
+
+- for the seckill path, "fresh app id" alone is not a safe reset
+- if the topics are retained, a fresh consumer identity can make the benchmark less isolated, not more isolated
+- correct benchmark hygiene here requires:
+  - database reset
+  - fresh Streams app id / fresh sink group id
+  - fresh seckill topics
+
+## Current clean Go HTTP benchmark
+
+With:
+
+- Go backend HTTP ingress
+- `bucket=4`
+- `maxProbe=4`
+- `KAFKA_SECKILL_CLIENT_LINGER_MS = 50`
+- `KAFKA_SECKILL_CLIENT_BATCH_NUM_MESSAGES = 5000`
+- hard-reset seckill topics before the run
+- fresh worker app id and fresh sink group id
+
+the current clean HTTP-path seckill benchmark is:
+
+- artifact:
+  - `benchmark-results/buy-intent-hot-seckill/2026-04-22T15-36-28-422Z_go_http_clean_20260422T153612Z.json`
+- result:
+  - `accepted = 10010 / 10010`
+  - `errors = 0`
+  - `queued/sec = 1828.17`
+  - `result topic throughput = 1833.66`
+  - `p95 = 198.29ms`
+  - `commandLifecycle.statusDistribution = created: 10010`
+  - `request topic delta = 10016`
+  - `result topic delta = 10328`
+
+Interpretation:
+
+- this is the first clean Go HTTP benchmark after both major benchmark-path defects were removed:
+  - partition routing mismatch
+  - replay contamination from retained seckill topics
+- the remaining gap versus direct Kafka is now better interpreted as actual HTTP/backend overhead instead of benchmark corruption
+- current reference comparison:
+  - direct Kafka seckill topology:
+    - `queued/sec = 7496.95`
+    - `result topic throughput = 7855.19`
+    - `p95 = 70.34ms`
+  - clean Go HTTP path:
+    - `queued/sec = 1828.17`
+    - `result topic throughput = 1833.66`
+    - `p95 = 198.29ms`
+
 Blog note:
 
 - a good short framing for a future blog post is:
