@@ -181,6 +181,7 @@ Recent raw benchmark sweep conditions:
 - clients:
   - `sarama`
   - `franz-go`
+  - `rust-rdkafka`
 - message sizes:
   - `1024B`
   - `4096B`
@@ -196,16 +197,19 @@ Observed median results:
 
 | client | messageBytes | throughput median (/s) | producer p95 median (ms) |
 | --- | ---: | ---: | ---: |
-| `franz-go` | `1024` | `48306.15` | `18.98` |
-| `sarama` | `1024` | `44411.97` | `14.75` |
-| `franz-go` | `4096` | `34135.11` | `23.45` |
-| `sarama` | `4096` | `29357.71` | `22.12` |
+| `franz-go` | `1024` | `47427.76` | `13.95` |
+| `sarama` | `1024` | `45150.7` | `16.13` |
+| `rust-rdkafka` | `1024` | `35656.67` | `13.29` |
+| `franz-go` | `4096` | `32294.42` | `19.61` |
+| `sarama` | `4096` | `26559.4` | `25.06` |
+| `rust-rdkafka` | `4096` | `14299.23` | `41.95` |
 
 Interpretation:
 
 - `franz-go` is the current raw throughput winner at both tested payload sizes
-- `sarama` still showed slightly lower p95 latency in the smaller-payload run
-- for producer baseline selection, throughput is the more important discriminator here, so `franz-go` is the chosen Go producer baseline
+- `sarama` is competitive, especially at smaller payloads, but still trails `franz-go` on median throughput
+- `rust-rdkafka` completed cleanly and is useful as an additional cross-language reference point, but it is materially behind both Go clients in this local benchmark
+- for producer baseline selection, throughput is the more important discriminator here, so `franz-go` remains the chosen producer baseline
 
 ## Earlier `franz-go` pipeline experiment
 
