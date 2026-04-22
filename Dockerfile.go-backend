@@ -1,0 +1,22 @@
+FROM golang:1.24.3-alpine AS build
+
+WORKDIR /src
+
+COPY services/go-backend/go.mod ./services/go-backend/go.mod
+COPY services/go-backend/go.sum ./services/go-backend/go.sum
+
+WORKDIR /src/services/go-backend
+
+RUN go mod download
+
+COPY services/go-backend/. .
+
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -buildvcs=false -o /out/go-backend .
+
+FROM alpine:3.22
+
+WORKDIR /app
+
+COPY --from=build /out/go-backend /app/go-backend
+
+CMD ["/app/go-backend"]

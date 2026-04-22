@@ -11,8 +11,13 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL?.trim() ?? "";
+
   return (
     <html lang="zh-Hant-TW">
+      <head>
+        <meta name="minishop-api-base-url" content={apiBaseUrl} />
+      </head>
       <body>{children}</body>
     </html>
   );

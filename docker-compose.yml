@@ -133,6 +133,7 @@ services:
       KAFKA_SECKILL_CLIENT_BATCH_NUM_MESSAGES: ${KAFKA_SECKILL_CLIENT_BATCH_NUM_MESSAGES:-10000}
       GO_SECKILL_INGRESS_PROXY_ENABLED: ${GO_SECKILL_INGRESS_PROXY_ENABLED:-0}
       GO_SECKILL_INGRESS_INTERNAL_URL: ${GO_SECKILL_INGRESS_INTERNAL_URL:-http://go-seckill-ingress:3000}
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:3005}
       BUY_INTENT_BATCH_SIZE: ${BUY_INTENT_BATCH_SIZE:-100}
       BUY_INTENT_PROCESS_POLL_INTERVAL_MS: ${BUY_INTENT_PROCESS_POLL_INTERVAL_MS:-1000}
       OTEL_ENABLED: ${OTEL_ENABLED:-1}
@@ -142,6 +143,47 @@ services:
       NEXT_TELEMETRY_DISABLED: "1"
     expose:
       - "3000"
+
+  go-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.go-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_started
+      redpanda:
+        condition: service_started
+      tempo:
+        condition: service_started
+    environment:
+      GO_BACKEND_ADDR: :3000
+      GO_BACKEND_CORS_ALLOWED_ORIGINS: ${GO_BACKEND_CORS_ALLOWED_ORIGINS:-http://localhost:3001}
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/minishop
+      DATABASE_POOL_MAX: ${GO_BACKEND_DATABASE_POOL_MAX:-16}
+      NATS_URL: nats://nats:4222
+      NATS_BUY_INTENT_STREAM: ${NATS_BUY_INTENT_STREAM:-BUY_INTENT_COMMANDS}
+      NATS_BUY_INTENT_SUBJECT: ${NATS_BUY_INTENT_SUBJECT:-buy-intent.command}
+      NATS_BUY_INTENT_RETRY_SUBJECT: ${NATS_BUY_INTENT_RETRY_SUBJECT:-buy-intent.retry}
+      NATS_BUY_INTENT_DLQ_SUBJECT: ${NATS_BUY_INTENT_DLQ_SUBJECT:-buy-intent.dlq}
+      KAFKA_BROKERS: ${KAFKA_BROKERS:-redpanda:9092}
+      KAFKA_CLIENT_ID: ${GO_BACKEND_KAFKA_CLIENT_ID:-minishop-go-backend}
+      KAFKA_SECKILL_REQUEST_TOPIC: ${KAFKA_SECKILL_REQUEST_TOPIC:-inventory.seckill.requested}
+      KAFKA_SECKILL_RESULT_TOPIC: ${KAFKA_SECKILL_RESULT_TOPIC:-inventory.seckill.result}
+      KAFKA_SECKILL_DLQ_TOPIC: ${KAFKA_SECKILL_DLQ_TOPIC:-inventory.seckill.dlq}
+      KAFKA_SECKILL_BUCKET_COUNT: ${KAFKA_SECKILL_BUCKET_COUNT:-16}
+      KAFKA_SECKILL_MAX_PROBE: ${KAFKA_SECKILL_MAX_PROBE:-4}
+      KAFKA_SECKILL_CONFIG_CACHE_TTL_MS: ${KAFKA_SECKILL_CONFIG_CACHE_TTL_MS:-60000}
+      KAFKA_SECKILL_CLIENT_LINGER_MS: ${KAFKA_SECKILL_CLIENT_LINGER_MS:-1}
+      KAFKA_SECKILL_CLIENT_BATCH_NUM_MESSAGES: ${KAFKA_SECKILL_CLIENT_BATCH_NUM_MESSAGES:-10000}
+      KAFKA_SECKILL_CLIENT_COMPRESSION: ${KAFKA_SECKILL_CLIENT_COMPRESSION:-none}
+      OTEL_ENABLED: ${OTEL_ENABLED:-1}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://tempo:4318}
+      OTEL_SERVICE_NAME: ${GO_BACKEND_OTEL_SERVICE_NAME:-go-backend}
+    ports:
+      - "${MINISHOP_GO_BACKEND_PORT:-3005}:3000"
 
   app-lb:
     image: nginx:1.27-alpine

@@ -9,6 +9,7 @@ import {
   getBuyerMessages,
   normalizeBuyerLocale,
 } from "@/src/presentation/i18n/buyer-localization";
+import { buildBrowserApiUrl } from "@/src/presentation/api/browser-api-base";
 
 export type CheckoutActionItem = {
   skuId: string;
@@ -96,7 +97,7 @@ export function CheckoutAction({
           currency: product.currency,
         },
       ];
-      const response = await fetch("/api/buy-intents", {
+      const response = await fetch(buildBrowserApiUrl("/api/buy-intents"), {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -203,7 +204,7 @@ export function CheckoutAction({
 }
 
 async function processProjections() {
-  const response = await fetch("/api/internal/projections/process", {
+  const response = await fetch(buildBrowserApiUrl("/api/internal/projections/process"), {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -237,7 +238,7 @@ async function waitForCheckoutIntentProjection(checkoutIntentId: string) {
   while (Date.now() < deadline) {
     await processProjections();
 
-    const response = await fetch(`/api/checkout-intents/${checkoutIntentId}`, {
+    const response = await fetch(buildBrowserApiUrl(`/api/checkout-intents/${checkoutIntentId}`), {
       cache: "no-store",
     });
 
@@ -256,12 +257,15 @@ async function waitForCheckoutIntentProjection(checkoutIntentId: string) {
 }
 
 async function completeDemoCheckout(checkoutIntentId: string) {
-  const response = await fetch(`/api/internal/checkout-intents/${checkoutIntentId}/complete-demo`, {
+  const response = await fetch(
+    buildBrowserApiUrl(`/api/internal/checkout-intents/${checkoutIntentId}/complete-demo`),
+    {
     method: "POST",
     headers: {
       "content-type": "application/json",
     },
-  });
+    },
+  );
 
   if (!response.ok) {
     throw new Error(await readError(response));
@@ -274,7 +278,7 @@ async function waitForCheckoutStatus(checkoutIntentId: string) {
   while (Date.now() < deadline) {
     await processProjections();
 
-    const response = await fetch(`/api/checkout-intents/${checkoutIntentId}`, {
+    const response = await fetch(buildBrowserApiUrl(`/api/checkout-intents/${checkoutIntentId}`), {
       cache: "no-store",
     });
 
@@ -300,7 +304,7 @@ async function waitForBuyIntentCommandStatus(commandId: string) {
   const deadline = Date.now() + 30_000;
 
   while (Date.now() < deadline) {
-    const response = await fetch(`/api/buy-intent-commands/${commandId}`, {
+    const response = await fetch(buildBrowserApiUrl(`/api/buy-intent-commands/${commandId}`), {
       cache: "no-store",
     });
 
