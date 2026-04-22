@@ -31,3 +31,9 @@ Changes can be parked（暫存）— temporarily moved out of `openspec/changes/
 - This repo expects Node `>=24 <25`.
 - If you use `nvm`, run `nvm use` in the repo root before `pnpm dev`, `pnpm check`, or `pnpm build`.
 - The repo includes `.nvmrc` pinned to Node 24 for that workflow.
+
+## Communication
+
+- Put the conclusion first.
+- Keep answers simple and direct.
+- Do not ramble or add unrelated speculation.
