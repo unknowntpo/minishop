@@ -27,11 +27,6 @@ core_services=(
   app
   worker-seckill
   worker-seckill-result-sink
-  worker-buy-intents-ingest
-  worker-staged-buy-intents-process
-  worker-staged-buy-intents-process-2
-  worker-staged-buy-intents-process-3
-  worker-projections
 )
 
 if [[ "${BENCHMARK_INGRESS_IMPL:-node}" == "go" ]]; then
