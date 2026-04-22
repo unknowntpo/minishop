@@ -8,4 +8,4 @@ benchmark-results
 .env
 .env*.local
 *.tsbuildinfo
-
+services/rust-kafka-client-bench/target
