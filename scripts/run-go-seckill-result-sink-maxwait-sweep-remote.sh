@@ -39,6 +39,9 @@ trap cleanup EXIT
 
 for max_wait in "${max_waits[@]}"; do
   run_id="go_sink_maxwait_${max_wait}ms_$(date -u +%Y%m%dT%H%M%SZ)"
+  isolation_id="${run_id}"
+  worker_app_id="minishop-seckill-worker-bench-${isolation_id}"
+  sink_group_id="minishop-seckill-result-sink-bench-${isolation_id}"
   runner_name="${project//[^a-zA-Z0-9_.-]/-}-runner-${max_wait}"
   local_result_dir="$results_root/maxwait-${max_wait}"
 
@@ -46,13 +49,22 @@ for max_wait in "${max_waits[@]}"; do
   docker "${compose_args[@]}" down -v --remove-orphans || true
 
   echo "[remote-benchmark] max_wait=${max_wait}ms: starting services"
+  KAFKA_SECKILL_APPLICATION_ID="$worker_app_id" \
+  KAFKA_SECKILL_CLEAR_STATE_ON_START=1 \
+  KAFKA_SECKILL_RESULT_SINK_GROUP_ID="$sink_group_id" \
   docker "${compose_args[@]}" up -d --build "${core_services[@]}"
+  KAFKA_SECKILL_APPLICATION_ID="$worker_app_id" \
+  KAFKA_SECKILL_CLEAR_STATE_ON_START=1 \
+  KAFKA_SECKILL_RESULT_SINK_GROUP_ID="$sink_group_id" \
   docker "${compose_args[@]}" up -d --build --no-deps "${no_dep_services[@]}"
 
   echo "[remote-benchmark] max_wait=${max_wait}ms: running benchmark"
   docker "${compose_args[@]}" run \
     --no-deps \
     --name "$runner_name" \
+    -e KAFKA_SECKILL_APPLICATION_ID="$worker_app_id" \
+    -e KAFKA_SECKILL_CLEAR_STATE_ON_START=1 \
+    -e KAFKA_SECKILL_RESULT_SINK_GROUP_ID="$sink_group_id" \
     -e BENCHMARK_RUN_ID="$run_id" \
     -e BENCHMARK_REQUESTS=200000 \
     -e BENCHMARK_STYLE=steady_state \

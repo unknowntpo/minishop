@@ -48,6 +48,7 @@
     "benchmark:checkout:postgres:cart:reset": "BENCHMARK_RESET=1 BENCHMARK_WORKLOAD_TYPE=multi_sku_cart_checkout tsx scripts/run-checkout-postgres-benchmark.ts",
     "benchmark:checkout:postgres:sweep": "tsx scripts/run-checkout-postgres-sweep.ts",
     "benchmark:buy-intent": "tsx scripts/benchmark-buy-intent-temporal.ts",
+    "benchmark:buy-intent:seckill:container": "bash scripts/run-seckill-benchmark-container.sh",
     "benchmark:buy-intent:bypass:sweep": "tsx scripts/run-buy-intent-bypass-sweep.ts",
     "benchmark:buy-intent:bypass:sweep:container": "sh -lc 'docker compose --profile benchmark up -d --build --scale app=${BENCHMARK_APP_REPLICAS:-1} app redpanda worker-seckill worker-seckill-result-sink worker-buy-intents-ingest worker-staged-buy-intents-process worker-staged-buy-intents-process-2 worker-staged-buy-intents-process-3 worker-projections && docker compose --profile benchmark run --rm --no-deps -e BENCHMARK_APP_REPLICAS=${BENCHMARK_APP_REPLICAS:-1} -e BENCHMARK_APP_URL=http://app:3000 benchmark-runner pnpm benchmark:buy-intent:bypass:sweep'",
     "benchmark:compose:up": "docker compose -p minishop-benchmark -f docker-compose.yml -f docker-compose.benchmark.yml up -d --build benchmark-postgres benchmark-app",
