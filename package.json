@@ -27,6 +27,8 @@
     "test:integration:buy-intents": "vitest run src/integration/checkout/async-buy-intent-command-flow.test.ts",
     "test:e2e:buy-intents": "tsx scripts/run-buy-intent-backend-e2e.ts",
     "test:e2e:go-backend:compose": "bash scripts/run-go-backend-e2e-compose.sh",
+    "test:e2e:frontend:go-backend": "playwright test e2e/frontend-go-backend.spec.ts",
+    "test:e2e:frontend:go-backend:compose": "bash scripts/run-frontend-go-backend-playwright.sh",
     "test:backend:buy-intents": "pnpm --config.engine-strict=false vitest run src/application/checkout/accept-buy-intent-command.test.ts src/application/checkout/process-staged-buy-intent-command-batch.test.ts app/api/buy-intents/route.test.ts 'app/api/buy-intent-commands/[commandId]/route.test.ts' && pnpm --config.engine-strict=false test:integration:buy-intents && pnpm --config.engine-strict=false test:e2e:buy-intents",
     "check": "pnpm run typecheck && pnpm run lint && pnpm run deps:check && pnpm run test",
     "db:up": "docker compose up -d postgres",
@@ -79,6 +81,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.12",
+    "@playwright/test": "^1.59.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.0",
     "@types/node": "^24.10.0",
