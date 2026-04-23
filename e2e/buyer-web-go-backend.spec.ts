@@ -59,12 +59,40 @@ test.describe("buyer web against go backend", () => {
     await expect(page.locator(".admin-product-card").first()).toBeVisible();
   });
 
-  test("benchmark results page loads from go backend", async ({ page }) => {
-    await page.goto("/internal/benchmarks");
-    await expect(page.getByRole("heading", { name: "Benchmark results" })).toBeVisible();
-    await expect(page.locator(".benchmark-scenario-card").first()).toBeVisible();
-    await expect(page.locator(".benchmark-table tbody tr").first()).toBeVisible();
+test("benchmark results page loads from go backend", async ({ page }) => {
+  await page.goto("/internal/benchmarks");
+  await expect(page.getByRole("heading", { name: "Benchmark results" })).toBeVisible();
+  await expect(page.locator(".benchmark-scenario-card").first()).toBeVisible();
+  await expect(page.locator(".benchmark-table tbody tr").first()).toBeVisible();
+});
+
+test("benchmark scenario and run selection use client-side navigation", async ({ page }) => {
+  await page.goto("/internal/benchmarks?scenario=buy-intent-bypass-created");
+  await page.waitForSelector(".benchmark-scenario-card");
+  await page.evaluate(() => {
+    (window as typeof window & { __benchmarkMarker?: string }).__benchmarkMarker = "client-nav";
   });
+
+  await page.locator(".benchmark-scenario-card").nth(1).click();
+  await expect(page).toHaveURL(/scenario=buy-intent-hot-seckill/);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => (window as typeof window & { __benchmarkMarker?: string }).__benchmarkMarker ?? null,
+      ),
+    )
+    .toBe("client-nav");
+
+  await page.locator(".benchmark-run-tag").first().click();
+  await expect(page).toHaveURL(/run=/);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => (window as typeof window & { __benchmarkMarker?: string }).__benchmarkMarker ?? null,
+      ),
+    )
+    .toBe("client-nav");
+});
 
   test("admin can start and stop seckill through go backend", async ({ page }) => {
     test.slow();

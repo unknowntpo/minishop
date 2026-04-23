@@ -1,5 +1,6 @@
 import React, { Fragment, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Link, useLocation } from "@tanstack/react-router";
 
 type BenchmarkReport = {
   schemaVersion?: number;
@@ -287,8 +288,8 @@ export function BenchmarksScreen({ requestJson }: BenchmarksScreenProps) {
   const runs = data ?? [];
   const latest = runs[0];
   const scenarioSummaries = useMemo(() => summarizeScenarios(runs), [runs]);
-  const params =
-    typeof window === "undefined" ? new URLSearchParams() : new URLSearchParams(window.location.search);
+  const location = useLocation();
+  const params = useMemo(() => new URLSearchParams(location.searchStr), [location.searchStr]);
   const requestedScenarioName = params.get("scenario") ?? undefined;
   const selectedScenarioName = scenarioSummaries.find((scenario) => scenario.name === requestedScenarioName)?.name;
   const selectedScenarioRuns = selectedScenarioName
@@ -308,15 +309,15 @@ export function BenchmarksScreen({ requestJson }: BenchmarksScreenProps) {
   return (
     <main className="page-shell admin-shell">
       <nav className="admin-nav">
-        <a className="text-link" href="/internal/admin">
+        <Link className="text-link" to="/internal/admin">
           Projection admin
-        </a>
-        <a className="text-link" href="/internal/design-system">
+        </Link>
+        <Link className="text-link" to="/internal/design-system">
           Design system
-        </a>
-        <a className="text-link" href="/products">
+        </Link>
+        <Link className="text-link" to="/products">
           Products
-        </a>
+        </Link>
       </nav>
 
       <section className="catalog-hero" aria-labelledby="benchmark-title">
@@ -389,14 +390,17 @@ export function BenchmarksScreen({ requestJson }: BenchmarksScreenProps) {
             <div className="benchmark-scenario-grid">
               {scenarioSummaries.map((scenario) => {
                 const isSelected = scenario.name === selectedScenarioName;
-                const href = isSelected
-                  ? "/internal/benchmarks"
-                  : `/internal/benchmarks?scenario=${encodeURIComponent(scenario.name)}`;
-
                 return (
-                  <a
+                  <Link
                     className={`benchmark-scenario-card${isSelected ? " selected" : ""}`}
-                    href={href}
+                    to="/internal/benchmarks"
+                    search={
+                      isSelected
+                        ? {}
+                        : {
+                            scenario: scenario.name,
+                          }
+                    }
                     key={scenario.name}
                     aria-expanded={isSelected}
                   >
@@ -416,7 +420,7 @@ export function BenchmarksScreen({ requestJson }: BenchmarksScreenProps) {
                         }}
                       />
                     </div>
-                  </a>
+                  </Link>
                 );
               })}
             </div>
@@ -548,12 +552,18 @@ function RunComparison({
       <div className="benchmark-run-tags">
         {runs.map((run, index) => (
           <Fragment key={run.artifactFile}>
-            <a
+            <Link
               className={`benchmark-run-tag${selectedRun?.runId === run.runId ? " selected" : ""}`}
-              href={
+              to="/internal/benchmarks"
+              search={
                 selectedRun?.runId === run.runId
-                  ? `/internal/benchmarks?scenario=${encodeURIComponent(scenarioName)}`
-                  : `/internal/benchmarks?scenario=${encodeURIComponent(scenarioName)}&run=${encodeURIComponent(run.runId)}`
+                  ? {
+                      scenario: scenarioName,
+                    }
+                  : {
+                      scenario: scenarioName,
+                      run: run.runId,
+                    }
               }
               aria-expanded={selectedRun?.runId === run.runId}
             >
@@ -564,7 +574,7 @@ function RunComparison({
               </span>
               <code>{formatScenarioTags(run)}</code>
               <code>{formatConditionSummary(run)}</code>
-            </a>
+            </Link>
             {selectedRun?.runId === run.runId ? (
               <SelectedRunPanel fallbackIndex={index + 1} run={selectedRun} />
             ) : null}
