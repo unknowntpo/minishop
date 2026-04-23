@@ -265,10 +265,15 @@ Current implementation status:
 - initial admin route is implemented for:
   - `/internal/admin`
 - these routes already read from explicit Go APIs instead of importing backend repositories directly
+- buyer product detail now also carries forward browser-local cart behavior:
+  - `minishop-cart-v1` local storage
+  - cart drawer quantity adjustments
+  - cart checkout through Go buyer APIs
 - Playwright compose E2E now covers:
   - buyer-web regular checkout flow
+  - buyer-web cart checkout flow
   - buyer-web admin dashboard load
-- cart parity and full admin mutation coverage are still pending
+  - buyer-web admin seckill start/stop mutation
 
 #### Phase 3: Vite/TanStack admin frontend
 

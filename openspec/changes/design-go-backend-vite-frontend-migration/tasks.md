@@ -18,6 +18,7 @@
 - [x] 3.1 Scaffold a Vite + React + TanStack Router + TanStack Query frontend app
 - [x] 3.2 Add shared API client configuration using an explicit backend base URL
 - [x] 3.3 Port locale handling and direct-buy buyer interaction flows into the new frontend runtime
+- [x] 3.4 Port buyer cart storage and cart-checkout flow into the new frontend runtime
 
 ## 4. Buyer Route Migration
 
@@ -29,7 +30,7 @@
 ## 5. Admin Route Migration
 
 - [x] 5.1 Migrate `/internal/admin`
-- [ ] 5.2 Verify polling and seckill-config update behavior through Go backend APIs only
+- [x] 5.2 Verify polling and seckill-config update behavior through Go backend APIs only
 
 ## 6. Deprecation and Removal
 
