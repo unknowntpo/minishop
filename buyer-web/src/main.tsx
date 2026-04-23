@@ -1219,6 +1219,7 @@ function AdminScreen() {
     refetchInterval: 1_000,
   });
   const [stockInputs, setStockInputs] = useState<Record<string, string>>({});
+  const [lastError, setLastError] = useState<string | null>(null);
   const [savingSkuId, setSavingSkuId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -1245,6 +1246,13 @@ function AdminScreen() {
   }
 
   async function updateSeckill(skuId: string, enabled: boolean) {
+    const stockLimit = Number.parseInt(stockInputs[skuId] ?? "", 10);
+
+    if (enabled && (!Number.isInteger(stockLimit) || stockLimit <= 0)) {
+      setLastError("活動 stock 必須是大於 0 的整數。");
+      return;
+    }
+
     setSavingSkuId(skuId);
     try {
       await requestJson<{ ok: boolean }>("/api/internal/admin/seckill", {
@@ -1252,10 +1260,11 @@ function AdminScreen() {
         body: JSON.stringify({
           skuId,
           enabled,
-          stockLimit: enabled ? Number(stockInputs[skuId] || 0) : null,
+          stockLimit: enabled ? stockLimit : null,
         }),
       });
       await dashboardQuery.refetch();
+      setLastError(null);
     } finally {
       setSavingSkuId(null);
     }
@@ -1263,19 +1272,36 @@ function AdminScreen() {
 
   return (
     <>
+      <nav className="admin-nav">
+        <Link className="text-link" to="/products">
+          Products
+        </Link>
+        <Link className="text-link" to="/internal/design-system">
+          Design system
+        </Link>
+        <a className="text-link" href="/internal/benchmarks">
+          Benchmark results
+        </a>
+      </nav>
       <section className="catalog-hero">
         <p className="eyebrow">Internal admin</p>
         <h1>Projection status</h1>
-        <p className="muted hero-copy">Go backend API driven admin dashboard.</p>
+        <p className="muted hero-copy">
+          Local visibility for catalog SKUs, inventory counters, checkout projections, and worker
+          checkpoints.
+        </p>
       </section>
       <section className="admin-livebar" aria-label="Admin dashboard live status">
         <div>
           <p className="eyebrow">Live projection dashboard</p>
           <strong>Polling every second</strong>
-          <p className="muted admin-livebar-copy">Last refresh {dashboardQuery.data.refreshedAt}</p>
+          <p className="muted admin-livebar-copy">
+            Last refresh {formatTime(dashboardQuery.data.refreshedAt)}
+          </p>
         </div>
         <span className="badge neutral">realtime polling</span>
       </section>
+      {lastError ? <p className="checkout-demo-status error">{lastError}</p> : null}
       <section className="admin-product-grid" aria-label="Product projection cards">
         {dashboardQuery.data.products.map((row) => (
           <article className="admin-product-card" key={row.skuId}>
@@ -1298,6 +1324,32 @@ function AdminScreen() {
               <Metric label="reserved" value={row.reserved} tone="warning" />
               <Metric label="sold" value={row.sold} tone="success" />
               <Metric label="available" value={row.available} tone="strong" />
+            </div>
+            <div className="admin-product-footer">
+              <span>
+                <strong>last event</strong>
+                <code>{row.inventoryLastEventId ?? "n/a"}</code>
+              </span>
+              <span>
+                <strong>version</strong>
+                <code>{row.inventoryAggregateVersion ?? "n/a"}</code>
+              </span>
+            </div>
+            <div className="admin-product-footer">
+              <span>
+                <strong>seckill stock</strong>
+                <code>{row.seckillStockLimit ?? row.seckillDefaultStock ?? "n/a"}</code>
+              </span>
+              <span>
+                <strong>seckill result</strong>
+                <code>
+                  ok {row.seckillReservedCount} / reject {row.seckillRejectedCount}
+                </code>
+              </span>
+              <span>
+                <strong>last seckill</strong>
+                <code>{row.seckillLastProcessedAt ?? "n/a"}</code>
+              </span>
             </div>
             {row.seckillCandidate ? (
               <form
@@ -1937,18 +1989,26 @@ function DesignSystemScreen() {
 function Metric({
   label,
   value,
-  tone = "neutral",
+  tone,
 }: {
   label: string;
   value: number | null;
-  tone?: "neutral" | "warning" | "success" | "strong";
+  tone?: "warning" | "success" | "strong";
 }) {
   return (
-    <span className={`metric-card ${tone}`}>
+    <span className={`admin-counter ${tone ?? ""}`}>
       <strong>{label}</strong>
       <code>{value ?? "n/a"}</code>
     </span>
   );
+}
+
+function formatTime(value: string) {
+  return new Intl.DateTimeFormat("en", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).format(new Date(value));
 }
 
 async function processProjections() {
