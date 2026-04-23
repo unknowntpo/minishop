@@ -69,7 +69,11 @@ type CartProduct = Product & {
 };
 
 const queryClient = new QueryClient();
-const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL?.trim() || "http://127.0.0.1:3005").replace(/\/+$/, "");
+const runtimeDefaultApiBaseUrl =
+  typeof window === "undefined"
+    ? "http://127.0.0.1:3005"
+    : `${window.location.protocol}//${window.location.hostname}:3005`;
+const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL?.trim() || runtimeDefaultApiBaseUrl).replace(/\/+$/, "");
 const cartStorageKey = "minishop-cart-v1";
 const cartUpdatedEvent = "minishop:cart-updated";
 
