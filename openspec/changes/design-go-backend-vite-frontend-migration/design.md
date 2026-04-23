@@ -235,6 +235,7 @@ Acceptance:
 
 - existing compose-based backend E2E remains green
 - new APIs are available without Next.js API route dependency
+- current Next buyer frontend has a Playwright compose E2E that runs browser -> Next UI -> Go backend for the regular checkout path
 
 #### Phase 2: Vite/TanStack buyer frontend
 

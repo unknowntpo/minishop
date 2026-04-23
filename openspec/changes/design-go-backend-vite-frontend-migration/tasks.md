@@ -6,12 +6,12 @@
 
 ## 2. Go API Parity for UI Reads/Writes
 
-- [ ] 2.1 Add Go API support for product listing required by `/products`
-- [ ] 2.2 Add Go API support for product detail required by `/products/:slug`
-- [ ] 2.3 Add Go API support for checkout-complete display required by `/checkout-complete/:checkoutIntentId`
-- [ ] 2.4 Add Go API support for admin dashboard reads
-- [ ] 2.5 Add Go API support for admin seckill config updates
-- [ ] 2.6 Keep internal processing routes explicitly backend-only and do not couple them to frontend migration
+- [x] 2.1 Add Go API support for product listing required by `/products`
+- [x] 2.2 Add Go API support for product detail required by `/products/:slug`
+- [x] 2.3 Add Go API support for checkout-complete display required by `/checkout-complete/:checkoutIntentId`
+- [x] 2.4 Add Go API support for admin dashboard reads
+- [x] 2.5 Add Go API support for admin seckill config updates
+- [x] 2.6 Keep internal processing routes explicitly backend-only and do not couple them to frontend migration
 
 ## 3. New Frontend Runtime
 
@@ -39,6 +39,6 @@
 
 ## 7. Verification
 
-- [ ] 7.1 Keep backend-only compose E2E green during migration
-- [ ] 7.2 Add frontend smoke/E2E coverage for buyer and admin routes as they move
+- [x] 7.1 Keep backend-only compose E2E green during migration
+- [x] 7.2 Add frontend smoke/E2E coverage for buyer routes against Go backend using Playwright compose E2E
 - [ ] 7.3 Verify migrated routes work with Go backend only and no hidden Next.js backend dependency remains
