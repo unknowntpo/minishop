@@ -7,6 +7,7 @@ import {
   getRequestContext,
   logApiError,
 } from "@/src/presentation/api/request-context";
+import { deprecatedGoApiHeaders } from "@/src/presentation/api/deprecation";
 
 export async function POST(request: NextRequest) {
   const context = getRequestContext(request);
@@ -26,6 +27,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(result, {
       status: result.locked ? 200 : 409,
       headers: {
+        ...deprecatedGoApiHeaders("/api/internal/projections/process"),
         "x-request-id": context.requestId,
         "x-trace-id": context.traceId,
       },
@@ -35,6 +37,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(apiErrorBody("Projection processing failed.", context), {
       status: 400,
+      headers: deprecatedGoApiHeaders("/api/internal/projections/process"),
     });
   }
 }

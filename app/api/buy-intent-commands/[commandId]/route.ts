@@ -6,6 +6,7 @@ import {
   getRequestContext,
   logApiError,
 } from "@/src/presentation/api/request-context";
+import { deprecatedGoApiHeaders } from "@/src/presentation/api/deprecation";
 
 type RouteParams = {
   params: Promise<{
@@ -23,6 +24,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     if (!status) {
       return NextResponse.json(apiErrorBody("Buy intent command not found.", context), {
         status: 404,
+        headers: deprecatedGoApiHeaders("/api/buy-intent-commands/:commandId"),
       });
     }
 
@@ -41,6 +43,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       },
       {
         headers: {
+          ...deprecatedGoApiHeaders("/api/buy-intent-commands/:commandId"),
           "x-request-id": context.requestId,
           "x-trace-id": context.traceId,
         },
@@ -54,6 +57,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       {
         status: 500,
         headers: {
+          ...deprecatedGoApiHeaders("/api/buy-intent-commands/:commandId"),
           "x-request-id": context.requestId,
           "x-trace-id": context.traceId,
         },

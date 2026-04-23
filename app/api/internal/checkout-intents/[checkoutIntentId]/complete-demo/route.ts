@@ -10,6 +10,7 @@ import {
   getRequestContext,
   logApiError,
 } from "@/src/presentation/api/request-context";
+import { deprecatedGoApiHeaders } from "@/src/presentation/api/deprecation";
 import { injectTraceCarrier } from "@/src/infrastructure/telemetry/otel";
 
 type RouteParams = {
@@ -44,6 +45,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json(result, {
       headers: {
+        ...deprecatedGoApiHeaders("/api/internal/checkout-intents/:checkoutIntentId/complete-demo"),
         "x-request-id": context.requestId,
         "x-trace-id": context.traceId,
       },
@@ -54,6 +56,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     return NextResponse.json(apiErrorBody("Checkout demo completion failed.", context), {
       status: 400,
       headers: {
+        ...deprecatedGoApiHeaders("/api/internal/checkout-intents/:checkoutIntentId/complete-demo"),
         "x-request-id": context.requestId,
         "x-trace-id": context.traceId,
       },

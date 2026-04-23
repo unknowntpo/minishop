@@ -6,6 +6,7 @@ import {
   getRequestContext,
   logApiError,
 } from "@/src/presentation/api/request-context";
+import { deprecatedGoApiHeaders } from "@/src/presentation/api/deprecation";
 
 type RouteParams = {
   params: Promise<{
@@ -57,6 +58,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     if (!row) {
       return NextResponse.json(apiErrorBody("Checkout intent projection not found.", context), {
         status: 404,
+        headers: deprecatedGoApiHeaders("/api/checkout-intents/:checkoutIntentId"),
       });
     }
 
@@ -76,6 +78,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
       },
       {
         headers: {
+          ...deprecatedGoApiHeaders("/api/checkout-intents/:checkoutIntentId"),
           "x-request-id": context.requestId,
           "x-trace-id": context.traceId,
         },
@@ -86,6 +89,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json(apiErrorBody("Checkout status is temporarily unavailable.", context), {
       status: 500,
+      headers: deprecatedGoApiHeaders("/api/checkout-intents/:checkoutIntentId"),
     });
   }
 }

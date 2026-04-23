@@ -7,6 +7,7 @@ import {
   getRequestContext,
   logApiError,
 } from "@/src/presentation/api/request-context";
+import { deprecatedGoApiHeaders } from "@/src/presentation/api/deprecation";
 
 export async function GET(request: NextRequest) {
   const context = getRequestContext(request);
@@ -23,6 +24,7 @@ export async function GET(request: NextRequest) {
       },
       {
         headers: {
+          ...deprecatedGoApiHeaders("/api/internal/admin/dashboard"),
           "x-request-id": context.requestId,
           "x-trace-id": context.traceId,
         },
@@ -34,6 +36,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(apiErrorBody("Admin dashboard is temporarily unavailable.", context), {
       status: 500,
       headers: {
+        ...deprecatedGoApiHeaders("/api/internal/admin/dashboard"),
         "x-request-id": context.requestId,
         "x-trace-id": context.traceId,
       },

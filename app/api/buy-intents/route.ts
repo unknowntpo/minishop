@@ -19,6 +19,7 @@ import {
   getRequestContext,
   logApiError,
 } from "@/src/presentation/api/request-context";
+import { deprecatedGoApiHeaders } from "@/src/presentation/api/deprecation";
 import { injectTraceCarrier } from "@/src/infrastructure/telemetry/otel";
 
 export async function POST(request: NextRequest) {
@@ -69,6 +70,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(response, {
       status: 202,
       headers: {
+        ...deprecatedGoApiHeaders("/api/buy-intents"),
         "x-request-id": context.requestId,
         "x-trace-id": context.traceId,
       },
@@ -80,6 +82,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(apiErrorBody(error.message, context), {
         status: 400,
         headers: {
+          ...deprecatedGoApiHeaders("/api/buy-intents"),
           "x-request-id": context.requestId,
           "x-trace-id": context.traceId,
         },
@@ -91,6 +94,7 @@ export async function POST(request: NextRequest) {
       {
         status: 500,
         headers: {
+          ...deprecatedGoApiHeaders("/api/buy-intents"),
           "x-request-id": context.requestId,
           "x-trace-id": context.traceId,
         },
@@ -138,6 +142,7 @@ async function maybeProxySeckillBuyIntent(input: {
     return new NextResponse(text, {
       status: response.status,
       headers: {
+        ...deprecatedGoApiHeaders("/api/buy-intents"),
         "content-type": response.headers.get("content-type") ?? "application/json",
         "x-request-id": response.headers.get("x-request-id") ?? input.context.requestId,
         "x-trace-id": response.headers.get("x-trace-id") ?? input.context.traceId,

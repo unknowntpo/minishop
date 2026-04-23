@@ -7,6 +7,7 @@ import {
   getRequestContext,
   logApiError,
 } from "@/src/presentation/api/request-context";
+import { deprecatedGoApiHeaders } from "@/src/presentation/api/deprecation";
 
 function parseRequest(value: unknown) {
   if (typeof value !== "object" || value === null) {
@@ -56,6 +57,7 @@ export async function POST(request: NextRequest) {
       },
       {
         headers: {
+          ...deprecatedGoApiHeaders("/api/internal/admin/seckill"),
           "x-request-id": context.requestId,
           "x-trace-id": context.traceId,
         },
@@ -67,6 +69,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(apiErrorBody("Seckill config update failed.", context), {
       status: 400,
       headers: {
+        ...deprecatedGoApiHeaders("/api/internal/admin/seckill"),
         "x-request-id": context.requestId,
         "x-trace-id": context.traceId,
       },
