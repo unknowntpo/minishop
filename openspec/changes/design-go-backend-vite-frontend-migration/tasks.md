@@ -17,18 +17,18 @@
 
 - [x] 3.1 Scaffold a Vite + React + TanStack Router + TanStack Query frontend app
 - [x] 3.2 Add shared API client configuration using an explicit backend base URL
-- [ ] 3.3 Port locale handling, cart state, and buyer interaction flows into the new frontend runtime
+- [x] 3.3 Port locale handling and direct-buy buyer interaction flows into the new frontend runtime
 
 ## 4. Buyer Route Migration
 
 - [x] 4.1 Migrate `/products`
 - [x] 4.2 Migrate `/products/:slug`
 - [x] 4.3 Migrate `/checkout-complete/:checkoutIntentId`
-- [ ] 4.4 Verify buyer flow no longer depends on Next.js page-server database reads for migrated routes
+- [x] 4.4 Verify buyer flow no longer depends on Next.js page-server database reads for migrated routes
 
 ## 5. Admin Route Migration
 
-- [ ] 5.1 Migrate `/internal/admin`
+- [x] 5.1 Migrate `/internal/admin`
 - [ ] 5.2 Verify polling and seckill-config update behavior through Go backend APIs only
 
 ## 6. Deprecation and Removal
@@ -41,4 +41,4 @@
 
 - [x] 7.1 Keep backend-only compose E2E green during migration
 - [x] 7.2 Add frontend smoke/E2E coverage for buyer routes against Go backend using Playwright compose E2E
-- [ ] 7.3 Verify migrated routes work with Go backend only and no hidden Next.js backend dependency remains
+- [x] 7.3 Verify migrated buyer-web routes work with Go backend only and no hidden Next.js backend dependency remains

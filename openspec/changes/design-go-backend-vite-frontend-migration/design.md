@@ -262,8 +262,13 @@ Current implementation status:
   - `/products`
   - `/products/:slug`
   - `/checkout-complete/:checkoutIntentId`
+- initial admin route is implemented for:
+  - `/internal/admin`
 - these routes already read from explicit Go APIs instead of importing backend repositories directly
-- cart parity and complete buyer interaction parity are still pending
+- Playwright compose E2E now covers:
+  - buyer-web regular checkout flow
+  - buyer-web admin dashboard load
+- cart parity and full admin mutation coverage are still pending
 
 #### Phase 3: Vite/TanStack admin frontend
 
