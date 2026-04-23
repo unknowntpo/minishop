@@ -218,6 +218,119 @@ type checkoutIntentResponse struct {
 	UpdatedAt          string         `json:"updatedAt"`
 }
 
+type productInventoryResponse struct {
+	OnHand           int     `json:"onHand"`
+	Reserved         int     `json:"reserved"`
+	Sold             int     `json:"sold"`
+	Available        int     `json:"available"`
+	AggregateVersion int64   `json:"aggregateVersion"`
+	LastEventID      int64   `json:"lastEventId"`
+	UpdatedAt        *string `json:"updatedAt"`
+	ProjectionLagMs  *int64  `json:"projectionLagMs"`
+}
+
+type productSeckillResponse struct {
+	Candidate    bool `json:"candidate"`
+	Enabled      bool `json:"enabled"`
+	StockLimit   *int `json:"stockLimit"`
+	DefaultStock *int `json:"defaultStock"`
+}
+
+type productImageResponse struct {
+	Src string `json:"src"`
+	Alt string `json:"alt"`
+}
+
+type productResponse struct {
+	Slug             string                   `json:"slug"`
+	Name             string                   `json:"name"`
+	SkuID            string                   `json:"skuId"`
+	SkuCode          string                   `json:"skuCode"`
+	Summary          string                   `json:"summary"`
+	CheckoutNote     string                   `json:"checkoutNote"`
+	PriceAmountMinor int                      `json:"priceAmountMinor"`
+	Currency         string                   `json:"currency"`
+	Available        int                      `json:"available"`
+	Inventory        productInventoryResponse `json:"inventory"`
+	Seckill          productSeckillResponse   `json:"seckill"`
+	Image            productImageResponse     `json:"image"`
+}
+
+type adminProductResponse struct {
+	ProductID                 string  `json:"productId"`
+	ProductName               string  `json:"productName"`
+	ProductStatus             string  `json:"productStatus"`
+	SkuID                     string  `json:"skuId"`
+	SkuCode                   string  `json:"skuCode"`
+	SkuName                   string  `json:"skuName"`
+	SkuStatus                 string  `json:"skuStatus"`
+	PriceAmountMinor          int     `json:"priceAmountMinor"`
+	Currency                  string  `json:"currency"`
+	OnHand                    *int    `json:"onHand"`
+	Reserved                  *int    `json:"reserved"`
+	Sold                      *int    `json:"sold"`
+	Available                 *int    `json:"available"`
+	InventoryLastEventID      *int64  `json:"inventoryLastEventId"`
+	InventoryAggregateVersion *int64  `json:"inventoryAggregateVersion"`
+	SeckillCandidate          bool    `json:"seckillCandidate"`
+	SeckillEnabled            bool    `json:"seckillEnabled"`
+	SeckillStockLimit         *int    `json:"seckillStockLimit"`
+	SeckillDefaultStock       *int    `json:"seckillDefaultStock"`
+	SeckillReservedCount      int     `json:"seckillReservedCount"`
+	SeckillRejectedCount      int     `json:"seckillRejectedCount"`
+	SeckillLastProcessedAt    *string `json:"seckillLastProcessedAt"`
+}
+
+type adminCheckoutResponse struct {
+	CheckoutIntentID   string  `json:"checkoutIntentId"`
+	BuyerID            string  `json:"buyerId"`
+	Status             string  `json:"status"`
+	PaymentID          *string `json:"paymentId"`
+	OrderID            *string `json:"orderId"`
+	RejectionReason    *string `json:"rejectionReason"`
+	CancellationReason *string `json:"cancellationReason"`
+	AggregateVersion   int64   `json:"aggregateVersion"`
+	LastEventID        int64   `json:"lastEventId"`
+	UpdatedAt          string  `json:"updatedAt"`
+}
+
+type adminCheckoutStatusCountResponse struct {
+	Status string `json:"status"`
+	Count  int    `json:"count"`
+}
+
+type adminCheckoutSummaryResponse struct {
+	DisplayedLimit int                                `json:"displayedLimit"`
+	TotalCount     int                                `json:"totalCount"`
+	StatusCounts   []adminCheckoutStatusCountResponse `json:"statusCounts"`
+}
+
+type adminCheckpointResponse struct {
+	ProjectionName string `json:"projectionName"`
+	LastEventID    int64  `json:"lastEventId"`
+	UpdatedAt      string `json:"updatedAt"`
+}
+
+type adminDashboardResponse struct {
+	Products        []adminProductResponse       `json:"products"`
+	CheckoutSummary adminCheckoutSummaryResponse `json:"checkoutSummary"`
+	Checkouts       []adminCheckoutResponse      `json:"checkouts"`
+	Checkpoints     []adminCheckpointResponse    `json:"checkpoints"`
+	RefreshedAt     string                       `json:"refreshedAt"`
+}
+
+type checkoutCompleteResponse struct {
+	CheckoutIntentID   string  `json:"checkoutIntentId"`
+	CommandID          *string `json:"commandId"`
+	CommandStatus      *string `json:"commandStatus"`
+	Status             string  `json:"status"`
+	OrderID            *string `json:"orderId"`
+	PaymentID          *string `json:"paymentId"`
+	RejectionReason    *string `json:"rejectionReason"`
+	CancellationReason *string `json:"cancellationReason"`
+	UpdatedAt          string  `json:"updatedAt"`
+}
+
 type projectionProcessResult struct {
 	Locked          bool  `json:"locked"`
 	ProcessedEvents int   `json:"processedEvents"`
@@ -373,6 +486,72 @@ type checkoutProjectionRow struct {
 	AggregateVersion   int64
 	LastEventID        int64
 	UpdatedAt          time.Time
+}
+
+type catalogProductRow struct {
+	ProductID                 string
+	ProductName               string
+	Description               *string
+	SkuID                     string
+	SkuCode                   string
+	PriceAmountMinor          int
+	Currency                  string
+	SeckillCandidate          bool
+	SeckillEnabled            bool
+	SeckillStockLimit         *int
+	SeckillDefaultStock       *int
+	OnHand                    *int
+	Reserved                  *int
+	Sold                      *int
+	Available                 *int
+	InventoryAggregateVersion *int64
+	InventoryLastEventID      *int64
+	InventoryUpdatedAt        *time.Time
+	AttributesJSON            []byte
+}
+
+type adminProductRow struct {
+	ProductID                 string
+	ProductName               string
+	ProductStatus             string
+	SkuID                     string
+	SkuCode                   string
+	SkuName                   string
+	SkuStatus                 string
+	PriceAmountMinor          int
+	Currency                  string
+	SeckillCandidate          bool
+	SeckillEnabled            bool
+	SeckillStockLimit         *int
+	SeckillDefaultStock       *int
+	OnHand                    *int
+	Reserved                  *int
+	Sold                      *int
+	Available                 *int
+	InventoryLastEventID      *int64
+	InventoryAggregateVersion *int64
+	SeckillReservedCount      int
+	SeckillRejectedCount      int
+	SeckillLastProcessedAt    *time.Time
+}
+
+type adminCheckoutRow struct {
+	CheckoutIntentID   string
+	BuyerID            string
+	Status             string
+	PaymentID          *string
+	OrderID            *string
+	RejectionReason    *string
+	CancellationReason *string
+	AggregateVersion   int64
+	LastEventID        int64
+	UpdatedAt          time.Time
+}
+
+type adminCheckpointRow struct {
+	ProjectionName string
+	LastEventID    int64
+	UpdatedAt      time.Time
 }
 
 type checkoutDemoRow struct {
@@ -607,10 +786,15 @@ func (a *app) startServer() (func(context.Context) error, error) {
 func (a *app) startNetHTTPServer() (func(context.Context) error, error) {
 	mux := http.NewServeMux()
 	mux.Handle("/healthz", otelhttp.NewHandler(http.HandlerFunc(a.handleHealthz), "GET /healthz"))
+	mux.Handle("/api/products", otelhttp.NewHandler(http.HandlerFunc(a.handleListProducts), "GET /api/products"))
+	mux.Handle("/api/products/", otelhttp.NewHandler(http.HandlerFunc(a.handleGetProductBySlug), "GET /api/products/{slug}"))
 	mux.Handle("/api/buy-intents", otelhttp.NewHandler(http.HandlerFunc(a.handleBuyIntents), "POST /api/buy-intents"))
 	mux.Handle("/api/buy-intent-commands/", otelhttp.NewHandler(http.HandlerFunc(a.handleGetBuyIntentCommand), "GET /api/buy-intent-commands/{commandId}"))
 	mux.Handle("/api/checkout-intents", otelhttp.NewHandler(http.HandlerFunc(a.handleCreateCheckoutIntent), "POST /api/checkout-intents"))
 	mux.Handle("/api/checkout-intents/", otelhttp.NewHandler(http.HandlerFunc(a.handleGetCheckoutIntent), "GET /api/checkout-intents/{checkoutIntentId}"))
+	mux.Handle("/api/checkout-complete/", otelhttp.NewHandler(http.HandlerFunc(a.handleGetCheckoutComplete), "GET /api/checkout-complete/{checkoutIntentId}"))
+	mux.Handle("/api/internal/admin/dashboard", otelhttp.NewHandler(http.HandlerFunc(a.handleGetAdminDashboard), "GET /api/internal/admin/dashboard"))
+	mux.Handle("/api/internal/admin/seckill", otelhttp.NewHandler(http.HandlerFunc(a.handleUpdateAdminSeckill), "POST /api/internal/admin/seckill"))
 	mux.Handle("/api/internal/projections/process", otelhttp.NewHandler(http.HandlerFunc(a.handleProcessProjections), "POST /api/internal/projections/process"))
 	mux.Handle("/api/internal/checkout-intents/", otelhttp.NewHandler(http.HandlerFunc(a.handleCompleteDemoCheckout), "POST /api/internal/checkout-intents/{checkoutIntentId}/complete-demo"))
 
@@ -688,6 +872,43 @@ func (a *app) handleHealthzHertz(_ context.Context, c *hertzapp.RequestContext) 
 	c.SetStatusCode(consts.StatusOK)
 	c.SetContentTypeBytes([]byte("text/plain; charset=utf-8"))
 	c.WriteString("ok")
+}
+
+func (a *app) handleListProducts(w http.ResponseWriter, r *http.Request) {
+	ctx, span := a.tracer.Start(r.Context(), "catalog.list")
+	defer span.End()
+
+	reqCtx := requestContextFromRequest(ctx, r)
+	products, err := a.readProducts(ctx)
+	if err != nil {
+		span.RecordError(err)
+		writeError(w, reqCtx, http.StatusInternalServerError, "Catalog is temporarily unavailable.")
+		return
+	}
+	writeJSON(w, http.StatusOK, reqCtx, products)
+}
+
+func (a *app) handleGetProductBySlug(w http.ResponseWriter, r *http.Request) {
+	ctx, span := a.tracer.Start(r.Context(), "catalog.read")
+	defer span.End()
+
+	reqCtx := requestContextFromRequest(ctx, r)
+	slug := strings.TrimPrefix(r.URL.Path, "/api/products/")
+	if strings.TrimSpace(slug) == "" {
+		writeError(w, reqCtx, http.StatusNotFound, "Product not found.")
+		return
+	}
+	product, err := a.readProductBySlug(ctx, slug)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, reqCtx, http.StatusNotFound, "Product not found.")
+			return
+		}
+		span.RecordError(err)
+		writeError(w, reqCtx, http.StatusInternalServerError, "Catalog is temporarily unavailable.")
+		return
+	}
+	writeJSON(w, http.StatusOK, reqCtx, product)
 }
 
 func (a *app) handleBuyIntents(w http.ResponseWriter, r *http.Request) {
@@ -1098,6 +1319,80 @@ func (a *app) handleGetCheckoutIntent(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, reqCtx, row)
 }
 
+func (a *app) handleGetCheckoutComplete(w http.ResponseWriter, r *http.Request) {
+	ctx, span := a.tracer.Start(r.Context(), "checkout.read_complete")
+	defer span.End()
+
+	reqCtx := requestContextFromRequest(ctx, r)
+	checkoutIntentID := strings.TrimPrefix(r.URL.Path, "/api/checkout-complete/")
+	if checkoutIntentID == "" {
+		writeError(w, reqCtx, http.StatusNotFound, "Checkout completion summary not found.")
+		return
+	}
+	result, err := a.readCheckoutComplete(ctx, checkoutIntentID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, reqCtx, http.StatusNotFound, "Checkout completion summary not found.")
+			return
+		}
+		span.RecordError(err)
+		writeError(w, reqCtx, http.StatusInternalServerError, "Checkout status is temporarily unavailable.")
+		return
+	}
+	writeJSON(w, http.StatusOK, reqCtx, result)
+}
+
+func (a *app) handleGetAdminDashboard(w http.ResponseWriter, r *http.Request) {
+	ctx, span := a.tracer.Start(r.Context(), "admin.dashboard")
+	defer span.End()
+
+	reqCtx := requestContextFromRequest(ctx, r)
+	dashboard, err := a.readAdminDashboard(ctx)
+	if err != nil {
+		span.RecordError(err)
+		writeError(w, reqCtx, http.StatusInternalServerError, "Admin dashboard is temporarily unavailable.")
+		return
+	}
+	writeJSON(w, http.StatusOK, reqCtx, dashboard)
+}
+
+func (a *app) handleUpdateAdminSeckill(w http.ResponseWriter, r *http.Request) {
+	ctx, span := a.tracer.Start(r.Context(), "admin.update_seckill")
+	defer span.End()
+
+	reqCtx := requestContextFromRequest(ctx, r)
+	body, err := decodeLooseBody(r)
+	if err != nil {
+		writeError(w, reqCtx, http.StatusBadRequest, "Seckill config update failed.")
+		return
+	}
+
+	skuID := strings.TrimSpace(stringValue(body["skuId"], ""))
+	enabled, ok := body["enabled"].(bool)
+	if skuID == "" || !ok {
+		writeError(w, reqCtx, http.StatusBadRequest, "Seckill config update failed.")
+		return
+	}
+
+	var stockLimit *int
+	if enabled {
+		value := intValue(body["stockLimit"], 0)
+		if value <= 0 {
+			writeError(w, reqCtx, http.StatusBadRequest, "Seckill config update failed.")
+			return
+		}
+		stockLimit = &value
+	}
+
+	if err := a.updateSeckillConfig(ctx, skuID, enabled, stockLimit); err != nil {
+		span.RecordError(err)
+		writeError(w, reqCtx, http.StatusBadRequest, "Seckill config update failed.")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, reqCtx, map[string]bool{"ok": true})
+}
+
 func (a *app) handleProcessProjections(w http.ResponseWriter, r *http.Request) {
 	ctx, span := a.tracer.Start(r.Context(), "projection.process")
 	defer span.End()
@@ -1397,6 +1692,473 @@ func (a *app) readCheckoutProjection(ctx context.Context, checkoutIntentID strin
 		LastEventID:        row.LastEventID,
 		UpdatedAt:          row.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	}, nil
+}
+
+func (a *app) readProducts(ctx context.Context) ([]productResponse, error) {
+	rows, err := a.db.Query(ctx, `
+      select
+        product.product_id,
+        product.name as product_name,
+        product.description,
+        sku.sku_id,
+        sku.sku_code,
+        sku.price_amount_minor,
+        sku.currency,
+        sku.seckill_candidate,
+        sku.seckill_enabled,
+        sku.seckill_stock_limit,
+        sku.seckill_default_stock,
+        sku_inventory_projection.on_hand,
+        sku_inventory_projection.reserved,
+        sku_inventory_projection.sold,
+        sku_inventory_projection.available,
+        sku_inventory_projection.aggregate_version as inventory_aggregate_version,
+        sku_inventory_projection.last_event_id as inventory_last_event_id,
+        sku_inventory_projection.updated_at as inventory_updated_at,
+        sku.attributes::text
+      from product
+      join sku on sku.product_id = product.product_id
+      left join sku_inventory_projection on sku_inventory_projection.sku_id = sku.sku_id
+      where product.status = 'active'
+        and sku.status = 'active'
+      order by product.product_id, sku.sku_id
+    `)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	products := []productResponse{}
+	for rows.Next() {
+		row, err := scanCatalogProductRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		products = append(products, mapCatalogProductRow(row))
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return products, nil
+}
+
+func (a *app) readProductBySlug(ctx context.Context, slug string) (productResponse, error) {
+	rows, err := a.db.Query(ctx, `
+      select
+        product.product_id,
+        product.name as product_name,
+        product.description,
+        sku.sku_id,
+        sku.sku_code,
+        sku.price_amount_minor,
+        sku.currency,
+        sku.seckill_candidate,
+        sku.seckill_enabled,
+        sku.seckill_stock_limit,
+        sku.seckill_default_stock,
+        sku_inventory_projection.on_hand,
+        sku_inventory_projection.reserved,
+        sku_inventory_projection.sold,
+        sku_inventory_projection.available,
+        sku_inventory_projection.aggregate_version as inventory_aggregate_version,
+        sku_inventory_projection.last_event_id as inventory_last_event_id,
+        sku_inventory_projection.updated_at as inventory_updated_at,
+        sku.attributes::text
+      from product
+      join sku on sku.product_id = product.product_id
+      left join sku_inventory_projection on sku_inventory_projection.sku_id = sku.sku_id
+      where product.status = 'active'
+        and sku.status = 'active'
+        and coalesce(sku.attributes->>'slug', product.product_id) = $1
+      limit 1
+    `, slug)
+	if err != nil {
+		return productResponse{}, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return productResponse{}, pgx.ErrNoRows
+	}
+	row, err := scanCatalogProductRow(rows)
+	if err != nil {
+		return productResponse{}, err
+	}
+	if err := rows.Err(); err != nil {
+		return productResponse{}, err
+	}
+	return mapCatalogProductRow(row), nil
+}
+
+func (a *app) readCheckoutComplete(ctx context.Context, checkoutIntentID string) (checkoutCompleteResponse, error) {
+	checkout, err := a.readCheckoutProjection(ctx, checkoutIntentID)
+	if err != nil {
+		return checkoutCompleteResponse{}, err
+	}
+
+	var commandID *string
+	var commandStatus *string
+	err = a.db.QueryRow(ctx, `
+      select command_id, status
+      from command_status
+      where checkout_intent_id = $1
+      order by updated_at desc
+      limit 1
+    `, checkoutIntentID).Scan(&commandID, &commandStatus)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return checkoutCompleteResponse{}, err
+	}
+
+	return checkoutCompleteResponse{
+		CheckoutIntentID:   checkout.CheckoutIntentID,
+		CommandID:          commandID,
+		CommandStatus:      commandStatus,
+		Status:             checkout.Status,
+		OrderID:            checkout.OrderID,
+		PaymentID:          checkout.PaymentID,
+		RejectionReason:    checkout.RejectionReason,
+		CancellationReason: checkout.CancellationReason,
+		UpdatedAt:          checkout.UpdatedAt,
+	}, nil
+}
+
+func (a *app) readAdminDashboard(ctx context.Context) (adminDashboardResponse, error) {
+	products, err := a.readAdminProducts(ctx)
+	if err != nil {
+		return adminDashboardResponse{}, err
+	}
+	checkoutSummary, err := a.readAdminCheckoutSummary(ctx)
+	if err != nil {
+		return adminDashboardResponse{}, err
+	}
+	checkouts, err := a.readAdminCheckouts(ctx)
+	if err != nil {
+		return adminDashboardResponse{}, err
+	}
+	checkpoints, err := a.readAdminCheckpoints(ctx)
+	if err != nil {
+		return adminDashboardResponse{}, err
+	}
+	return adminDashboardResponse{
+		Products:        products,
+		CheckoutSummary: checkoutSummary,
+		Checkouts:       checkouts,
+		Checkpoints:     checkpoints,
+		RefreshedAt:     time.Now().UTC().Format(time.RFC3339Nano),
+	}, nil
+}
+
+func (a *app) readAdminProducts(ctx context.Context) ([]adminProductResponse, error) {
+	rows, err := a.db.Query(ctx, `
+    select
+      product.product_id,
+      product.name as product_name,
+      product.status as product_status,
+      sku.sku_id,
+      sku.sku_code,
+      sku.name as sku_name,
+      sku.status as sku_status,
+      sku.price_amount_minor,
+      sku.currency,
+      sku.seckill_candidate,
+      sku.seckill_enabled,
+      sku.seckill_stock_limit,
+      sku.seckill_default_stock,
+      sku_inventory_projection.on_hand,
+      sku_inventory_projection.reserved,
+      sku_inventory_projection.sold,
+      sku_inventory_projection.available,
+      sku_inventory_projection.last_event_id as inventory_last_event_id,
+      sku_inventory_projection.aggregate_version as inventory_aggregate_version,
+      coalesce(seckill_summary.reserved_count, 0) as seckill_reserved_count,
+      coalesce(seckill_summary.rejected_count, 0) as seckill_rejected_count,
+      seckill_summary.last_processed_at as seckill_last_processed_at
+    from product
+    join sku on sku.product_id = product.product_id
+    left join sku_inventory_projection on sku_inventory_projection.sku_id = sku.sku_id
+    left join lateral (
+      select
+        count(*) filter (where status = 'reserved') as reserved_count,
+        count(*) filter (where status = 'rejected') as rejected_count,
+        max(updated_at) as last_processed_at
+      from seckill_command_result
+      where seckill_command_result.sku_id = sku.sku_id
+    ) as seckill_summary on true
+    order by product.product_id, sku.sku_id
+  `)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	products := []adminProductResponse{}
+	for rows.Next() {
+		var row adminProductRow
+		if err := rows.Scan(
+			&row.ProductID,
+			&row.ProductName,
+			&row.ProductStatus,
+			&row.SkuID,
+			&row.SkuCode,
+			&row.SkuName,
+			&row.SkuStatus,
+			&row.PriceAmountMinor,
+			&row.Currency,
+			&row.SeckillCandidate,
+			&row.SeckillEnabled,
+			&row.SeckillStockLimit,
+			&row.SeckillDefaultStock,
+			&row.OnHand,
+			&row.Reserved,
+			&row.Sold,
+			&row.Available,
+			&row.InventoryLastEventID,
+			&row.InventoryAggregateVersion,
+			&row.SeckillReservedCount,
+			&row.SeckillRejectedCount,
+			&row.SeckillLastProcessedAt,
+		); err != nil {
+			return nil, err
+		}
+		var lastProcessedAt *string
+		if row.SeckillLastProcessedAt != nil {
+			value := row.SeckillLastProcessedAt.UTC().Format(time.RFC3339Nano)
+			lastProcessedAt = &value
+		}
+		products = append(products, adminProductResponse{
+			ProductID:                 row.ProductID,
+			ProductName:               row.ProductName,
+			ProductStatus:             row.ProductStatus,
+			SkuID:                     row.SkuID,
+			SkuCode:                   row.SkuCode,
+			SkuName:                   row.SkuName,
+			SkuStatus:                 row.SkuStatus,
+			PriceAmountMinor:          row.PriceAmountMinor,
+			Currency:                  row.Currency,
+			OnHand:                    row.OnHand,
+			Reserved:                  row.Reserved,
+			Sold:                      row.Sold,
+			Available:                 row.Available,
+			InventoryLastEventID:      row.InventoryLastEventID,
+			InventoryAggregateVersion: row.InventoryAggregateVersion,
+			SeckillCandidate:          row.SeckillCandidate,
+			SeckillEnabled:            row.SeckillEnabled,
+			SeckillStockLimit:         row.SeckillStockLimit,
+			SeckillDefaultStock:       row.SeckillDefaultStock,
+			SeckillReservedCount:      row.SeckillReservedCount,
+			SeckillRejectedCount:      row.SeckillRejectedCount,
+			SeckillLastProcessedAt:    lastProcessedAt,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return products, nil
+}
+
+func (a *app) readAdminCheckoutSummary(ctx context.Context) (adminCheckoutSummaryResponse, error) {
+	var totalCount int
+	if err := a.db.QueryRow(ctx, `select count(*) from checkout_intent_projection`).Scan(&totalCount); err != nil {
+		return adminCheckoutSummaryResponse{}, err
+	}
+	rows, err := a.db.Query(ctx, `
+      select status, count(*) as count
+      from checkout_intent_projection
+      group by status
+      order by status
+    `)
+	if err != nil {
+		return adminCheckoutSummaryResponse{}, err
+	}
+	defer rows.Close()
+	statusCounts := []adminCheckoutStatusCountResponse{}
+	for rows.Next() {
+		row := adminCheckoutStatusCountResponse{}
+		if err := rows.Scan(&row.Status, &row.Count); err != nil {
+			return adminCheckoutSummaryResponse{}, err
+		}
+		statusCounts = append(statusCounts, row)
+	}
+	if err := rows.Err(); err != nil {
+		return adminCheckoutSummaryResponse{}, err
+	}
+	return adminCheckoutSummaryResponse{
+		DisplayedLimit: 25,
+		TotalCount:     totalCount,
+		StatusCounts:   statusCounts,
+	}, nil
+}
+
+func (a *app) readAdminCheckouts(ctx context.Context) ([]adminCheckoutResponse, error) {
+	rows, err := a.db.Query(ctx, `
+      select
+        checkout_intent_id,
+        buyer_id,
+        status,
+        payment_id,
+        order_id,
+        rejection_reason,
+        cancellation_reason,
+        aggregate_version,
+        last_event_id,
+        updated_at
+      from checkout_intent_projection
+      order by updated_at desc
+      limit 25
+    `)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	checkouts := []adminCheckoutResponse{}
+	for rows.Next() {
+		var row adminCheckoutRow
+		if err := rows.Scan(
+			&row.CheckoutIntentID,
+			&row.BuyerID,
+			&row.Status,
+			&row.PaymentID,
+			&row.OrderID,
+			&row.RejectionReason,
+			&row.CancellationReason,
+			&row.AggregateVersion,
+			&row.LastEventID,
+			&row.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		checkouts = append(checkouts, adminCheckoutResponse{
+			CheckoutIntentID:   row.CheckoutIntentID,
+			BuyerID:            row.BuyerID,
+			Status:             row.Status,
+			PaymentID:          row.PaymentID,
+			OrderID:            row.OrderID,
+			RejectionReason:    row.RejectionReason,
+			CancellationReason: row.CancellationReason,
+			AggregateVersion:   row.AggregateVersion,
+			LastEventID:        row.LastEventID,
+			UpdatedAt:          row.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return checkouts, nil
+}
+
+func (a *app) readAdminCheckpoints(ctx context.Context) ([]adminCheckpointResponse, error) {
+	rows, err := a.db.Query(ctx, `
+      select projection_name, last_event_id, updated_at
+      from projection_checkpoint
+      order by projection_name
+    `)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	checkpoints := []adminCheckpointResponse{}
+	for rows.Next() {
+		var row adminCheckpointRow
+		if err := rows.Scan(&row.ProjectionName, &row.LastEventID, &row.UpdatedAt); err != nil {
+			return nil, err
+		}
+		checkpoints = append(checkpoints, adminCheckpointResponse{
+			ProjectionName: row.ProjectionName,
+			LastEventID:    row.LastEventID,
+			UpdatedAt:      row.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return checkpoints, nil
+}
+
+func (a *app) updateSeckillConfig(ctx context.Context, skuID string, enabled bool, stockLimit *int) error {
+	_, err := a.db.Exec(ctx, `
+      update sku
+      set
+        seckill_enabled = $2,
+        seckill_stock_limit = case when $2 then $3::integer else null end,
+        updated_at = now()
+      where sku_id = $1
+    `, skuID, enabled, stockLimit)
+	if err != nil {
+		return err
+	}
+	a.cache.mu.Lock()
+	delete(a.cache.entries, skuID)
+	a.cache.mu.Unlock()
+	return nil
+}
+
+func scanCatalogProductRow(rows pgx.Rows) (catalogProductRow, error) {
+	var row catalogProductRow
+	err := rows.Scan(
+		&row.ProductID,
+		&row.ProductName,
+		&row.Description,
+		&row.SkuID,
+		&row.SkuCode,
+		&row.PriceAmountMinor,
+		&row.Currency,
+		&row.SeckillCandidate,
+		&row.SeckillEnabled,
+		&row.SeckillStockLimit,
+		&row.SeckillDefaultStock,
+		&row.OnHand,
+		&row.Reserved,
+		&row.Sold,
+		&row.Available,
+		&row.InventoryAggregateVersion,
+		&row.InventoryLastEventID,
+		&row.InventoryUpdatedAt,
+		&row.AttributesJSON,
+	)
+	return row, err
+}
+
+func mapCatalogProductRow(row catalogProductRow) productResponse {
+	attributes := map[string]any{}
+	_ = gojson.Unmarshal(row.AttributesJSON, &attributes)
+	slug := stringMapValue(attributes, "slug", row.ProductID)
+	imageSrc := stringMapValue(attributes, "image", fallbackProductImageURL)
+	imageAlt := stringMapValue(attributes, "image_alt", row.ProductName)
+	checkoutNote := stringMapValue(attributes, "checkout_note", "projection-backed inventory")
+	summary := valueOrDefault(row.Description, "Projection-backed checkout SKU.")
+	updatedAt := timePtrString(row.InventoryUpdatedAt)
+	projectionLagMs := projectionLag(row.InventoryUpdatedAt)
+
+	return productResponse{
+		Slug:             slug,
+		Name:             row.ProductName,
+		SkuID:            row.SkuID,
+		SkuCode:          row.SkuCode,
+		Summary:          summary,
+		CheckoutNote:     checkoutNote,
+		PriceAmountMinor: row.PriceAmountMinor,
+		Currency:         row.Currency,
+		Available:        intOrZero(row.Available),
+		Inventory: productInventoryResponse{
+			OnHand:           intOrZero(row.OnHand),
+			Reserved:         intOrZero(row.Reserved),
+			Sold:             intOrZero(row.Sold),
+			Available:        intOrZero(row.Available),
+			AggregateVersion: int64OrZero(row.InventoryAggregateVersion),
+			LastEventID:      int64OrZero(row.InventoryLastEventID),
+			UpdatedAt:        updatedAt,
+			ProjectionLagMs:  projectionLagMs,
+		},
+		Seckill: productSeckillResponse{
+			Candidate:    row.SeckillCandidate,
+			Enabled:      row.SeckillEnabled,
+			StockLimit:   row.SeckillStockLimit,
+			DefaultStock: row.SeckillDefaultStock,
+		},
+		Image: productImageResponse{
+			Src: imageSrc,
+			Alt: imageAlt,
+		},
+	}
 }
 
 func (a *app) processProjectionBatch(ctx context.Context, projectionName string, batchSize int) (projectionProcessResult, error) {
@@ -2438,6 +3200,13 @@ func stringValue(value any, fallback string) string {
 	return typed
 }
 
+func stringMapValue(values map[string]any, key string, fallback string) string {
+	if values == nil {
+		return fallback
+	}
+	return stringValue(values[key], fallback)
+}
+
 func ternaryStatus(condition bool, whenTrue int, whenFalse int) int {
 	if condition {
 		return whenTrue
@@ -2448,3 +3217,42 @@ func ternaryStatus(condition bool, whenTrue int, whenFalse int) int {
 func stringPtr(value string) *string {
 	return &value
 }
+
+func valueOrDefault(value *string, fallback string) string {
+	if value == nil || strings.TrimSpace(*value) == "" {
+		return fallback
+	}
+	return *value
+}
+
+func intOrZero(value *int) int {
+	if value == nil {
+		return 0
+	}
+	return *value
+}
+
+func int64OrZero(value *int64) int64 {
+	if value == nil {
+		return 0
+	}
+	return *value
+}
+
+func timePtrString(value *time.Time) *string {
+	if value == nil {
+		return nil
+	}
+	formatted := value.UTC().Format(time.RFC3339Nano)
+	return &formatted
+}
+
+func projectionLag(value *time.Time) *int64 {
+	if value == nil {
+		return nil
+	}
+	lag := time.Now().UnixMilli() - value.UnixMilli()
+	return &lag
+}
+
+const fallbackProductImageURL = "https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&w=1400&q=80"
