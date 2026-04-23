@@ -71,6 +71,10 @@ test("benchmark scenario and run selection use client-side navigation", async ({
   await page.waitForSelector(".benchmark-scenario-card");
   await page.evaluate(() => {
     (window as typeof window & { __benchmarkMarker?: string }).__benchmarkMarker = "client-nav";
+    (window as typeof window & { __benchmarkNodes?: Record<string, Element | null> }).__benchmarkNodes = {
+      outer: document.querySelector("#root > main > main"),
+      latest: document.querySelector(".admin-livebar"),
+    };
   });
 
   await page.locator(".benchmark-scenario-card").nth(1).click();
@@ -82,6 +86,19 @@ test("benchmark scenario and run selection use client-side navigation", async ({
       ),
     )
     .toBe("client-nav");
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const nodes = (window as typeof window & {
+          __benchmarkNodes?: Record<string, Element | null>;
+        }).__benchmarkNodes;
+        return {
+          outerSame: document.querySelector("#root > main > main") === (nodes?.outer ?? null),
+          latestSame: document.querySelector(".admin-livebar") === (nodes?.latest ?? null),
+        };
+      }),
+    )
+    .toEqual({ outerSame: true, latestSame: true });
 
   await page.locator(".benchmark-run-tag").first().click();
   await expect(page).toHaveURL(/run=/);

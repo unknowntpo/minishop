@@ -1,6 +1,6 @@
-import React, { Fragment, memo, useMemo } from "react";
+import React, { Fragment, memo, useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Link, useLocation } from "@tanstack/react-router";
+import { Link } from "@tanstack/react-router";
 
 type BenchmarkReport = {
   schemaVersion?: number;
@@ -279,6 +279,11 @@ type BenchmarksScreenProps = {
   requestJson: <T>(pathname: string, init?: RequestInit) => Promise<T>;
 };
 
+type BenchmarkSelection = {
+  scenarioName?: string;
+  runId?: string;
+};
+
 export function BenchmarksScreen({ requestJson }: BenchmarksScreenProps) {
   const { data, isLoading, isError } = useQuery({
     queryKey: ["benchmarks"],
@@ -404,15 +409,37 @@ function ScenarioSelectionSection({
   runs: BenchmarkRun[];
   scenarioSummaries: ScenarioSummary[];
 }) {
-  const location = useLocation();
-  const params = useMemo(() => new URLSearchParams(location.searchStr), [location.searchStr]);
-  const requestedScenarioName = params.get("scenario") ?? undefined;
-  const selectedScenarioName = scenarioSummaries.find((scenario) => scenario.name === requestedScenarioName)?.name;
+  const [selection, setSelection] = useState<BenchmarkSelection>(() => readBenchmarkSelectionFromLocation());
+
+  useEffect(() => {
+    const syncFromHistory = () => {
+      setSelection(readBenchmarkSelectionFromLocation());
+    };
+    window.addEventListener("popstate", syncFromHistory);
+    return () => {
+      window.removeEventListener("popstate", syncFromHistory);
+    };
+  }, []);
+
+  const updateSelection = useCallback((nextSelection: BenchmarkSelection) => {
+    setSelection(nextSelection);
+    if (typeof window === "undefined") {
+      return;
+    }
+    const nextSearch = buildBenchmarkSelectionSearch(nextSelection);
+    const nextUrl = `${window.location.pathname}${nextSearch}${window.location.hash}`;
+    const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    if (nextUrl !== currentUrl) {
+      window.history.pushState({}, "", nextUrl);
+    }
+  }, []);
+
+  const selectedScenarioName = scenarioSummaries.find((scenario) => scenario.name === selection.scenarioName)?.name;
   const selectedScenarioRuns = selectedScenarioName
     ? runs.filter((run) => scenarioNameFor(run) === selectedScenarioName)
     : [];
   const comparisonRuns = selectedScenarioRuns.slice(0, 10);
-  const selectedRunId = params.get("run") ?? undefined;
+  const selectedRunId = selection.runId;
 
   return (
     <section className="panel admin-panel" aria-labelledby="scenario-title">
@@ -426,18 +453,20 @@ function ScenarioSelectionSection({
         {scenarioSummaries.map((scenario) => {
           const isSelected = scenario.name === selectedScenarioName;
           return (
-            <Link
+            <button
+              type="button"
               className={`benchmark-scenario-card${isSelected ? " selected" : ""}`}
-              to="/internal/benchmarks"
-              search={
-                isSelected
-                  ? {}
-                  : {
-                      scenario: scenario.name,
-                    }
-              }
               key={scenario.name}
               aria-expanded={isSelected}
+              onClick={() =>
+                updateSelection(
+                  isSelected
+                    ? {}
+                    : {
+                        scenarioName: scenario.name,
+                      },
+                )
+              }
             >
               <strong title={scenarioDescription(scenario.name)}>{scenario.name}</strong>
               <span className="benchmark-scenario-badges">
@@ -455,12 +484,24 @@ function ScenarioSelectionSection({
                   }}
                 />
               </div>
-            </Link>
+            </button>
           );
         })}
       </div>
       {selectedScenarioName ? (
         <RunComparison
+          onSelectRun={(runId) =>
+            updateSelection(
+              runId
+                ? {
+                    scenarioName: selectedScenarioName,
+                    runId,
+                  }
+                : {
+                    scenarioName: selectedScenarioName,
+                  },
+            )
+          }
           scenarioName={selectedScenarioName}
           selectedRunId={selectedRunId}
           runs={comparisonRuns}
@@ -556,10 +597,12 @@ function summarizeScenarios(runs: BenchmarkRun[]): ScenarioSummary[] {
 }
 
 function RunComparison({
+  onSelectRun,
   scenarioName,
   selectedRunId,
   runs,
 }: {
+  onSelectRun: (runId?: string) => void;
   scenarioName: string;
   selectedRunId?: string;
   runs: BenchmarkRun[];
@@ -578,20 +621,11 @@ function RunComparison({
       <div className="benchmark-run-tags">
         {runs.map((run, index) => (
           <Fragment key={run.artifactFile}>
-            <Link
+            <button
+              type="button"
               className={`benchmark-run-tag${selectedRun?.runId === run.runId ? " selected" : ""}`}
-              to="/internal/benchmarks"
-              search={
-                selectedRun?.runId === run.runId
-                  ? {
-                      scenario: scenarioName,
-                    }
-                  : {
-                      scenario: scenarioName,
-                      run: run.runId,
-                    }
-              }
               aria-expanded={selectedRun?.runId === run.runId}
+              onClick={() => onSelectRun(selectedRun?.runId === run.runId ? undefined : run.runId)}
             >
               <strong>{displayRunName(run)}</strong>
               <span className="benchmark-run-id mono">{shortRunId(run.runId)}</span>
@@ -600,7 +634,7 @@ function RunComparison({
               </span>
               <code>{formatScenarioTags(run)}</code>
               <code>{formatConditionSummary(run)}</code>
-            </Link>
+            </button>
             {selectedRun?.runId === run.runId ? (
               <SelectedRunPanel fallbackIndex={index + 1} run={selectedRun} />
             ) : null}
@@ -626,6 +660,28 @@ function RunComparison({
       <RunEvidenceComparison runs={runs} />
     </section>
   );
+}
+
+function readBenchmarkSelectionFromLocation(): BenchmarkSelection {
+  if (typeof window === "undefined") {
+    return {};
+  }
+  const params = new URLSearchParams(window.location.search);
+  const scenarioName = params.get("scenario") ?? undefined;
+  const runId = params.get("run") ?? undefined;
+  return { scenarioName, runId };
+}
+
+function buildBenchmarkSelectionSearch(selection: BenchmarkSelection): string {
+  const params = new URLSearchParams();
+  if (selection.scenarioName) {
+    params.set("scenario", selection.scenarioName);
+  }
+  if (selection.runId) {
+    params.set("run", selection.runId);
+  }
+  const search = params.toString();
+  return search.length > 0 ? `?${search}` : "";
 }
 
 function SelectedRunPanel({ run, fallbackIndex }: { run: BenchmarkRun; fallbackIndex: number }) {
