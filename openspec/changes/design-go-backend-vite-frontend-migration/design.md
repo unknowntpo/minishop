@@ -258,6 +258,10 @@ Current implementation status:
   - React
   - TanStack Router
   - TanStack Query
+- the buyer-web runtime is now also deployable through the main compose stack:
+  - `Dockerfile.buyer-web`
+  - `buyer-web` service in `docker-compose.yml`
+  - static SPA serving on `MINISHOP_BUYER_WEB_PORT` (default `3006`)
 - initial buyer routes are implemented for:
   - `/products`
   - `/products/:slug`
