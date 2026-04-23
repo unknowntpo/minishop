@@ -15,15 +15,15 @@
 
 ## 3. New Frontend Runtime
 
-- [ ] 3.1 Scaffold a Vite + React + TanStack Router + TanStack Query frontend app
-- [ ] 3.2 Add shared API client configuration using an explicit backend base URL
+- [x] 3.1 Scaffold a Vite + React + TanStack Router + TanStack Query frontend app
+- [x] 3.2 Add shared API client configuration using an explicit backend base URL
 - [ ] 3.3 Port locale handling, cart state, and buyer interaction flows into the new frontend runtime
 
 ## 4. Buyer Route Migration
 
-- [ ] 4.1 Migrate `/products`
-- [ ] 4.2 Migrate `/products/:slug`
-- [ ] 4.3 Migrate `/checkout-complete/:checkoutIntentId`
+- [x] 4.1 Migrate `/products`
+- [x] 4.2 Migrate `/products/:slug`
+- [x] 4.3 Migrate `/checkout-complete/:checkoutIntentId`
 - [ ] 4.4 Verify buyer flow no longer depends on Next.js page-server database reads for migrated routes
 
 ## 5. Admin Route Migration

@@ -250,6 +250,21 @@ Acceptance:
 - buyer flow runs against Go backend only
 - no page-level DB read remains in Next for these routes
 
+Current implementation status:
+
+- initial buyer web runtime exists under `buyer-web/`
+- it uses:
+  - Vite
+  - React
+  - TanStack Router
+  - TanStack Query
+- initial buyer routes are implemented for:
+  - `/products`
+  - `/products/:slug`
+  - `/checkout-complete/:checkoutIntentId`
+- these routes already read from explicit Go APIs instead of importing backend repositories directly
+- cart parity and complete buyer interaction parity are still pending
+
 #### Phase 3: Vite/TanStack admin frontend
 
 Migrate:

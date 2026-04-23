@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider, createRootRoute, createRoute, createRouter, Navigate, Outlet, Link, useNavigate, useParams } from "@tanstack/react-router";
 import "../../app/globals.css";
 import type { Product } from "@shared/domain/catalog/product";
+import type { AdminDashboardViewModel } from "@shared/presentation/view-models/admin-dashboard";
 import {
   buyerLocaleStorageKey,
   type BuyerLocale,
@@ -14,7 +15,7 @@ import {
   getLocalizedProduct,
   normalizeBuyerLocale,
 } from "@shared/presentation/i18n/buyer-localization";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 type CheckoutActionItem = {
@@ -108,6 +109,9 @@ function AppFrame() {
             {localeState.messages.navProducts}
           </Link>
           <div className="buyer-toolbar-actions">
+            <Link className="text-link" to="/internal/admin">
+              Admin
+            </Link>
             <label className="locale-switcher">
               <span className="sr-only">{localeState.messages.localeLabel}</span>
               <select
@@ -154,7 +158,13 @@ const checkoutCompleteRoute = createRoute({
   component: CheckoutCompleteScreen,
 });
 
-const routeTree = rootRoute.addChildren([indexRoute, productsRoute, productDetailRoute, checkoutCompleteRoute]);
+const adminRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/internal/admin",
+  component: AdminScreen,
+});
+
+const routeTree = rootRoute.addChildren([indexRoute, productsRoute, productDetailRoute, checkoutCompleteRoute, adminRoute]);
 
 const router = createRouter({
   routeTree,
@@ -385,6 +395,160 @@ function CheckoutCompleteScreen() {
         </span>
       </div>
     </section>
+  );
+}
+
+type LiveAdminDashboard = AdminDashboardViewModel & {
+  refreshedAt: string;
+};
+
+function AdminScreen() {
+  const dashboardQuery = useQuery({
+    queryKey: ["admin-dashboard"],
+    queryFn: () => requestJson<LiveAdminDashboard>("/api/internal/admin/dashboard", { method: "GET" }),
+    refetchInterval: 1_000,
+  });
+  const [stockInputs, setStockInputs] = useState<Record<string, string>>({});
+  const [savingSkuId, setSavingSkuId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!dashboardQuery.data) {
+      return;
+    }
+
+    setStockInputs((current) => ({
+      ...Object.fromEntries(
+        dashboardQuery.data.products.map((row) => [
+          row.skuId,
+          current[row.skuId] ?? String(row.seckillStockLimit ?? row.seckillDefaultStock ?? ""),
+        ]),
+      ),
+    }));
+  }, [dashboardQuery.data]);
+
+  if (dashboardQuery.isLoading) {
+    return <section className="panel">Loading admin dashboard…</section>;
+  }
+
+  if (dashboardQuery.isError || !dashboardQuery.data) {
+    return <section className="panel">Failed to load admin dashboard.</section>;
+  }
+
+  async function updateSeckill(skuId: string, enabled: boolean) {
+    setSavingSkuId(skuId);
+    try {
+      await requestJson<{ ok: boolean }>("/api/internal/admin/seckill", {
+        method: "POST",
+        body: JSON.stringify({
+          skuId,
+          enabled,
+          stockLimit: enabled ? Number(stockInputs[skuId] || 0) : null,
+        }),
+      });
+      await dashboardQuery.refetch();
+    } finally {
+      setSavingSkuId(null);
+    }
+  }
+
+  return (
+    <>
+      <section className="catalog-hero">
+        <p className="eyebrow">Internal admin</p>
+        <h1>Projection status</h1>
+        <p className="muted hero-copy">Go backend API driven admin dashboard.</p>
+      </section>
+      <section className="admin-livebar" aria-label="Admin dashboard live status">
+        <div>
+          <p className="eyebrow">Live projection dashboard</p>
+          <strong>Polling every second</strong>
+          <p className="muted admin-livebar-copy">Last refresh {dashboardQuery.data.refreshedAt}</p>
+        </div>
+        <span className="badge neutral">realtime polling</span>
+      </section>
+      <section className="admin-product-grid" aria-label="Product projection cards">
+        {dashboardQuery.data.products.map((row) => (
+          <article className="admin-product-card" key={row.skuId}>
+            <div className="admin-product-card-header">
+              <div>
+                <p className="eyebrow">{row.productStatus}</p>
+                <h2>{row.productName}</h2>
+                <p className="muted admin-product-copy">
+                  {row.skuCode} · {row.skuId}
+                </p>
+              </div>
+              <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", justifyContent: "flex-end" }}>
+                <span className="badge neutral">{row.skuStatus}</span>
+                {row.seckillCandidate ? <span className="badge neutral">seckill candidate</span> : null}
+                {row.seckillEnabled ? <span className="badge warning">秒殺活動</span> : null}
+              </div>
+            </div>
+            <div className="admin-counter-grid">
+              <Metric label="on_hand" value={row.onHand} />
+              <Metric label="reserved" value={row.reserved} tone="warning" />
+              <Metric label="sold" value={row.sold} tone="success" />
+              <Metric label="available" value={row.available} tone="strong" />
+            </div>
+            {row.seckillCandidate ? (
+              <form
+                className="admin-product-footer"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void updateSeckill(row.skuId, true);
+                }}
+              >
+                <label style={{ display: "grid", gap: "0.35rem" }}>
+                  <strong>活動 stock</strong>
+                  <input
+                    type="number"
+                    min={1}
+                    inputMode="numeric"
+                    value={stockInputs[row.skuId] ?? ""}
+                    onChange={(event) =>
+                      setStockInputs((current) => ({
+                        ...current,
+                        [row.skuId]: event.target.value,
+                      }))
+                    }
+                    disabled={savingSkuId === row.skuId}
+                  />
+                </label>
+                <div style={{ display: "flex", gap: "0.5rem", alignItems: "end" }}>
+                  <button className="button primary" type="submit" disabled={savingSkuId === row.skuId}>
+                    開始秒殺
+                  </button>
+                  <button
+                    className="button secondary"
+                    type="button"
+                    disabled={savingSkuId === row.skuId || !row.seckillEnabled}
+                    onClick={() => void updateSeckill(row.skuId, false)}
+                  >
+                    停止秒殺
+                  </button>
+                </div>
+              </form>
+            ) : null}
+          </article>
+        ))}
+      </section>
+    </>
+  );
+}
+
+function Metric({
+  label,
+  value,
+  tone = "neutral",
+}: {
+  label: string;
+  value: number | null;
+  tone?: "neutral" | "warning" | "success" | "strong";
+}) {
+  return (
+    <span className={`metric-card ${tone}`}>
+      <strong>{label}</strong>
+      <code>{value ?? "n/a"}</code>
+    </span>
   );
 }
 
