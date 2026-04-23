@@ -186,6 +186,7 @@ services:
       dockerfile: Dockerfile.buyer-web
       args:
         VITE_API_BASE_URL: ${BUYER_WEB_VITE_API_BASE_URL:-http://127.0.0.1:3005}
+        VITE_APP_MODE: ${BUYER_WEB_VITE_APP_MODE:-dev}
     container_name: minishop-buyer-web
     restart: unless-stopped
     depends_on:

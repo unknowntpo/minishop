@@ -74,6 +74,7 @@ const runtimeDefaultApiBaseUrl =
     ? "http://127.0.0.1:3005"
     : `${window.location.protocol}//${window.location.hostname}:3005`;
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL?.trim() || runtimeDefaultApiBaseUrl).replace(/\/+$/, "");
+const appMode = normalizeAppMode(import.meta.env.VITE_APP_MODE);
 const cartStorageKey = "minishop-cart-v1";
 const cartUpdatedEvent = "minishop:cart-updated";
 
@@ -164,7 +165,7 @@ const adminRoute = createRoute({
 const designSystemRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/internal/design-system",
-  component: DesignSystemScreen,
+  component: () => (isDevMode() ? <DesignSystemScreen /> : <Navigate to="/products" />),
 });
 
 const routeTree = rootRoute.addChildren([
@@ -203,13 +204,15 @@ function useBuyerLocaleContext() {
 }
 
 function shouldShowDevMenu() {
-  if (typeof window === "undefined") {
-    return false;
-  }
-  if (import.meta.env.VITE_ENABLE_DEV_MENU === "1") {
-    return true;
-  }
-  return window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost";
+  return isDevMode();
+}
+
+function isDevMode() {
+  return appMode === "dev";
+}
+
+function normalizeAppMode(value: string | undefined) {
+  return value?.trim().toLowerCase() === "prod" ? "prod" : "dev";
 }
 
 function BuyerDevMenu() {

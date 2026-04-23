@@ -73,9 +73,11 @@ DATABASE_URL="${DATABASE_URL}" \
 pnpm --config.engine-strict=false db:seed:dev
 
 VITE_API_BASE_URL="${API_BASE_URL}" \
+VITE_APP_MODE="${BUYER_WEB_VITE_APP_MODE:-dev}" \
 pnpm --config.engine-strict=false buyer-web:build
 
 VITE_API_BASE_URL="${API_BASE_URL}" \
+VITE_APP_MODE="${BUYER_WEB_VITE_APP_MODE:-dev}" \
 pnpm --config.engine-strict=false exec vite preview --config buyer-web/vite.config.ts --host 127.0.0.1 --port "${BUYER_WEB_PORT}" >/tmp/minishop-buyer-web-preview.log 2>&1 &
 BUYER_WEB_PID=$!
 
