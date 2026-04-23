@@ -228,12 +228,14 @@ function ProductsScreen() {
           return (
             <Link className="product-card-link" key={product.slug} to="/products/$slug" params={{ slug: product.slug }}>
               <article className="product-card">
-                <div className="product-image-wrapper">
-                  <img className="product-image" src={product.image.src} alt={localized.image.alt} />
-                </div>
+                <span className="product-card-media">
+                  <img src={product.image.src} alt={localized.image.alt} />
+                </span>
                 <div className="product-card-body">
-                  <strong>{localized.name}</strong>
-                  <p>{localized.summary}</p>
+                  <span>
+                    <span className="product-card-title">{localized.name}</span>
+                    <span className="muted">{localized.summary}</span>
+                  </span>
                   <div className="product-card-meta">
                     <strong>{formatBuyerMoney(product.priceAmountMinor, product.currency, locale)}</strong>
                     <span className="inventory-pill">{messages.catalogAvailable(product.available)}</span>
@@ -563,23 +565,38 @@ function ProductDetailScreen() {
           <p className="muted">{localized.checkoutNote}</p>
           <strong>{formatBuyerMoney(product.priceAmountMinor, product.currency, locale)}</strong>
           <p className="muted">{messages.productInventoryAvailable(product.available)}</p>
-          <label className="quantity-control">
-            <span>{messages.quantityLabel}</span>
-            <input
-              type="number"
-              min={1}
-              max={maxQuantity}
-              value={quantity}
-              onChange={(event) => setQuantity(Math.min(maxQuantity, Math.max(1, Number(event.target.value) || 1)))}
-            />
-          </label>
-          <div className="purchase-actions">
-            <button className="button secondary" type="button" onClick={addCurrentProductToCart}>
-              {messages.actions.addToCart}
-            </button>
-            <button className="button primary" type="button" onClick={buyNow}>
-              {messages.actions.buyNow}
-            </button>
+          <div className="purchase-controls">
+            <div className="quantity-panel">
+              <span className="quantity-label">{messages.quantityLabel}</span>
+              <div className="quantity-stepper">
+                <button
+                  className="quantity-button"
+                  type="button"
+                  disabled={quantity <= 1}
+                  onClick={() => setQuantity((current) => clampQuantity(current - 1, maxQuantity))}
+                >
+                  −
+                </button>
+                <strong className="quantity-value">{quantity}</strong>
+                <button
+                  className="quantity-button"
+                  type="button"
+                  disabled={quantity >= maxQuantity}
+                  onClick={() => setQuantity((current) => clampQuantity(current + 1, maxQuantity))}
+                >
+                  +
+                </button>
+              </div>
+              <span className="muted quantity-hint">{messages.productInventoryAvailable(product.available)}</span>
+            </div>
+            <div className="purchase-actions">
+              <button className="button secondary" type="button" onClick={addCurrentProductToCart}>
+                {messages.actions.addToCart}
+              </button>
+              <button className="button primary" type="button" onClick={buyNow}>
+                {messages.actions.buyNow}
+              </button>
+            </div>
           </div>
           {status ? <div className="checkout-demo-status polling">{status}</div> : null}
         </div>

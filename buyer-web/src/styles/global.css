@@ -56,6 +56,57 @@ button {
   align-items: start;
 }
 
+.product-detail-shell {
+  display: grid;
+  gap: 20px;
+}
+
+.product-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.02fr) minmax(320px, 0.98fr);
+  gap: 24px;
+  align-items: start;
+  overflow: hidden;
+}
+
+.product-image-wrapper {
+  position: relative;
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--ms-line-soft);
+  border-radius: calc(var(--ms-radius-lg) + 2px);
+  aspect-ratio: 4 / 5;
+  background: var(--ms-subtle);
+}
+
+.product-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+}
+
+.product-hero-copy {
+  display: grid;
+  gap: 14px;
+  align-content: start;
+  min-width: 0;
+}
+
+.product-hero-copy h1,
+.product-hero-copy p,
+.product-hero-copy strong {
+  margin: 0;
+}
+
+.product-hero-copy > strong {
+  font-size: 30px;
+  font-weight: 900;
+  line-height: 1;
+}
+
 .catalog-hero {
   max-width: 760px;
   margin-bottom: 28px;
