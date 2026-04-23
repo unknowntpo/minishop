@@ -1,12 +1,19 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 
 import { AdminDashboardView } from "@/components/admin/admin-dashboard";
 import { getAdminDashboard } from "@/src/application/admin/get-admin-dashboard";
 import { postgresAdminDashboardRepository } from "@/src/infrastructure/admin";
+import { buildBuyerWebUrl } from "@/src/presentation/buyer-web-runtime";
 
 export const dynamic = "force-dynamic";
 
 export default async function InternalAdminPage() {
+  const buyerWebUrl = buildBuyerWebUrl("/internal/admin");
+  if (buyerWebUrl) {
+    redirect(buyerWebUrl);
+  }
+
   const dashboard = await getAdminDashboard({
     adminDashboardRepository: postgresAdminDashboardRepository,
   });

@@ -1,8 +1,9 @@
 import { cookies } from "next/headers";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 
 import { CheckoutCompleteContent } from "@/components/checkout/checkout-complete-content";
 import { getPool } from "@/db/client";
+import { buildBuyerWebUrl } from "@/src/presentation/buyer-web-runtime";
 import {
   buyerLocaleCookieName,
   normalizeBuyerLocale,
@@ -42,6 +43,18 @@ export default async function CheckoutCompletePage({
 }: CheckoutCompletePageProps) {
   const { checkoutIntentId } = await params;
   const resolvedSearchParams = await searchParams;
+  const buyerWebSearch = new URLSearchParams();
+  const commandId = readSingleSearchParam(resolvedSearchParams.commandId);
+  if (commandId) {
+    buyerWebSearch.set("commandId", commandId);
+  }
+  const buyerWebUrl = buildBuyerWebUrl(
+    `/checkout-complete/${checkoutIntentId}`,
+    buyerWebSearch.size > 0 ? buyerWebSearch : null,
+  );
+  if (buyerWebUrl) {
+    redirect(buyerWebUrl);
+  }
   const initialLocale = normalizeBuyerLocale((await cookies()).get(buyerLocaleCookieName)?.value);
   const pool = getPool();
   const result = await pool.query<CheckoutRow>(
@@ -80,7 +93,7 @@ export default async function CheckoutCompletePage({
     [checkoutIntentId],
   );
 
-  const commandId =
+  const resolvedCommandId =
     commandStatusResult.rows[0]?.command_id ??
     readSingleSearchParam(resolvedSearchParams.commandId);
   const commandStatus = commandStatusResult.rows[0]?.status ?? null;
@@ -90,7 +103,7 @@ export default async function CheckoutCompletePage({
       checkout={{
         cancellationReason: checkout.cancellation_reason,
         checkoutIntentId: checkout.checkout_intent_id,
-        commandId,
+        commandId: resolvedCommandId,
         commandStatus,
         orderId: checkout.order_id,
         paymentId: checkout.payment_id,

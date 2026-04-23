@@ -1,9 +1,10 @@
 import { cookies } from "next/headers";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 
 import { ProductDetailPage } from "@/components/checkout/product-detail-page";
 import { getProductBySlug, listProducts } from "@/src/application/catalog/get-products";
 import { postgresCatalogRepository } from "@/src/infrastructure/catalog";
+import { buildBuyerWebUrl } from "@/src/presentation/buyer-web-runtime";
 import {
   buyerLocaleCookieName,
   normalizeBuyerLocale,
@@ -19,6 +20,10 @@ export const dynamic = "force-dynamic";
 
 export default async function ProductPage({ params }: ProductPageProps) {
   const { slug } = await params;
+  const buyerWebUrl = buildBuyerWebUrl(`/products/${slug}`);
+  if (buyerWebUrl) {
+    redirect(buyerWebUrl);
+  }
   const initialLocale = normalizeBuyerLocale((await cookies()).get(buyerLocaleCookieName)?.value);
   const [product, products] = await Promise.all([
     getProductBySlug(slug, {
