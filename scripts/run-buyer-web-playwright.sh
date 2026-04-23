@@ -9,9 +9,20 @@ RUN_ID="${RUN_ID:-$(date -u +%Y%m%d%H%M%S)}"
 SUFFIX="${RUN_ID}-$RANDOM"
 PROJECT_NAME="${COMPOSE_PROJECT_NAME:-minishop-buyer-web-e2e-${SUFFIX}}"
 
-POSTGRES_PORT="${MINISHOP_BUYER_WEB_E2E_POSTGRES_PORT:-56433}"
-GO_BACKEND_PORT="${MINISHOP_BUYER_WEB_E2E_GO_BACKEND_PORT:-54005}"
-BUYER_WEB_PORT="${MINISHOP_BUYER_WEB_E2E_PORT:-53101}"
+pick_free_port() {
+  python3 - <<'PY'
+import socket
+
+s = socket.socket()
+s.bind(("127.0.0.1", 0))
+print(s.getsockname()[1])
+s.close()
+PY
+}
+
+POSTGRES_PORT="${MINISHOP_BUYER_WEB_E2E_POSTGRES_PORT:-$(pick_free_port)}"
+GO_BACKEND_PORT="${MINISHOP_BUYER_WEB_E2E_GO_BACKEND_PORT:-$(pick_free_port)}"
+BUYER_WEB_PORT="${MINISHOP_BUYER_WEB_E2E_PORT:-$(pick_free_port)}"
 
 APP_ORIGIN="http://127.0.0.1:${BUYER_WEB_PORT}"
 API_BASE_URL="http://127.0.0.1:${GO_BACKEND_PORT}"
