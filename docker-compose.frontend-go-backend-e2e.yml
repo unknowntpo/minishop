@@ -89,6 +89,8 @@ services:
       retries: 20
     ports:
       - "${MINISHOP_GO_BACKEND_PORT:-53005}:3000"
+    volumes:
+      - ./benchmark-results:/app/benchmark-results:ro
 
   worker-buy-intents-ingest:
     build:

@@ -179,6 +179,8 @@ services:
     ports:
       - "${MINISHOP_GO_BACKEND_PORT:-3005}:3000"
       - "${MINISHOP_GO_BACKEND_PPROF_PORT:-6060}:6060"
+    volumes:
+      - ./benchmark-results:/app/benchmark-results:ro
 
   buyer-web:
     build:

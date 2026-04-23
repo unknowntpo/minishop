@@ -11,6 +11,8 @@ import (
 	"net/http/pprof"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -65,6 +67,7 @@ type config struct {
 	kafkaCompression     string
 	seckillConfigTTL     time.Duration
 	forcedSeckillSKUs    map[string]int
+	benchmarkResultsRoot string
 	serviceName          string
 	otlpEndpoint         string
 	otelEnabled          bool
@@ -697,6 +700,7 @@ func readConfig() config {
 		kafkaCompression:     envDefault("KAFKA_SECKILL_CLIENT_COMPRESSION", "none"),
 		seckillConfigTTL:     time.Duration(envInt("KAFKA_SECKILL_CONFIG_CACHE_TTL_MS", 60000)) * time.Millisecond,
 		forcedSeckillSKUs:    readForcedSeckillSKUs(),
+		benchmarkResultsRoot: envDefault("GO_BACKEND_BENCHMARK_RESULTS_ROOT", defaultBenchmarkResultsRoot()),
 		serviceName:          envDefault("OTEL_SERVICE_NAME", "go-backend"),
 		otlpEndpoint:         envDefault("OTEL_EXPORTER_OTLP_ENDPOINT", "http://tempo:4318"),
 		otelEnabled:          envDefault("OTEL_ENABLED", "1") != "0",
@@ -706,6 +710,23 @@ func readConfig() config {
 		pyroscopeServerURL:   envDefault("PYROSCOPE_SERVER_ADDRESS", "http://pyroscope:4040"),
 		pyroscopeAppName:     envDefault("PYROSCOPE_APPLICATION_NAME", envDefault("OTEL_SERVICE_NAME", "go-backend")),
 	}
+}
+
+func defaultBenchmarkResultsRoot() string {
+	candidates := []string{
+		"/app/benchmark-results",
+		filepath.Join(".", "benchmark-results"),
+		filepath.Join("..", "benchmark-results"),
+		filepath.Join("..", "..", "benchmark-results"),
+	}
+
+	for _, candidate := range candidates {
+		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			return candidate
+		}
+	}
+
+	return filepath.Join(".", "benchmark-results")
 }
 
 func (a *app) startPprofServer() (func(context.Context) error, error) {
@@ -795,6 +816,7 @@ func (a *app) startNetHTTPServer() (func(context.Context) error, error) {
 	mux.Handle("/api/checkout-complete/", otelhttp.NewHandler(http.HandlerFunc(a.handleGetCheckoutComplete), "GET /api/checkout-complete/{checkoutIntentId}"))
 	mux.Handle("/api/internal/admin/dashboard", otelhttp.NewHandler(http.HandlerFunc(a.handleGetAdminDashboard), "GET /api/internal/admin/dashboard"))
 	mux.Handle("/api/internal/admin/seckill", otelhttp.NewHandler(http.HandlerFunc(a.handleUpdateAdminSeckill), "POST /api/internal/admin/seckill"))
+	mux.Handle("/api/internal/benchmarks", otelhttp.NewHandler(http.HandlerFunc(a.handleListBenchmarks), "GET /api/internal/benchmarks"))
 	mux.Handle("/api/internal/projections/process", otelhttp.NewHandler(http.HandlerFunc(a.handleProcessProjections), "POST /api/internal/projections/process"))
 	mux.Handle("/api/internal/checkout-intents/", otelhttp.NewHandler(http.HandlerFunc(a.handleCompleteDemoCheckout), "POST /api/internal/checkout-intents/{checkoutIntentId}/complete-demo"))
 
@@ -824,6 +846,7 @@ func (a *app) startHertzServer() (func(context.Context) error, error) {
 	server.Use(a.hertzCORS())
 	server.GET("/healthz", a.handleHealthzHertz)
 	server.POST("/api/buy-intents", a.handleBuyIntentsHertz)
+	server.GET("/api/internal/benchmarks", a.handleListBenchmarksHertz)
 
 	go func() {
 		log.Printf("go-backend listening on %s engine=%s", a.cfg.addr, a.cfg.httpEngine)
@@ -1356,6 +1379,34 @@ func (a *app) handleGetAdminDashboard(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, reqCtx, dashboard)
 }
 
+func (a *app) handleListBenchmarks(w http.ResponseWriter, r *http.Request) {
+	ctx, span := a.tracer.Start(r.Context(), "admin.benchmarks")
+	defer span.End()
+
+	reqCtx := requestContextFromRequest(ctx, r)
+	runs, err := readBenchmarkRuns(a.cfg.benchmarkResultsRoot)
+	if err != nil {
+		span.RecordError(err)
+		writeError(w, reqCtx, http.StatusInternalServerError, "Benchmark results are temporarily unavailable.")
+		return
+	}
+	writeJSON(w, http.StatusOK, reqCtx, runs)
+}
+
+func (a *app) handleListBenchmarksHertz(base context.Context, c *hertzapp.RequestContext) {
+	ctx, span := a.tracer.Start(base, "admin.benchmarks")
+	defer span.End()
+
+	reqCtx := requestContextFromHertz(ctx, c)
+	runs, err := readBenchmarkRuns(a.cfg.benchmarkResultsRoot)
+	if err != nil {
+		span.RecordError(err)
+		writeErrorHertz(c, reqCtx, consts.StatusInternalServerError, "Benchmark results are temporarily unavailable.")
+		return
+	}
+	writeJSONHertz(c, consts.StatusOK, reqCtx, runs)
+}
+
 func (a *app) handleUpdateAdminSeckill(w http.ResponseWriter, r *http.Request) {
 	ctx, span := a.tracer.Start(r.Context(), "admin.update_seckill")
 	defer span.End()
@@ -1471,6 +1522,76 @@ func (a *app) classifyItemsForSeckill(ctx context.Context, items []requestItem) 
 		skuID:      items[0].SkuID,
 		stockLimit: cfg.stockLimit,
 	}, nil
+}
+
+func readBenchmarkRuns(root string) ([]map[string]any, error) {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []map[string]any{}, nil
+		}
+		return nil, err
+	}
+
+	files := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() {
+			childEntries, childErr := os.ReadDir(filepath.Join(root, entry.Name()))
+			if childErr != nil {
+				if os.IsNotExist(childErr) {
+					continue
+				}
+				return nil, childErr
+			}
+			for _, child := range childEntries {
+				if !child.IsDir() && strings.HasSuffix(child.Name(), ".json") {
+					files = append(files, filepath.Join(entry.Name(), child.Name()))
+				}
+			}
+			continue
+		}
+		if strings.HasSuffix(entry.Name(), ".json") {
+			files = append(files, entry.Name())
+		}
+	}
+
+	runs := make([]map[string]any, 0, len(files))
+	for _, file := range files {
+		raw, readErr := os.ReadFile(filepath.Join(root, file))
+		if readErr != nil {
+			continue
+		}
+
+		run := map[string]any{}
+		if unmarshalErr := json.Unmarshal(raw, &run); unmarshalErr != nil {
+			continue
+		}
+
+		runID, _ := run["runId"].(string)
+		if strings.TrimSpace(runID) == "" {
+			continue
+		}
+
+		run["artifactFile"] = file
+		runs = append(runs, run)
+	}
+
+	sort.Slice(runs, func(left, right int) bool {
+		return benchmarkRunTimestamp(runs[left]).After(benchmarkRunTimestamp(runs[right]))
+	})
+
+	return runs, nil
+}
+
+func benchmarkRunTimestamp(run map[string]any) time.Time {
+	for _, key := range []string{"finishedAt", "startedAt"} {
+		value, _ := run[key].(string)
+		if parsed, err := time.Parse(time.RFC3339Nano, value); err == nil {
+			return parsed
+		}
+	}
+
+	return time.Time{}
 }
 
 func (a *app) containsSeckillSKU(ctx context.Context, items []requestItem) (bool, error) {

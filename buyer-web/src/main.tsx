@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider, createRootRoute, createRoute, createRouter, Navigate, Outlet, Link, useNavigate, useParams } from "@tanstack/react-router";
 import "./styles/global.css";
+import { BenchmarksScreen } from "./benchmarks";
 import type { Product } from "@shared/domain/catalog/product";
 import type { AdminDashboardViewModel } from "@shared/presentation/view-models/admin-dashboard";
 import {
@@ -168,6 +169,12 @@ const designSystemRoute = createRoute({
   component: () => (isDevMode() ? <DesignSystemScreen /> : <Navigate to="/products" />),
 });
 
+const benchmarksRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/internal/benchmarks",
+  component: () => <BenchmarksScreen requestJson={requestJson} />,
+});
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   productsRoute,
@@ -175,6 +182,7 @@ const routeTree = rootRoute.addChildren([
   checkoutCompleteRoute,
   adminRoute,
   designSystemRoute,
+  benchmarksRoute,
 ]);
 
 const router = createRouter({

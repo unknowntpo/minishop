@@ -59,6 +59,13 @@ test.describe("buyer web against go backend", () => {
     await expect(page.locator(".admin-product-card").first()).toBeVisible();
   });
 
+  test("benchmark results page loads from go backend", async ({ page }) => {
+    await page.goto("/internal/benchmarks");
+    await expect(page.getByRole("heading", { name: "Benchmark results" })).toBeVisible();
+    await expect(page.locator(".benchmark-scenario-card").first()).toBeVisible();
+    await expect(page.locator(".benchmark-table tbody tr").first()).toBeVisible();
+  });
+
   test("admin can start and stop seckill through go backend", async ({ page }) => {
     test.slow();
 
