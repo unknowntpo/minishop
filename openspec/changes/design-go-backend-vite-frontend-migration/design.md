@@ -276,11 +276,23 @@ Current implementation status:
   - `/checkout-complete/:checkoutIntentId`
   - `/internal/admin`
   - redirect to the external buyer-web runtime instead of doing page-server DB reads in Next
+- matching Next API routes that already have Go parity now emit deprecation headers:
+  - `Deprecation: true`
+  - `Sunset: 2026-12-31`
+  - `Link: </go-api...>; rel="successor-version"`
+  - this covers buyer/admin routes that already have Go replacements without breaking existing callers
 - Playwright compose E2E now covers:
   - buyer-web regular checkout flow
   - buyer-web cart checkout flow
   - buyer-web admin dashboard load
   - buyer-web admin seckill start/stop mutation
+
+Engineering-only routes remain explicitly deferred in Next for now:
+
+- `/internal/benchmarks`
+- `/internal/design-system`
+
+That keeps the migration focused on buyer/admin product flows instead of blocking on engineering surfaces.
 
 #### Phase 3: Vite/TanStack admin frontend
 

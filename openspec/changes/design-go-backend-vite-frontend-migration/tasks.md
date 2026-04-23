@@ -1,8 +1,8 @@
 ## 1. Inventory and Target Boundary
 
-- [ ] 1.1 Confirm the current Next.js page inventory and classify each route as migrate-first, migrate-second, or defer
-- [ ] 1.2 Confirm the current Next.js API route inventory and mark which routes must move to Go for buyer/admin frontend migration
-- [ ] 1.3 Define the target runtime boundary: Go backend as the only application backend, frontend as a separate Vite/TanStack app
+- [x] 1.1 Confirm the current Next.js page inventory and classify each route as migrate-first, migrate-second, or defer
+- [x] 1.2 Confirm the current Next.js API route inventory and mark which routes must move to Go for buyer/admin frontend migration
+- [x] 1.3 Define the target runtime boundary: Go backend as the only application backend, frontend as a separate Vite/TanStack app
 
 ## 2. Go API Parity for UI Reads/Writes
 
@@ -34,9 +34,9 @@
 
 ## 6. Deprecation and Removal
 
-- [ ] 6.1 Deprecate matching Next.js API routes once Go replacements are live
+- [x] 6.1 Deprecate matching Next.js API routes once Go replacements are live
 - [x] 6.2 Remove matching Next.js page/server responsibilities after frontend parity is verified
-- [ ] 6.3 Decide whether engineering-only routes such as `/internal/benchmarks` remain temporarily in Next.js or move later
+- [x] 6.3 Decide whether engineering-only routes such as `/internal/benchmarks` remain temporarily in Next.js or move later
 
 ## 7. Verification
 
