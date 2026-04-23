@@ -24,7 +24,7 @@ core_services=(
   postgres
   nats
   redpanda
-  app
+  go-backend
   worker-seckill
   worker-seckill-result-sink
 )
@@ -127,7 +127,7 @@ wait_for_consumer_group() {
 }
 
 docker "${compose_args[@]}" rm -sf benchmark-runner "${core_services[@]}" >/dev/null 2>&1 || true
-docker "${compose_args[@]}" up -d --build --scale "app=${app_replicas}" "${core_services[@]}"
+docker "${compose_args[@]}" up -d --build --scale "go-backend=${app_replicas}" "${core_services[@]}"
 
 if [[ "${BENCHMARK_RESET_STATE:-1}" != "0" ]]; then
   request_topic="${KAFKA_SECKILL_REQUEST_TOPIC:-inventory.seckill.requested}"
