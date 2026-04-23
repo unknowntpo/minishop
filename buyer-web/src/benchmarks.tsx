@@ -1268,10 +1268,17 @@ function diagnosticSummaryForRun(run: BenchmarkRun) {
           )}).`
         : undefined);
 
+  // When run.failure.message is already shown as the top-level summary message,
+  // drop any assertion whose message is identical to avoid displaying it twice.
+  const failedChecks =
+    hasFailure && run.failure?.message
+      ? failedAssertions.filter((a) => a.message !== run.failure!.message)
+      : failedAssertions;
+
   return {
     badge: hasFailure ? (run.failure?.stage ?? "failed").replace(/[_-]+/g, " ") : "diagnostic",
     distributions: importantDistributions,
-    failedChecks: failedAssertions,
+    failedChecks,
     message: inferredMessage,
     severity: hasFailure || failedAssertions.length > 0 ? "danger" : "neutral",
     title: hasFailure ? "Run failure" : "Run diagnostics",
