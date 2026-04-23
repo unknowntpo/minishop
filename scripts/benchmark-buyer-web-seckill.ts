@@ -3,7 +3,7 @@ import "dotenv/config";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { chromium, type Page } from "@playwright/test";
+import { chromium, expect, type Page } from "@playwright/test";
 
 type DashboardProduct = {
   productName: string;
@@ -164,8 +164,9 @@ async function runWorker(workerIndex: number, iterations: number) {
     for (let i = 0; i < iterations; i += 1) {
       const label = `worker-${workerIndex}-iter-${i}`;
       try {
-        await page.goto(`${appUrl}/products/limited-runner`, { waitUntil: "domcontentloaded", timeout: 30_000 });
-        await page.getByText(/秒殺|seckill/i).first().waitFor({ timeout: 15_000 });
+        await page.goto(`${appUrl}/products/limited-runner`, { timeout: 30_000 });
+        await expect(page).toHaveURL(/\/products\/limited-runner$/, { timeout: 15_000 });
+        await expect(page.getByText(/秒殺|seckill/i).first()).toBeVisible({ timeout: 15_000 });
 
         const startedAt = performance.now();
         const buyIntentAccepted = page.waitForResponse(
