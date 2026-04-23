@@ -269,6 +269,13 @@ Current implementation status:
   - `minishop-cart-v1` local storage
   - cart drawer quantity adjustments
   - cart checkout through Go buyer APIs
+- migrated Next buyer/admin pages now have a controlled exit path:
+  - when `BUYER_WEB_BASE_URL` is configured
+  - `/products`
+  - `/products/:slug`
+  - `/checkout-complete/:checkoutIntentId`
+  - `/internal/admin`
+  - redirect to the external buyer-web runtime instead of doing page-server DB reads in Next
 - Playwright compose E2E now covers:
   - buyer-web regular checkout flow
   - buyer-web cart checkout flow
