@@ -245,6 +245,20 @@ services:
     ports:
       - "${MINISHOP_APP_PORT:-3001}:3000"
 
+  buyer-web:
+    build:
+      context: .
+      dockerfile: Dockerfile.buyer-web
+      args:
+        VITE_API_BASE_URL: ${BUYER_WEB_VITE_API_BASE_URL:-http://localhost:3005}
+    container_name: minishop-buyer-web
+    restart: unless-stopped
+    depends_on:
+      go-backend:
+        condition: service_started
+    ports:
+      - "${MINISHOP_BUYER_WEB_PORT:-3006}:3000"
+
   go-seckill-ingress:
     build:
       context: .

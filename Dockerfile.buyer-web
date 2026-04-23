@@ -1,0 +1,25 @@
+FROM node:24-bookworm-slim AS build
+
+ENV PNPM_HOME="/pnpm"
+ENV PATH="$PNPM_HOME:$PATH"
+
+RUN corepack enable
+
+WORKDIR /app
+
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile --config.ignore-scripts=false
+
+COPY . .
+
+ARG VITE_API_BASE_URL=http://localhost:3005
+ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
+
+RUN pnpm buyer-web:build
+
+FROM nginx:1.27-alpine
+
+COPY ops/nginx/buyer-web.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/buyer-web/dist /usr/share/nginx/html
+
+EXPOSE 3000

@@ -21,6 +21,8 @@
     "buyer-web:dev": "vite --config buyer-web/vite.config.ts",
     "buyer-web:build": "vite build --config buyer-web/vite.config.ts",
     "buyer-web:preview": "vite preview --config buyer-web/vite.config.ts",
+    "buyer-web:compose:up": "docker compose up -d --build postgres nats redpanda go-backend worker-buy-intents-ingest worker-staged-buy-intents-process buyer-web",
+    "buyer-web:compose:down": "docker compose down",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
