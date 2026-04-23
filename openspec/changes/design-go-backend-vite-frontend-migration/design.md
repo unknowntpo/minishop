@@ -1,4 +1,15 @@
-## Context
+## Result
+
+This migration is now complete for the application web runtime:
+
+- `buyer-web` is the only supported buyer/admin frontend runtime
+- `go-backend` is the application backend boundary for web flows
+- the old Next.js `app/` tree, API routes, and frontend runtime have been removed from the live code path
+- old frontend Playwright coverage has been replaced by buyer-web Playwright coverage against Go backend
+
+The remaining benchmark and topology work continues independently of this frontend/runtime migration.
+
+## Historical Context
 
 The current repository still treats Next.js as both:
 

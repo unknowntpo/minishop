@@ -36,7 +36,7 @@
 
 - [x] 6.1 Deprecate matching Next.js API routes once Go replacements are live
 - [x] 6.2 Remove matching Next.js page/server responsibilities after frontend parity is verified
-- [x] 6.3 Decide whether engineering-only routes such as `/internal/benchmarks` remain temporarily in Next.js or move later
+- [x] 6.3 Remove the remaining Next.js runtime artifacts, compose services, and old frontend E2E coverage from the active runtime path
 
 ## 7. Verification
 

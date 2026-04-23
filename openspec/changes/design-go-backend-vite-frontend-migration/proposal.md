@@ -27,6 +27,14 @@ The right reason to move away from Next.js is therefore **architecture simplific
 - Define a phased migration sequence that removes Next.js backend responsibilities first and removes the remaining Next.js app only after frontend parity is reached
 - Define acceptance expectations for backend-only compose E2E and frontend smoke coverage during the migration
 
+## Status
+
+This change has now been implemented:
+
+- `buyer-web` is the active frontend runtime
+- `go-backend` owns the live web API boundary
+- the old Next.js runtime has been removed from the active application path
+
 ## Capabilities
 
 ### New Capabilities
