@@ -1,4 +1,4 @@
-import React, { Fragment, useMemo } from "react";
+import React, { Fragment, memo, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useLocation } from "@tanstack/react-router";
 
@@ -288,15 +288,6 @@ export function BenchmarksScreen({ requestJson }: BenchmarksScreenProps) {
   const runs = data ?? [];
   const latest = runs[0];
   const scenarioSummaries = useMemo(() => summarizeScenarios(runs), [runs]);
-  const location = useLocation();
-  const params = useMemo(() => new URLSearchParams(location.searchStr), [location.searchStr]);
-  const requestedScenarioName = params.get("scenario") ?? undefined;
-  const selectedScenarioName = scenarioSummaries.find((scenario) => scenario.name === requestedScenarioName)?.name;
-  const selectedScenarioRuns = selectedScenarioName
-    ? runs.filter((run) => scenarioNameFor(run) === selectedScenarioName)
-    : [];
-  const comparisonRuns = selectedScenarioRuns.slice(0, 10);
-  const selectedRunId = params.get("run") ?? undefined;
 
   if (isLoading) {
     return <section className="panel">Loading benchmark results…</section>;
@@ -331,165 +322,10 @@ export function BenchmarksScreen({ requestJson }: BenchmarksScreenProps) {
 
       {latest ? (
         <>
-          <section className="admin-livebar" aria-label="Latest benchmark status">
-            <div>
-              <p className="eyebrow">Latest run</p>
-              <strong>{latest.runId}</strong>
-              <p className="muted admin-livebar-copy">
-                {formatDateTime(latest.finishedAt)} · {scenarioNameFor(latest)}
-              </p>
-            </div>
-            <span className={`badge ${latest.pass ? "success" : "danger"}`}>
-              {latest.pass ? "pass" : "failed"}
-            </span>
-          </section>
-
-          <section className="panel admin-panel" aria-labelledby="flow-title">
-            <p className="eyebrow">Data flow</p>
-            <h2 id="flow-title">Where each metric comes from</h2>
-            <p className="muted admin-panel-copy">
-              Benchmarks should map measurements to a system path: load enters an API, accepted work
-              appends durable facts, processors build read models, and verifiers inspect durable
-              state.
-            </p>
-            <ol className="benchmark-flow" aria-label="Checkout benchmark data flow">
-              <li>
-                <span>1</span>
-                <strong>Ingress</strong>
-                <p className="muted">HTTP/API entry point</p>
-                <code>request/sec · p95 · errors</code>
-              </li>
-              <li>
-                <span>2</span>
-                <strong>Append</strong>
-                <p className="muted">durable event log</p>
-                <code>append/sec · event types</code>
-              </li>
-              <li>
-                <span>3</span>
-                <strong>Project</strong>
-                <p className="muted">read model processor</p>
-                <code>checkpoint · lag · status</code>
-              </li>
-              <li>
-                <span>4</span>
-                <strong>Verify</strong>
-                <p className="muted">domain checks</p>
-                <code>no oversell · idempotency</code>
-              </li>
-            </ol>
-          </section>
-
-          <section className="panel admin-panel" aria-labelledby="scenario-title">
-            <p className="eyebrow">Scenarios</p>
-            <h2 id="scenario-title">Benchmark families</h2>
-            <p className="muted admin-panel-copy">
-              Click a scenario to expand its run comparison below. Click the selected scenario again
-              to collapse it.
-            </p>
-            <div className="benchmark-scenario-grid">
-              {scenarioSummaries.map((scenario) => {
-                const isSelected = scenario.name === selectedScenarioName;
-                return (
-                  <Link
-                    className={`benchmark-scenario-card${isSelected ? " selected" : ""}`}
-                    to="/internal/benchmarks"
-                    search={
-                      isSelected
-                        ? {}
-                        : {
-                            scenario: scenario.name,
-                          }
-                    }
-                    key={scenario.name}
-                    aria-expanded={isSelected}
-                  >
-                    <strong title={scenarioDescription(scenario.name)}>{scenario.name}</strong>
-                    <span className="benchmark-scenario-badges">
-                      <span className={`badge ${scenario.latestPass ? "success" : "danger"}`}>
-                        {scenario.latestPass ? "latest pass" : "latest failed"}
-                      </span>
-                    </span>
-                    <div className="benchmark-scenario-details">
-                      <KeyValueList
-                        values={{
-                          latest: formatDateTime(scenario.latestFinishedAt),
-                          runs: formatNumber(scenario.runCount),
-                          "latest p95": `${formatNumber(scenario.latestP95LatencyMs)}ms`,
-                          "latest errors": formatNumber(scenario.latestErrors),
-                        }}
-                      />
-                    </div>
-                  </Link>
-                );
-              })}
-            </div>
-            {selectedScenarioName ? (
-              <RunComparison
-                scenarioName={selectedScenarioName}
-                selectedRunId={selectedRunId}
-                runs={comparisonRuns}
-              />
-            ) : null}
-          </section>
-
-          <section className="panel admin-panel" aria-labelledby="history-title">
-            <p className="eyebrow">History</p>
-            <h2 id="history-title">Recent artifacts</h2>
-            <p className="muted admin-panel-copy">
-              Showing local benchmark result files. These are diagnostic artifacts, not domain
-              events.
-            </p>
-            <div className="admin-table-wrap">
-              <table className="admin-table benchmark-table">
-                <thead>
-                  <tr>
-                    <th>Run</th>
-                    <th>Scenario</th>
-                    <th>Finished</th>
-                    <th>Result</th>
-                    <th>Conditions</th>
-                    <th>Requests</th>
-                    <th>Accepted</th>
-                    <th>Errors</th>
-                    <th>p95</th>
-                    <th>Throughput</th>
-                    <th>Lag</th>
-                    <th>Profiling</th>
-                    <th>Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {runs.map((run) => (
-                    <tr key={run.artifactFile}>
-                      <td>
-                        <strong>{run.runId}</strong>
-                        <span className="muted mono">{run.artifactFile}</span>
-                      </td>
-                      <td>{scenarioNameFor(run)}</td>
-                      <td>{formatDateTime(run.finishedAt)}</td>
-                      <td>
-                        <span className={`badge ${run.pass ? "success" : "danger"}`}>
-                          {run.pass ? "pass" : "failed"}
-                        </span>
-                      </td>
-                      <td>{formatConditionSummary(run)}</td>
-                      <td>{formatNumber(run.scenario?.requestedBuyClicks)}</td>
-                      <td>{formatNumber(run.requestPath?.accepted)}</td>
-                      <td>{formatNumber(run.requestPath?.errors)}</td>
-                      <td>{formatNumber(readRequestP95(run))}ms</td>
-                      <td>{formatPrimaryThroughput(run)}</td>
-                      <td>{formatNumber(readProjectionLagEvents(run))}</td>
-                      <td>{renderProfilingEvidence(run)}</td>
-                      <td>
-                        <StatusSummary values={readCheckoutStatusDistribution(run)} />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
+          <LatestRunSection latest={latest} />
+          <DataFlowSection />
+          <ScenarioSelectionSection runs={runs} scenarioSummaries={scenarioSummaries} />
+          <RecentArtifactsSection runs={runs} />
         </>
       ) : (
         <section className="panel admin-panel" aria-labelledby="empty-benchmark-title">
@@ -504,6 +340,196 @@ export function BenchmarksScreen({ requestJson }: BenchmarksScreenProps) {
     </main>
   );
 }
+
+const LatestRunSection = memo(function LatestRunSection({ latest }: { latest: BenchmarkRun }) {
+  return (
+    <section className="admin-livebar" aria-label="Latest benchmark status">
+      <div>
+        <p className="eyebrow">Latest run</p>
+        <strong>{latest.runId}</strong>
+        <p className="muted admin-livebar-copy">
+          {formatDateTime(latest.finishedAt)} · {scenarioNameFor(latest)}
+        </p>
+      </div>
+      <span className={`badge ${latest.pass ? "success" : "danger"}`}>
+        {latest.pass ? "pass" : "failed"}
+      </span>
+    </section>
+  );
+});
+
+const DataFlowSection = memo(function DataFlowSection() {
+  return (
+    <section className="panel admin-panel" aria-labelledby="flow-title">
+      <p className="eyebrow">Data flow</p>
+      <h2 id="flow-title">Where each metric comes from</h2>
+      <p className="muted admin-panel-copy">
+        Benchmarks should map measurements to a system path: load enters an API, accepted work
+        appends durable facts, processors build read models, and verifiers inspect durable state.
+      </p>
+      <ol className="benchmark-flow" aria-label="Checkout benchmark data flow">
+        <li>
+          <span>1</span>
+          <strong>Ingress</strong>
+          <p className="muted">HTTP/API entry point</p>
+          <code>request/sec · p95 · errors</code>
+        </li>
+        <li>
+          <span>2</span>
+          <strong>Append</strong>
+          <p className="muted">durable event log</p>
+          <code>append/sec · event types</code>
+        </li>
+        <li>
+          <span>3</span>
+          <strong>Project</strong>
+          <p className="muted">read model processor</p>
+          <code>checkpoint · lag · status</code>
+        </li>
+        <li>
+          <span>4</span>
+          <strong>Verify</strong>
+          <p className="muted">domain checks</p>
+          <code>no oversell · idempotency</code>
+        </li>
+      </ol>
+    </section>
+  );
+});
+
+function ScenarioSelectionSection({
+  runs,
+  scenarioSummaries,
+}: {
+  runs: BenchmarkRun[];
+  scenarioSummaries: ScenarioSummary[];
+}) {
+  const location = useLocation();
+  const params = useMemo(() => new URLSearchParams(location.searchStr), [location.searchStr]);
+  const requestedScenarioName = params.get("scenario") ?? undefined;
+  const selectedScenarioName = scenarioSummaries.find((scenario) => scenario.name === requestedScenarioName)?.name;
+  const selectedScenarioRuns = selectedScenarioName
+    ? runs.filter((run) => scenarioNameFor(run) === selectedScenarioName)
+    : [];
+  const comparisonRuns = selectedScenarioRuns.slice(0, 10);
+  const selectedRunId = params.get("run") ?? undefined;
+
+  return (
+    <section className="panel admin-panel" aria-labelledby="scenario-title">
+      <p className="eyebrow">Scenarios</p>
+      <h2 id="scenario-title">Benchmark families</h2>
+      <p className="muted admin-panel-copy">
+        Click a scenario to expand its run comparison below. Click the selected scenario again to
+        collapse it.
+      </p>
+      <div className="benchmark-scenario-grid">
+        {scenarioSummaries.map((scenario) => {
+          const isSelected = scenario.name === selectedScenarioName;
+          return (
+            <Link
+              className={`benchmark-scenario-card${isSelected ? " selected" : ""}`}
+              to="/internal/benchmarks"
+              search={
+                isSelected
+                  ? {}
+                  : {
+                      scenario: scenario.name,
+                    }
+              }
+              key={scenario.name}
+              aria-expanded={isSelected}
+            >
+              <strong title={scenarioDescription(scenario.name)}>{scenario.name}</strong>
+              <span className="benchmark-scenario-badges">
+                <span className={`badge ${scenario.latestPass ? "success" : "danger"}`}>
+                  {scenario.latestPass ? "latest pass" : "latest failed"}
+                </span>
+              </span>
+              <div className="benchmark-scenario-details">
+                <KeyValueList
+                  values={{
+                    latest: formatDateTime(scenario.latestFinishedAt),
+                    runs: formatNumber(scenario.runCount),
+                    "latest p95": `${formatNumber(scenario.latestP95LatencyMs)}ms`,
+                    "latest errors": formatNumber(scenario.latestErrors),
+                  }}
+                />
+              </div>
+            </Link>
+          );
+        })}
+      </div>
+      {selectedScenarioName ? (
+        <RunComparison
+          scenarioName={selectedScenarioName}
+          selectedRunId={selectedRunId}
+          runs={comparisonRuns}
+        />
+      ) : null}
+    </section>
+  );
+}
+
+const RecentArtifactsSection = memo(function RecentArtifactsSection({ runs }: { runs: BenchmarkRun[] }) {
+  return (
+    <section className="panel admin-panel" aria-labelledby="history-title">
+      <p className="eyebrow">History</p>
+      <h2 id="history-title">Recent artifacts</h2>
+      <p className="muted admin-panel-copy">
+        Showing local benchmark result files. These are diagnostic artifacts, not domain events.
+      </p>
+      <div className="admin-table-wrap">
+        <table className="admin-table benchmark-table">
+          <thead>
+            <tr>
+              <th>Run</th>
+              <th>Scenario</th>
+              <th>Finished</th>
+              <th>Result</th>
+              <th>Conditions</th>
+              <th>Requests</th>
+              <th>Accepted</th>
+              <th>Errors</th>
+              <th>p95</th>
+              <th>Throughput</th>
+              <th>Lag</th>
+              <th>Profiling</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {runs.map((run) => (
+              <tr key={run.artifactFile}>
+                <td>
+                  <strong>{run.runId}</strong>
+                  <span className="muted mono">{run.artifactFile}</span>
+                </td>
+                <td>{scenarioNameFor(run)}</td>
+                <td>{formatDateTime(run.finishedAt)}</td>
+                <td>
+                  <span className={`badge ${run.pass ? "success" : "danger"}`}>
+                    {run.pass ? "pass" : "failed"}
+                  </span>
+                </td>
+                <td>{formatConditionSummary(run)}</td>
+                <td>{formatNumber(run.scenario?.requestedBuyClicks)}</td>
+                <td>{formatNumber(run.requestPath?.accepted)}</td>
+                <td>{formatNumber(run.requestPath?.errors)}</td>
+                <td>{formatNumber(readRequestP95(run))}ms</td>
+                <td>{formatPrimaryThroughput(run)}</td>
+                <td>{formatNumber(readProjectionLagEvents(run))}</td>
+                <td>{renderProfilingEvidence(run)}</td>
+                <td>
+                  <StatusSummary values={readCheckoutStatusDistribution(run)} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+});
 
 function summarizeScenarios(runs: BenchmarkRun[]): ScenarioSummary[] {
   const grouped = new Map<string, BenchmarkRun[]>();
