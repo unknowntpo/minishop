@@ -27,6 +27,8 @@ BUYER_WEB_PORT="${MINISHOP_BUYER_WEB_E2E_PORT:-$(pick_free_port)}"
 APP_ORIGIN="http://127.0.0.1:${BUYER_WEB_PORT}"
 API_BASE_URL="http://127.0.0.1:${GO_BACKEND_PORT}"
 DATABASE_URL="postgres://postgres:postgres@127.0.0.1:${POSTGRES_PORT}/minishop"
+SECKILL_APP_ID="minishop-seckill-worker-fe-e2e-${SUFFIX}"
+SECKILL_RESULT_SINK_GROUP_ID="minishop-seckill-result-sink-fe-e2e-${SUFFIX}"
 BUYER_WEB_PID=""
 
 wait_for_http() {
@@ -65,11 +67,13 @@ export MINISHOP_GO_BACKEND_PORT="${GO_BACKEND_PORT}"
 export GO_BACKEND_CORS_ALLOWED_ORIGINS="${APP_ORIGIN}"
 export OTEL_ENABLED=0
 export NEXT_TELEMETRY_DISABLED=1
+export KAFKA_SECKILL_APPLICATION_ID="${SECKILL_APP_ID}"
+export KAFKA_SECKILL_RESULT_SINK_GROUP_ID="${SECKILL_RESULT_SINK_GROUP_ID}"
 
 docker compose \
   -p "${PROJECT_NAME}" \
   -f docker-compose.frontend-go-backend-e2e.yml \
-  up -d --build postgres nats redpanda go-backend worker-buy-intents-ingest worker-staged-buy-intents-process
+  up -d --build postgres nats redpanda go-backend worker-buy-intents-ingest worker-staged-buy-intents-process worker-seckill go-seckill-result-sink
 
 wait_for_http "${API_BASE_URL}/healthz" "go-backend"
 

@@ -139,6 +139,62 @@ services:
       NEXT_TELEMETRY_DISABLED: "1"
     command: ["pnpm", "worker:staged-buy-intents:process:loop"]
 
+  worker-seckill:
+    build:
+      context: .
+      dockerfile: Dockerfile.seckill-worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redpanda:
+        condition: service_started
+    environment:
+      JDBC_DATABASE_URL: jdbc:postgresql://postgres:5432/minishop
+      DATABASE_USER: postgres
+      DATABASE_PASSWORD: postgres
+      KAFKA_BROKERS: redpanda:9092
+      KAFKA_SECKILL_APPLICATION_ID: ${KAFKA_SECKILL_APPLICATION_ID:-minishop-seckill-worker-fe-e2e}
+      KAFKA_SECKILL_REQUEST_TOPIC: inventory.seckill.requested
+      KAFKA_SECKILL_RESULT_TOPIC: inventory.seckill.result
+      KAFKA_SECKILL_DLQ_TOPIC: inventory.seckill.dlq
+      KAFKA_SECKILL_REQUEST_TOPIC_PARTITIONS: 4
+      KAFKA_SECKILL_RESULT_TOPIC_PARTITIONS: 4
+      KAFKA_SECKILL_DLQ_TOPIC_PARTITIONS: 4
+      KAFKA_SECKILL_STATE_DIR: /var/lib/minishop-seckill/state
+      KAFKA_SECKILL_CLEAR_STATE_ON_START: "1"
+      OTEL_TRACES_EXPORTER: none
+      OTEL_METRICS_EXPORTER: none
+      OTEL_LOGS_EXPORTER: none
+      JAVA_TOOL_OPTIONS: -XX:-UsePerfData
+    volumes:
+      - frontend_go_e2e_seckill_state:/var/lib/minishop-seckill/state
+
+  go-seckill-result-sink:
+    build:
+      context: .
+      dockerfile: Dockerfile.go-seckill-result-sink
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redpanda:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/minishop
+      DATABASE_POOL_MAX: 8
+      KAFKA_BROKERS: redpanda:9092
+      KAFKA_SECKILL_RESULT_TOPIC: inventory.seckill.result
+      KAFKA_SECKILL_RESULT_SINK_GROUP_ID: ${KAFKA_SECKILL_RESULT_SINK_GROUP_ID:-minishop-seckill-result-sink-fe-e2e}
+      KAFKA_SECKILL_RESULT_SINK_CLIENT_ID: minishop-go-seckill-result-sink-fe-e2e
+      KAFKA_SECKILL_RESULT_SINK_PARTITIONS_CONCURRENTLY: 4
+      GO_SECKILL_RESULT_SINK_MIN_BYTES: 1
+      GO_SECKILL_RESULT_SINK_MAX_BYTES: 10000000
+      GO_SECKILL_RESULT_SINK_MAX_WAIT_MS: 100
+      GO_SECKILL_RESULT_SINK_COMMIT_INTERVAL_MS: 0
+      OTEL_ENABLED: "0"
+
 volumes:
   frontend_go_e2e_postgres:
   frontend_go_e2e_nats:
+  frontend_go_e2e_seckill_state:
