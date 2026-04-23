@@ -1,6 +1,6 @@
 import React, { Fragment, memo, useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 
 type BenchmarkReport = {
   schemaVersion?: number;
@@ -284,13 +284,13 @@ type BenchmarkSelection = {
   runId?: string;
 };
 
-export function BenchmarksScreen({ requestJson }: BenchmarksScreenProps) {
+export const BenchmarksScreen = memo(function BenchmarksScreen({ requestJson }: BenchmarksScreenProps) {
   const { data, isLoading, isError } = useQuery({
     queryKey: ["benchmarks"],
     queryFn: () => requestJson<BenchmarkRun[]>("/api/internal/benchmarks", { method: "GET" }),
   });
 
-  const runs = data ?? [];
+  const runs = useMemo(() => data ?? [], [data]);
   const latest = runs[0];
   const scenarioSummaries = useMemo(() => summarizeScenarios(runs), [runs]);
 
@@ -344,7 +344,7 @@ export function BenchmarksScreen({ requestJson }: BenchmarksScreenProps) {
       )}
     </main>
   );
-}
+});
 
 const LatestRunSection = memo(function LatestRunSection({ latest }: { latest: BenchmarkRun }) {
   return (
@@ -402,7 +402,7 @@ const DataFlowSection = memo(function DataFlowSection() {
   );
 });
 
-function ScenarioSelectionSection({
+const ScenarioSelectionSection = memo(function ScenarioSelectionSection({
   runs,
   scenarioSummaries,
 }: {
@@ -421,18 +421,23 @@ function ScenarioSelectionSection({
     };
   }, []);
 
+  const navigate = useNavigate();
   const updateSelection = useCallback((nextSelection: BenchmarkSelection) => {
     setSelection(nextSelection);
-    if (typeof window === "undefined") {
-      return;
-    }
     const nextSearch = buildBenchmarkSelectionSearch(nextSelection);
     const nextUrl = `${window.location.pathname}${nextSearch}${window.location.hash}`;
     const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
     if (nextUrl !== currentUrl) {
-      window.history.pushState({}, "", nextUrl);
+      void navigate({
+        to: "/internal/benchmarks",
+        search: nextSelection.scenarioName || nextSelection.runId
+          ? ({ scenario: nextSelection.scenarioName, run: nextSelection.runId } as Record<string, string | undefined>)
+          : ({} as Record<string, string | undefined>),
+        resetScroll: false,
+        replace: false,
+      });
     }
-  }, []);
+  }, [navigate]);
 
   const selectedScenarioName = scenarioSummaries.find((scenario) => scenario.name === selection.scenarioName)?.name;
   const selectedScenarioRuns = selectedScenarioName
@@ -509,7 +514,7 @@ function ScenarioSelectionSection({
       ) : null}
     </section>
   );
-}
+});
 
 const RecentArtifactsSection = memo(function RecentArtifactsSection({ runs }: { runs: BenchmarkRun[] }) {
   return (

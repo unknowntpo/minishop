@@ -73,7 +73,9 @@ const queryClient = new QueryClient();
 const runtimeDefaultApiBaseUrl =
   typeof window === "undefined"
     ? "http://127.0.0.1:3005"
-    : `${window.location.protocol}//${window.location.hostname}:3005`;
+    : import.meta.env.DEV
+      ? window.location.origin
+      : `${window.location.protocol}//${window.location.hostname}:3005`;
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL?.trim() || runtimeDefaultApiBaseUrl).replace(/\/+$/, "");
 const appMode = normalizeAppMode(import.meta.env.VITE_APP_MODE);
 const cartStorageKey = "minishop-cart-v1";
