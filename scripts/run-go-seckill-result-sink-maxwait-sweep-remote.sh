@@ -75,8 +75,8 @@ for max_wait in "${max_waits[@]}"; do
     -e BENCHMARK_PATH_TAG=seckill_only \
     -e BENCHMARK_IMPL=go \
     -e BENCHMARK_CREATED_SOURCE=kafka_seckill_result \
-    -e BENCHMARK_APP_URL=http://app:3000 \
-    -e BENCHMARK_APP_URLS=http://app:3000 \
+    -e BENCHMARK_APP_URL=http://go-backend:3000 \
+    -e BENCHMARK_APP_URLS=http://go-backend:3000 \
     -e BENCHMARK_PROMETHEUS_URL=http://prometheus:9090 \
     -e BENCHMARK_INGRESS_APP_URLS=http://go-seckill-ingress:3000 \
     -e BENCHMARK_INGRESS_HEALTH_PATH=/healthz \

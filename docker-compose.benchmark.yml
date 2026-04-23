@@ -16,34 +16,82 @@ services:
       timeout: 5s
       retries: 10
 
-  benchmark-app:
+  benchmark-nats:
+    image: nats:2.11
+    restart: unless-stopped
+    command: ["-js", "-sd", "/data", "-m", "8222"]
+    volumes:
+      - minishop_benchmark_nats_data:/data
+
+  benchmark-redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.2.18
+    restart: unless-stopped
+    command:
+      - redpanda
+      - start
+      - --overprovisioned
+      - --smp
+      - "1"
+      - --memory
+      - "1G"
+      - --reserve-memory
+      - "0M"
+      - --node-id
+      - "0"
+      - --check=false
+      - --set
+      - redpanda.auto_create_topics_enabled=false
+      - --kafka-addr
+      - PLAINTEXT://0.0.0.0:9092
+      - --advertise-kafka-addr
+      - PLAINTEXT://benchmark-redpanda:9092
+
+  benchmark-go-backend:
     build:
       context: .
-      dockerfile: Dockerfile.app
+      dockerfile: Dockerfile.go-backend
     restart: unless-stopped
-    environment:
-      DATABASE_URL: postgres://postgres:postgres@benchmark-postgres:5432/minishop
-      HOSTNAME: 0.0.0.0
-      PORT: 3000
-    ports:
-      - "${MINISHOP_BENCHMARK_APP_PORT:-3300}:3000"
-    volumes:
-      - ./benchmark-results:/app/benchmark-results
     depends_on:
       benchmark-postgres:
         condition: service_healthy
-    command: >
-      sh -lc "pnpm db:migrate && pnpm db:seed:dev && pnpm start"
+      benchmark-nats:
+        condition: service_started
+      benchmark-redpanda:
+        condition: service_started
+    environment:
+      GO_BACKEND_ADDR: :3000
+      GO_BACKEND_HTTP_ENGINE: nethttp
+      GO_BACKEND_CORS_ALLOWED_ORIGINS: ${GO_BACKEND_CORS_ALLOWED_ORIGINS:-http://127.0.0.1:3300}
+      DATABASE_URL: postgres://postgres:postgres@benchmark-postgres:5432/minishop
+      DATABASE_POOL_MAX: 16
+      NATS_URL: nats://benchmark-nats:4222
+      NATS_BUY_INTENT_STREAM: BUY_INTENT_COMMANDS
+      NATS_BUY_INTENT_SUBJECT: buy-intent.command
+      NATS_BUY_INTENT_RETRY_SUBJECT: buy-intent.retry
+      NATS_BUY_INTENT_DLQ_SUBJECT: buy-intent.dlq
+      KAFKA_BROKERS: benchmark-redpanda:9092
+      KAFKA_CLIENT_ID: benchmark-go-backend
+      KAFKA_SECKILL_REQUEST_TOPIC: inventory.seckill.requested
+      KAFKA_SECKILL_RESULT_TOPIC: inventory.seckill.result
+      KAFKA_SECKILL_DLQ_TOPIC: inventory.seckill.dlq
+      KAFKA_SECKILL_BUCKET_COUNT: 4
+      KAFKA_SECKILL_REQUEST_TOPIC_PARTITIONS: 4
+      KAFKA_SECKILL_RESULT_TOPIC_PARTITIONS: 4
+      KAFKA_SECKILL_DLQ_TOPIC_PARTITIONS: 4
+      KAFKA_SECKILL_MAX_PROBE: 4
+      KAFKA_SECKILL_CONFIG_CACHE_TTL_MS: 0
+      KAFKA_SECKILL_CLIENT_LINGER_MS: 50
+      KAFKA_SECKILL_CLIENT_BATCH_NUM_MESSAGES: 5000
+      KAFKA_SECKILL_CLIENT_COMPRESSION: none
+      OTEL_ENABLED: "0"
+    ports:
+      - "${MINISHOP_BENCHMARK_GO_BACKEND_PORT:-3300}:3000"
     healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "node -e \"fetch('http://127.0.0.1:3000/products').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))\"",
-        ]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/healthz >/dev/null"]
       interval: 5s
       timeout: 5s
       retries: 20
-      start_period: 20s
+      start_period: 10s
 
   benchmark-runner:
     build:
@@ -51,16 +99,17 @@ services:
       dockerfile: Dockerfile.worker
     environment:
       DATABASE_URL: postgres://postgres:postgres@benchmark-postgres:5432/minishop
-      BENCHMARK_APP_URL: http://benchmark-app:3000
-      BENCHMARK_NEXT_MODE: next start
+      BENCHMARK_APP_URL: http://benchmark-go-backend:3000
+      BENCHMARK_NEXT_MODE: buyer-web preview
       MINISHOP_ALLOWED_RESET_HOSTS: benchmark-postgres
     volumes:
       - ./benchmark-results:/app/benchmark-results
     depends_on:
-      benchmark-app:
+      benchmark-go-backend:
         condition: service_healthy
     profiles: ["runner"]
     command: ["pnpm", "benchmark:checkout:postgres:cart:reset"]
 
 volumes:
   minishop_benchmark_postgres_data:
+  minishop_benchmark_nats_data:

@@ -2214,7 +2214,7 @@ async function maybeStartProfiling(): Promise<BenchmarkProfilingMetadata> {
     return {
       enabled: true,
       status: "failed",
-      target: "nextjs-app-process",
+      target: "go-backend-process",
       scope: "buy-intent-benchmark",
       error: body?.error ?? `HTTP ${response.status}`,
     };
@@ -2227,7 +2227,7 @@ async function maybeStartProfiling(): Promise<BenchmarkProfilingMetadata> {
   return {
     enabled: true,
     status: "captured",
-    target: "nextjs-app-process",
+    target: "go-backend-process",
     scope: "buy-intent-benchmark",
     startedAt: body.startedAt,
     files: [],
@@ -2279,7 +2279,7 @@ async function maybeStopProfiling(
     return {
       enabled: true,
       status: "captured",
-      target: "nextjs-app-process",
+      target: "go-backend-process",
       scope: "buy-intent-benchmark",
       format: body.format,
       startedAt: body.startedAt,
@@ -2306,7 +2306,7 @@ function readConfig(): BenchmarkConfig {
   const appUrls = (
     process.env.BENCHMARK_APP_URLS ??
     process.env.BENCHMARK_APP_URL ??
-    "http://localhost:3000"
+    "http://localhost:3005"
   )
     .split(",")
     .map((value) => value.trim())
@@ -2316,7 +2316,7 @@ function readConfig(): BenchmarkConfig {
     process.env.BENCHMARK_APP_URLS ??
     process.env.BENCHMARK_INGRESS_APP_URL ??
     process.env.BENCHMARK_APP_URL ??
-    "http://localhost:3000"
+    "http://localhost:3005"
   )
     .split(",")
     .map((value) => value.trim())
@@ -2326,9 +2326,9 @@ function readConfig(): BenchmarkConfig {
     (scenarioName.includes("seckill") ? "kafka_seckill_result" : "postgres");
 
   return {
-    appUrl: appUrls[0] ?? "http://localhost:3000",
+    appUrl: appUrls[0] ?? "http://localhost:3005",
     appUrls,
-    ingressAppUrl: ingressAppUrls[0] ?? appUrls[0] ?? "http://localhost:3000",
+    ingressAppUrl: ingressAppUrls[0] ?? appUrls[0] ?? "http://localhost:3005",
     ingressAppUrls,
     prometheusUrl: process.env.BENCHMARK_PROMETHEUS_URL?.trim() || "http://localhost:9090",
     databaseUrl: requiredEnv("DATABASE_URL"),

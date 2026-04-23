@@ -535,7 +535,7 @@ async function maybeStartProfiling(): Promise<BenchmarkProfilingMetadata> {
     return {
       enabled: true,
       status: "failed",
-      target: "nextjs-app-process",
+      target: "go-backend-process",
       scope: "request-and-projection",
       error: body?.error ?? `HTTP ${response.status}`,
     };
@@ -548,7 +548,7 @@ async function maybeStartProfiling(): Promise<BenchmarkProfilingMetadata> {
   return {
     enabled: true,
     status: "captured",
-    target: "nextjs-app-process",
+    target: "go-backend-process",
     scope: "request-and-projection",
     startedAt: body.startedAt,
     files: [],
@@ -600,7 +600,7 @@ async function maybeStopProfiling(
     return {
       enabled: true,
       status: "captured",
-      target: "nextjs-app-process",
+      target: "go-backend-process",
       scope: "request-and-projection",
       format: body.format,
       startedAt: body.startedAt,
@@ -719,12 +719,12 @@ function buildRunConditions() {
     },
     software: {
       node: process.version,
-      nextMode: config.nextMode,
+      frontendMode: config.nextMode,
       packageManager: "pnpm",
       loadGenerator: "node-fetch-concurrency-runner",
     },
     services: {
-      nextjs: {
+      frontend: {
         appUrl: config.appUrl,
         instanceCount: config.appInstanceCount,
       },
@@ -851,13 +851,13 @@ function readConfig(): BenchmarkConfig {
   }
 
   return {
-    appUrl: process.env.BENCHMARK_APP_URL ?? "http://localhost:3000",
+    appUrl: process.env.BENCHMARK_APP_URL ?? "http://localhost:3005",
     architectureLane: process.env.BENCHMARK_ARCHITECTURE_LANE ?? "postgres-baseline",
     databaseUrl,
     requests: readPositiveIntegerEnv("BENCHMARK_REQUESTS", 1000),
     httpConcurrency: readPositiveIntegerEnv("BENCHMARK_HTTP_CONCURRENCY", 1000),
     appInstanceCount: readPositiveIntegerEnv("BENCHMARK_NEXTJS_INSTANCES", 1),
-    nextMode: process.env.BENCHMARK_NEXT_MODE ?? "next dev",
+    nextMode: process.env.BENCHMARK_NEXT_MODE ?? "buyer-web dev",
     postgresInstanceCount: readPositiveIntegerEnv("BENCHMARK_POSTGRES_INSTANCES", 1),
     postgresPoolMax: readPositiveIntegerEnv("BENCHMARK_POSTGRES_POOL_MAX", 5),
     projectionBatchSize: readPositiveIntegerEnv("BENCHMARK_PROJECTION_BATCH_SIZE", 1000),

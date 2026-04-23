@@ -9,7 +9,7 @@ const defaultConcurrencySteps = [50, 100, 250, 500, 1000];
 const cartScenarioName = "checkout-postgres-multi-sku-cart";
 
 async function main() {
-  const appUrl = process.env.BENCHMARK_APP_URL ?? "http://localhost:3000";
+  const appUrl = process.env.BENCHMARK_APP_URL ?? "http://localhost:3005";
   const lane = process.env.BENCHMARK_ARCHITECTURE_LANE ?? "postgres-baseline";
   const concurrencySteps = readConcurrencySteps();
   const workloadType = readWorkloadType();
@@ -45,7 +45,7 @@ async function main() {
       BENCHMARK_SCENARIO_NAME: resolvedScenarioName,
       BENCHMARK_WORKLOAD_TYPE: workloadType,
       BENCHMARK_HTTP_CONCURRENCY: String(concurrency),
-      BENCHMARK_NEXT_MODE: "next start",
+      BENCHMARK_NEXT_MODE: "buyer-web preview",
     });
   }
 }

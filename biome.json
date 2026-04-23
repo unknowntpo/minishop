@@ -2,12 +2,11 @@
   "$schema": "https://biomejs.dev/schemas/2.4.12/schema.json",
   "files": {
     "includes": [
-      "app/**",
-      "components/**",
+      "buyer-web/**",
       "db/**",
       "src/**",
       "scripts/**",
-      "test/**",
+      "e2e/**",
       "*.ts",
       "*.tsx",
       "*.json",

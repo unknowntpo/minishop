@@ -49,7 +49,9 @@ type BenchmarkArtifact = {
 
 const workdir = process.cwd();
 const runningInContainer = process.env.BENCHMARK_IN_CONTAINER === "1";
-const appUrl = process.env.BENCHMARK_APP_URL ?? (runningInContainer ? "http://app:3000" : "http://localhost:3000");
+const appUrl =
+  process.env.BENCHMARK_APP_URL ??
+  (runningInContainer ? "http://go-backend:3000" : "http://localhost:3005");
 const scenarioName = process.env.BENCHMARK_SCENARIO_NAME ?? "buy-intent-bypass-created";
 const resultsRoot = process.env.BENCHMARK_RESULTS_DIR ?? "benchmark-results";
 const requests = readPositiveIntegerEnv("BENCHMARK_REQUESTS", 10000);
@@ -98,7 +100,7 @@ async function main() {
     if (!runningInContainer) {
       console.log(`[benchmark:sweep] starting production services for concurrency=${concurrency}`);
       execSync(
-        `docker compose --profile benchmark up -d --build --scale app=${appReplicas} app app-lb worker-buy-intents-ingest worker-staged-buy-intents-process worker-projections`,
+        "docker compose --profile benchmark up -d --build go-backend worker-buy-intents-ingest worker-staged-buy-intents-process worker-projections",
         {
           cwd: workdir,
           stdio: "inherit",

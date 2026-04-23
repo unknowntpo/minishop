@@ -10,7 +10,7 @@ const scenarioName = "checkout-postgres-baseline";
 const cartScenarioName = "checkout-postgres-multi-sku-cart";
 
 async function main() {
-  const appUrl = process.env.BENCHMARK_APP_URL ?? "http://localhost:3000";
+  const appUrl = process.env.BENCHMARK_APP_URL ?? "http://localhost:3005";
   const shouldReset = process.env.BENCHMARK_RESET === "1";
   const resolvedScenarioName = readScenarioName();
   let benchmarkFailed = false;

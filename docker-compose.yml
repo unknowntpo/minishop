@@ -127,60 +127,6 @@ services:
     ports:
       - "${MINISHOP_GRAFANA_PORT:-3002}:3000"
 
-  app:
-    build:
-      context: .
-      dockerfile: Dockerfile.app
-    restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
-      nats:
-        condition: service_started
-      redpanda:
-        condition: service_started
-    environment:
-      DATABASE_URL: postgres://postgres:postgres@postgres:5432/minishop
-      DATABASE_POOL_MAX: ${APP_DATABASE_POOL_MAX:-16}
-      NATS_URL: nats://nats:4222
-      NATS_BUY_INTENT_STREAM: ${NATS_BUY_INTENT_STREAM:-BUY_INTENT_COMMANDS}
-      NATS_BUY_INTENT_SUBJECT: ${NATS_BUY_INTENT_SUBJECT:-buy-intent.command}
-      NATS_BUY_INTENT_RETRY_SUBJECT: ${NATS_BUY_INTENT_RETRY_SUBJECT:-buy-intent.retry}
-      NATS_BUY_INTENT_DLQ_SUBJECT: ${NATS_BUY_INTENT_DLQ_SUBJECT:-buy-intent.dlq}
-      NATS_BUY_INTENT_DURABLE_CONSUMER: ${NATS_BUY_INTENT_DURABLE_CONSUMER:-buy-intent-ingest}
-      NATS_BUY_INTENT_INGEST_BATCH_SIZE: ${NATS_BUY_INTENT_INGEST_BATCH_SIZE:-500}
-      NATS_BUY_INTENT_INGEST_EXPIRES_MS: ${NATS_BUY_INTENT_INGEST_EXPIRES_MS:-25}
-      NATS_BUY_INTENT_INGEST_RETRY_DELAY_MS: ${NATS_BUY_INTENT_INGEST_RETRY_DELAY_MS:-1000}
-      NATS_BUY_INTENT_ACK_WAIT_MS: ${NATS_BUY_INTENT_ACK_WAIT_MS:-30000}
-      NATS_BUY_INTENT_INGEST_CONTINUOUS: ${NATS_BUY_INTENT_INGEST_CONTINUOUS:-0}
-      KAFKA_BROKERS: ${KAFKA_BROKERS:-redpanda:9092}
-      KAFKA_CLIENT_ID: ${KAFKA_CLIENT_ID:-minishop-app}
-      KAFKA_SECKILL_REQUEST_TOPIC: ${KAFKA_SECKILL_REQUEST_TOPIC:-inventory.seckill.requested}
-      KAFKA_SECKILL_RESULT_TOPIC: ${KAFKA_SECKILL_RESULT_TOPIC:-inventory.seckill.result}
-      KAFKA_SECKILL_DLQ_TOPIC: ${KAFKA_SECKILL_DLQ_TOPIC:-inventory.seckill.dlq}
-      KAFKA_SECKILL_BUCKET_COUNT: ${KAFKA_SECKILL_BUCKET_COUNT:-${SECKILL_BUCKET_COUNT:-4}}
-      KAFKA_SECKILL_REQUEST_TOPIC_PARTITIONS: ${KAFKA_SECKILL_REQUEST_TOPIC_PARTITIONS:-${SECKILL_BUCKET_COUNT:-4}}
-      KAFKA_SECKILL_RESULT_TOPIC_PARTITIONS: ${KAFKA_SECKILL_RESULT_TOPIC_PARTITIONS:-${SECKILL_BUCKET_COUNT:-4}}
-      KAFKA_SECKILL_DLQ_TOPIC_PARTITIONS: ${KAFKA_SECKILL_DLQ_TOPIC_PARTITIONS:-${SECKILL_BUCKET_COUNT:-4}}
-      KAFKA_SECKILL_MAX_PROBE: ${KAFKA_SECKILL_MAX_PROBE:-4}
-      KAFKA_SECKILL_CONFIG_CACHE_TTL_MS: ${KAFKA_SECKILL_CONFIG_CACHE_TTL_MS:-60000}
-      KAFKA_SECKILL_PUBLISH_BATCH_SIZE: ${KAFKA_SECKILL_PUBLISH_BATCH_SIZE:-64}
-      KAFKA_SECKILL_PUBLISH_LINGER_MS: ${KAFKA_SECKILL_PUBLISH_LINGER_MS:-2}
-      KAFKA_SECKILL_CLIENT_LINGER_MS: ${KAFKA_SECKILL_CLIENT_LINGER_MS:-1}
-      KAFKA_SECKILL_CLIENT_BATCH_NUM_MESSAGES: ${KAFKA_SECKILL_CLIENT_BATCH_NUM_MESSAGES:-10000}
-      GO_SECKILL_INGRESS_PROXY_ENABLED: ${GO_SECKILL_INGRESS_PROXY_ENABLED:-0}
-      GO_SECKILL_INGRESS_INTERNAL_URL: ${GO_SECKILL_INGRESS_INTERNAL_URL:-http://go-seckill-ingress:3000}
-      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:3005}
-      BUY_INTENT_BATCH_SIZE: ${BUY_INTENT_BATCH_SIZE:-100}
-      BUY_INTENT_PROCESS_POLL_INTERVAL_MS: ${BUY_INTENT_PROCESS_POLL_INTERVAL_MS:-1000}
-      OTEL_ENABLED: ${OTEL_ENABLED:-1}
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://tempo:4318}
-      OTEL_SERVICE_NAME: minishop-app
-      NODE_OPTIONS: ${NODE_OPTIONS:---require=/app/instrumentation.node.cjs}
-      NEXT_TELEMETRY_DISABLED: "1"
-    expose:
-      - "3000"
-
   go-backend:
     build:
       context: .
@@ -234,17 +180,6 @@ services:
       - "${MINISHOP_GO_BACKEND_PORT:-3005}:3000"
       - "${MINISHOP_GO_BACKEND_PPROF_PORT:-6060}:6060"
 
-  app-lb:
-    image: nginx:1.27-alpine
-    container_name: minishop-app-lb
-    restart: unless-stopped
-    depends_on:
-      - app
-    volumes:
-      - ./ops/nginx/app-lb.conf:/etc/nginx/conf.d/default.conf:ro
-    ports:
-      - "${MINISHOP_APP_PORT:-3001}:3000"
-
   buyer-web:
     build:
       context: .
@@ -257,7 +192,7 @@ services:
       go-backend:
         condition: service_started
     ports:
-      - "${MINISHOP_BUYER_WEB_PORT:-3006}:3000"
+      - "${MINISHOP_APP_PORT:-3001}:3000"
 
   go-seckill-ingress:
     build:
@@ -537,11 +472,11 @@ services:
         condition: service_started
       redpanda:
         condition: service_started
-      app:
+      go-backend:
         condition: service_started
     environment:
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/minishop
-      BENCHMARK_APP_URL: ${BENCHMARK_APP_URL:-http://app:3000}
+      BENCHMARK_APP_URL: ${BENCHMARK_APP_URL:-http://go-backend:3000}
       BENCHMARK_IN_CONTAINER: "1"
       BENCHMARK_KAFKA_CLIENT: confluent-kafka-javascript
       BENCHMARK_KAFKA_BROKERS: ${KAFKA_BROKERS:-redpanda:9092}

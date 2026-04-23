@@ -2,7 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider, createRootRoute, createRoute, createRouter, Navigate, Outlet, Link, useNavigate, useParams } from "@tanstack/react-router";
-import "../../app/globals.css";
+import "./styles/global.css";
 import type { Product } from "@shared/domain/catalog/product";
 import type { AdminDashboardViewModel } from "@shared/presentation/view-models/admin-dashboard";
 import {

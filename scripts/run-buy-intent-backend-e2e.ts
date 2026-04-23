@@ -8,7 +8,7 @@ import { Pool } from "pg";
 const workdir = "/Users/unknowntpo/repo/unknowntpo/minishop/main";
 const databaseUrl = process.env.DATABASE_URL ?? "postgres://postgres:postgres@localhost:5433/minishop";
 const natsUrl = process.env.NATS_URL ?? "nats://localhost:4222";
-const appBaseUrl = process.env.MINISHOP_APP_BASE_URL ?? "http://localhost:3000";
+const appBaseUrl = process.env.MINISHOP_APP_BASE_URL ?? "http://localhost:3005";
 const e2eLockKey = 20_260_420;
 
 async function main() {
