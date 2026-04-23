@@ -58,8 +58,20 @@ type CheckoutCompleteResponse = {
   updatedAt: string;
 };
 
+type CartEntry = {
+  quantity: number;
+  slug: string;
+};
+
+type CartProduct = Product & {
+  quantity: number;
+  subtotalAmountMinor: number;
+};
+
 const queryClient = new QueryClient();
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL?.trim() || "http://127.0.0.1:3005").replace(/\/+$/, "");
+const cartStorageKey = "minishop-cart-v1";
+const cartUpdatedEvent = "minishop:cart-updated";
 
 function buildApiUrl(pathname: string) {
   const normalized = pathname.startsWith("/") ? pathname : `/${pathname}`;
@@ -242,10 +254,68 @@ function ProductDetailScreen() {
   });
   const [quantity, setQuantity] = useState(1);
   const [status, setStatus] = useState<string | null>(null);
+  const [cartEntries, setCartEntries] = useState<CartEntry[]>([]);
+  const [cartOpen, setCartOpen] = useState(false);
+  const catalogQuery = useQuery({
+    queryKey: ["products"],
+    queryFn: () => requestJson<Product[]>("/api/products", { method: "GET" }),
+  });
 
   useEffect(() => {
     setQuantity(1);
   }, [slug]);
+
+  const productBySlug = React.useMemo(
+    () => new Map((catalogQuery.data ?? []).map((catalogProduct) => [catalogProduct.slug, catalogProduct])),
+    [catalogQuery.data],
+  );
+
+  const cartProducts = React.useMemo(
+    () => hydrateCartProducts(cartEntries, productBySlug),
+    [cartEntries, productBySlug],
+  );
+  const cartCheckoutItems = React.useMemo<CheckoutActionItem[]>(
+    () =>
+      cartProducts.map((cartProduct) => ({
+        currency: cartProduct.currency,
+        quantity: cartProduct.quantity,
+        skuId: cartProduct.skuId,
+        unitPriceAmountMinor: cartProduct.priceAmountMinor,
+      })),
+    [cartProducts],
+  );
+  const totalUnits = cartProducts.reduce((sum, cartProduct) => sum + cartProduct.quantity, 0);
+  const distinctSkuCount = cartProducts.length;
+  const totalAmountMinor = cartProducts.reduce(
+    (sum, cartProduct) => sum + cartProduct.subtotalAmountMinor,
+    0,
+  );
+
+  useEffect(() => {
+    setCartEntries(readCart(productBySlug));
+  }, [productBySlug]);
+
+  useEffect(() => {
+    function syncStoredCart() {
+      setCartEntries(readCart(productBySlug));
+    }
+
+    function handleStorage(event: StorageEvent) {
+      if (event.key && event.key !== cartStorageKey) {
+        return;
+      }
+
+      syncStoredCart();
+    }
+
+    window.addEventListener("storage", handleStorage);
+    window.addEventListener(cartUpdatedEvent, syncStoredCart);
+
+    return () => {
+      window.removeEventListener("storage", handleStorage);
+      window.removeEventListener(cartUpdatedEvent, syncStoredCart);
+    };
+  }, [productBySlug]);
 
   if (productQuery.isLoading) {
     return <section className="panel">Loading product…</section>;
@@ -258,6 +328,47 @@ function ProductDetailScreen() {
   const product = productQuery.data;
   const localized = getLocalizedProduct(product, locale);
   const maxQuantity = Math.max(product.available, 1);
+
+  function syncCart(nextEntries: CartEntry[]) {
+    const normalized = normalizeCart(nextEntries, productBySlug);
+    setCartEntries(normalized);
+    persistCart(normalized);
+    if (normalized.length === 0) {
+      setCartOpen(false);
+    }
+  }
+
+  function addCurrentProductToCart() {
+    syncCart(
+      mergeCartEntry(cartEntries, {
+        quantity,
+        slug: product.slug,
+      }),
+    );
+    setCartOpen(true);
+  }
+
+  function updateCartQuantity(nextSlug: string, nextQuantity: number) {
+    syncCart(
+      cartEntries.map((entry) =>
+        entry.slug === nextSlug
+          ? {
+              ...entry,
+              quantity: nextQuantity,
+            }
+          : entry,
+      ),
+    );
+  }
+
+  function removeFromCart(nextSlug: string) {
+    syncCart(cartEntries.filter((entry) => entry.slug !== nextSlug));
+  }
+
+  function clearCart() {
+    syncCart([]);
+    setCartOpen(false);
+  }
 
   async function buyNow() {
     setStatus(messages.checkout.submitting);
@@ -311,6 +422,132 @@ function ProductDetailScreen() {
 
   return (
     <section className="product-detail-shell">
+      <div className={`floating-cart header-cart${cartOpen ? " is-open" : ""}`}>
+        <button
+          aria-expanded={cartOpen}
+          aria-label={messages.cart.drawerEyebrow}
+          className="header-cart-trigger"
+          onClick={() => setCartOpen((current) => !current)}
+          type="button"
+        >
+          <svg className="cart-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              d="M6.2 6.8h14.1l-1.5 7.3a2 2 0 0 1-2 1.6H9.1a2 2 0 0 1-2-1.7L5.7 4.9H3.5"
+              fill="none"
+              stroke="currentColor"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth="2"
+            />
+            <circle cx="9.5" cy="19" r="1.3" fill="currentColor" />
+            <circle cx="17" cy="19" r="1.3" fill="currentColor" />
+          </svg>
+          {totalUnits > 0 ? (
+            <span className="cart-count" aria-hidden="true">
+              {distinctSkuCount}
+            </span>
+          ) : null}
+          <span className="cart-summary">
+            <strong>{totalUnits > 0 ? messages.cart.summary : messages.cart.emptyTitle}</strong>
+            <span className="muted">
+              {cartProducts.length > 0
+                ? messages.cart.populatedBody(totalUnits, distinctSkuCount)
+                : messages.cart.emptyBody}
+            </span>
+          </span>
+          {cartProducts.length > 0 ? (
+            <strong className="cart-summary-total">
+              {formatBuyerMoney(totalAmountMinor, cartProducts[0]?.currency ?? product.currency, locale)}
+            </strong>
+          ) : null}
+          <span className="cart-toggle-hint" aria-hidden="true">
+            {cartOpen ? messages.actions.hide : messages.actions.open}
+          </span>
+        </button>
+
+        <div className={`cart-drawer${cartOpen ? " visible" : ""}`}>
+          <div className="cart-drawer-header">
+            <div className="cart-drawer-heading">
+              <p className="eyebrow">{messages.cart.drawerEyebrow}</p>
+              <h2>{cartProducts.length > 0 ? messages.cart.reviewTitle : messages.cart.emptyTitle}</h2>
+            </div>
+          </div>
+
+          {cartProducts.length > 0 ? (
+            <>
+              <div className="cart-list">
+                {cartProducts.map((cartProduct) => (
+                  <article className="cart-item" key={cartProduct.slug}>
+                    <div className="cart-thumb" aria-hidden="true" />
+                    <div className="cart-item-body">
+                      <div className="cart-item-copy">
+                        <strong>{getLocalizedProduct(cartProduct, locale).name}</strong>
+                        <p className="muted">
+                          {messages.cart.itemMeta(
+                            cartProduct.skuCode,
+                            formatBuyerMoney(cartProduct.subtotalAmountMinor, cartProduct.currency, locale),
+                          )}
+                        </p>
+                      </div>
+                      <div className="cart-item-actions">
+                        <div className="quantity-stepper compact">
+                          <button
+                            className="quantity-button"
+                            type="button"
+                            disabled={cartProduct.quantity <= 1}
+                            onClick={() =>
+                              updateCartQuantity(
+                                cartProduct.slug,
+                                clampQuantity(cartProduct.quantity - 1, maxQuantityFor(cartProduct)),
+                              )
+                            }
+                          >
+                            −
+                          </button>
+                          <strong className="quantity-value">{cartProduct.quantity}</strong>
+                          <button
+                            className="quantity-button"
+                            type="button"
+                            disabled={cartProduct.quantity >= maxQuantityFor(cartProduct)}
+                            onClick={() =>
+                              updateCartQuantity(
+                                cartProduct.slug,
+                                clampQuantity(cartProduct.quantity + 1, maxQuantityFor(cartProduct)),
+                              )
+                            }
+                          >
+                            +
+                          </button>
+                        </div>
+                        <button className="text-button" type="button" onClick={() => removeFromCart(cartProduct.slug)}>
+                          {messages.actions.remove}
+                        </button>
+                      </div>
+                    </div>
+                  </article>
+                ))}
+              </div>
+
+              <div className="cart-checkout">
+                <button className="button secondary" type="button" onClick={clearCart}>
+                  {messages.actions.remove}
+                </button>
+                <button className="button primary" type="button" onClick={() => void checkoutCart()}>
+                  {messages.actions.checkoutCart(
+                    formatBuyerMoney(totalAmountMinor, cartProducts[0]?.currency ?? product.currency, locale),
+                  )}
+                </button>
+              </div>
+            </>
+          ) : (
+            <div className="cart-empty">
+              <strong>{messages.cart.emptyDrawerTitle}</strong>
+              <p className="muted">{messages.cart.emptyDrawerBody}</p>
+            </div>
+          )}
+        </div>
+      </div>
+
       <article className="panel product-hero">
         <div className="product-image-wrapper">
           <img className="product-image" src={product.image.src} alt={localized.image.alt} />
@@ -332,14 +569,50 @@ function ProductDetailScreen() {
               onChange={(event) => setQuantity(Math.min(maxQuantity, Math.max(1, Number(event.target.value) || 1)))}
             />
           </label>
-          <button className="button primary" type="button" onClick={buyNow}>
-            {messages.actions.buyNow}
-          </button>
+          <div className="purchase-actions">
+            <button className="button secondary" type="button" onClick={addCurrentProductToCart}>
+              {messages.actions.addToCart}
+            </button>
+            <button className="button primary" type="button" onClick={buyNow}>
+              {messages.actions.buyNow}
+            </button>
+          </div>
           {status ? <div className="checkout-demo-status polling">{status}</div> : null}
         </div>
       </article>
     </section>
   );
+
+  async function checkoutCart() {
+    if (cartCheckoutItems.length === 0) {
+      return;
+    }
+
+    setStatus(messages.checkout.submitting);
+    try {
+      const body = await createBuyIntent(cartCheckoutItems);
+      setStatus(messages.checkout.accepted);
+
+      const commandStatus = await waitForBuyIntentCommandStatus(body.commandId);
+      if (commandStatus.status === "failed" || !commandStatus.checkoutIntentId) {
+        throw new Error(commandStatus.failureMessage ?? commandStatus.failureCode ?? messages.checkout.failed);
+      }
+
+      setStatus(messages.checkout.completing);
+      await waitForCheckoutIntentProjection(commandStatus.checkoutIntentId);
+      await completeDemoCheckout(commandStatus.checkoutIntentId);
+      await processProjections();
+      await waitForCheckoutStatus(commandStatus.checkoutIntentId);
+      clearCart();
+      await navigate({
+        to: "/checkout-complete/$checkoutIntentId",
+        params: { checkoutIntentId: commandStatus.checkoutIntentId },
+        search: { commandId: commandStatus.commandId },
+      });
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : messages.checkout.failed);
+    }
+  }
 }
 
 function CheckoutCompleteScreen() {
@@ -573,6 +846,27 @@ async function processProjections() {
   }
 }
 
+async function createBuyIntent(items: CheckoutActionItem[]) {
+  const idempotencyKey = crypto.randomUUID();
+  const response = await fetch(buildApiUrl("/api/buy-intents"), {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "idempotency-key": idempotencyKey,
+    },
+    body: JSON.stringify({
+      buyerId: "demo_buyer",
+      items,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
+
+  return (await response.json()) as { commandId: string };
+}
+
 async function waitForBuyIntentCommandStatus(commandId: string) {
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
@@ -649,6 +943,108 @@ async function readError(response: Response) {
   const body = (await response.json().catch(() => null)) as { error?: string; requestId?: string } | null;
   const message = body?.error ?? `Request failed with ${response.status}.`;
   return body?.requestId ? `${message} Reference: ${body.requestId}` : message;
+}
+
+function hydrateCartProducts(entries: CartEntry[], productBySlug: Map<string, Product>) {
+  return normalizeCart(entries, productBySlug)
+    .map((entry) => {
+      const cartProduct = productBySlug.get(entry.slug);
+      if (!cartProduct) {
+        return null;
+      }
+      return {
+        ...cartProduct,
+        quantity: entry.quantity,
+        subtotalAmountMinor: cartProduct.priceAmountMinor * entry.quantity,
+      } satisfies CartProduct;
+    })
+    .filter((cartProduct): cartProduct is CartProduct => cartProduct !== null);
+}
+
+function mergeCartEntry(entries: CartEntry[], nextEntry: CartEntry) {
+  const existing = entries.find((entry) => entry.slug === nextEntry.slug);
+  if (!existing) {
+    return [...entries, nextEntry];
+  }
+  return entries.map((entry) =>
+    entry.slug === nextEntry.slug
+      ? {
+          ...entry,
+          quantity: entry.quantity + nextEntry.quantity,
+        }
+      : entry,
+  );
+}
+
+function normalizeCart(entries: CartEntry[], productBySlug: Map<string, Product>) {
+  const normalized = new Map<string, CartEntry>();
+  for (const entry of entries) {
+    const cartProduct = productBySlug.get(entry.slug);
+    if (!cartProduct) {
+      continue;
+    }
+
+    const quantity = clampQuantity(entry.quantity, maxQuantityFor(cartProduct));
+    if (quantity <= 0) {
+      continue;
+    }
+
+    normalized.set(entry.slug, {
+      quantity,
+      slug: entry.slug,
+    });
+  }
+
+  return [...normalized.values()].sort((left, right) => left.slug.localeCompare(right.slug));
+}
+
+function readCart(productBySlug: Map<string, Product>) {
+  try {
+    const raw = window.localStorage.getItem(cartStorageKey);
+    if (!raw) {
+      return [];
+    }
+
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    return normalizeCart(
+      parsed.flatMap((entry) => {
+        if (!entry || typeof entry !== "object") {
+          return [];
+        }
+        const { quantity, slug } = entry as Partial<CartEntry>;
+        if (typeof slug !== "string" || typeof quantity !== "number") {
+          return [];
+        }
+        return [{ quantity, slug }];
+      }),
+      productBySlug,
+    );
+  } catch {
+    return [];
+  }
+}
+
+function persistCart(entries: CartEntry[]) {
+  window.localStorage.setItem(cartStorageKey, JSON.stringify(entries));
+  window.dispatchEvent(new Event(cartUpdatedEvent));
+}
+
+function maxQuantityFor(product: Product) {
+  return Math.max(0, Math.min(product.available, 99));
+}
+
+function clampQuantity(quantity: number, maxQuantity: number) {
+  if (maxQuantity <= 0) {
+    return 0;
+  }
+  if (!Number.isFinite(quantity)) {
+    return 1;
+  }
+  return Math.max(1, Math.min(Math.round(quantity), maxQuantity));
 }
 
 ReactDOM.createRoot(document.getElementById("root")!).render(

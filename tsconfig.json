@@ -10,7 +10,8 @@
     "module": "esnext",
     "moduleResolution": "bundler",
     "paths": {
-      "@/*": ["./*"]
+      "@/*": ["./*"],
+      "@shared/*": ["./src/*"]
     },
     "resolveJsonModule": true,
     "isolatedModules": true,

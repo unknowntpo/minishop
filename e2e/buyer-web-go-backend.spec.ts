@@ -28,9 +28,50 @@ test.describe("buyer web against go backend", () => {
     await expect(page.locator(".completion-grid")).toContainText("confirmed");
   });
 
+  test("buyer completes a cart checkout from product detail", async ({ page }) => {
+    test.slow();
+
+    await page.goto("/products/travel-cap");
+    await expect(page).toHaveURL(/\/products\/travel-cap$/);
+
+    await page.getByRole("button", { name: /Add to cart|加入購物車/i }).click();
+    await expect(page.getByText(/購物車|cart/i).first()).toBeVisible();
+
+    const buyIntentAccepted = page.waitForResponse(
+      (response) =>
+        response.url() === `${apiBaseUrl}/api/buy-intents` &&
+        response.request().method() === "POST" &&
+        response.status() === 202,
+      { timeout: 30_000 },
+    );
+
+    await page.getByRole("button", { name: /結帳購物車|Checkout cart/i }).click();
+    await buyIntentAccepted;
+
+    await page.waitForURL(/\/checkout-complete\/[^?]+/, { timeout: 90_000 });
+    await expect(page.locator(".checkout-complete-panel")).toBeVisible();
+    await expect(page.locator(".completion-grid")).toContainText("confirmed");
+  });
+
   test("admin dashboard loads from go backend", async ({ page }) => {
     await page.goto("/internal/admin");
     await expect(page.getByRole("heading", { name: "Projection status" })).toBeVisible();
     await expect(page.locator(".admin-product-card").first()).toBeVisible();
+  });
+
+  test("admin can start and stop seckill through go backend", async ({ page }) => {
+    test.slow();
+
+    await page.goto("/internal/admin");
+    const candidateCard = page.locator(".admin-product-card", { hasText: /seckill candidate/i }).first();
+    await expect(candidateCard).toBeVisible();
+
+    const stockInput = candidateCard.getByRole("spinbutton");
+    await stockInput.fill("25");
+    await candidateCard.getByRole("button", { name: /開始秒殺/i }).click();
+    await expect(candidateCard.getByRole("button", { name: /停止秒殺/i })).toBeEnabled({ timeout: 15_000 });
+
+    await candidateCard.getByRole("button", { name: /停止秒殺/i }).click();
+    await expect(candidateCard.getByRole("button", { name: /停止秒殺/i })).toBeDisabled({ timeout: 15_000 });
   });
 });
