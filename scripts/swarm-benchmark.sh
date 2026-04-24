@@ -76,6 +76,57 @@ wait_for_service_container() {
   return 1
 }
 
+service_replica_count() {
+  local service="$1"
+  docker_cmd service inspect \
+    --format '{{if .Spec.Mode.Replicated}}{{.Spec.Mode.Replicated.Replicas}}{{else}}1{{end}}' \
+    "$(service_name "${service}")"
+}
+
+service_env_value() {
+  local service="$1"
+  local key="$2"
+  local fallback="${3:-}"
+  local value
+  value="$(
+    docker_cmd service inspect \
+      --format '{{range .Spec.TaskTemplate.ContainerSpec.Env}}{{println .}}{{end}}' \
+      "$(service_name "${service}")" |
+      awk -F= -v key="${key}" '$1 == key { value = substr($0, length(key) + 2) } END { print value }'
+  )"
+
+  if [[ -n "${value}" ]]; then
+    printf '%s\n' "${value}"
+    return 0
+  fi
+
+  printf '%s\n' "${fallback}"
+}
+
+wait_for_service_replicas() {
+  local service="$1"
+  local expected="$2"
+  local attempt
+  for ((attempt = 1; attempt <= 90; attempt += 1)); do
+    local running
+    running="$(
+      docker_cmd ps \
+        --filter "label=com.docker.swarm.service.name=$(service_name "${service}")" \
+        --filter "status=running" \
+        --format '{{.ID}}' |
+        wc -l |
+        tr -d '[:space:]'
+    )"
+    if [[ "${running}" == "${expected}" ]]; then
+      return 0
+    fi
+    sleep 2
+  done
+
+  echo "timed out waiting for ${expected} running replica(s) of ${service}" >&2
+  return 1
+}
+
 wait_for_postgres_ready() {
   wait_for_service_container "benchmark-postgres"
   local id
@@ -167,16 +218,20 @@ stack_wait_seckill() {
   local result_topic="${BENCHMARK_KAFKA_SECKILL_RESULT_TOPIC:-inventory.seckill.result}"
   local dlq_topic="${BENCHMARK_KAFKA_SECKILL_DLQ_TOPIC:-inventory.seckill.dlq}"
   local partitions="${BENCHMARK_SECKILL_BUCKET_COUNT:-4}"
-  local worker_group="${KAFKA_SECKILL_APPLICATION_ID:-minishop-seckill-worker-benchmark}"
-  local sink_group="${KAFKA_SECKILL_RESULT_SINK_GROUP_ID:-minishop-seckill-result-sink-benchmark}"
+  local worker_group
+  local sink_group
+  local worker_replicas
+  worker_replicas="$(service_replica_count "benchmark-worker-seckill")"
+  worker_group="${KAFKA_SECKILL_APPLICATION_ID:-$(service_env_value "benchmark-worker-seckill" "KAFKA_SECKILL_APPLICATION_ID" "minishop-seckill-worker-benchmark")}"
+  sink_group="${KAFKA_SECKILL_RESULT_SINK_GROUP_ID:-$(service_env_value "benchmark-worker-seckill-result-sink" "KAFKA_SECKILL_RESULT_SINK_GROUP_ID" "minishop-seckill-result-sink-benchmark")}"
 
   stack_wait_checkout
-  wait_for_service_container "benchmark-worker-seckill"
+  wait_for_service_replicas "benchmark-worker-seckill" "${worker_replicas}"
   wait_for_service_container "benchmark-worker-seckill-result-sink"
   ensure_topic "${request_topic}" "${partitions}"
   ensure_topic "${result_topic}" "${partitions}"
   ensure_topic "${dlq_topic}" "${partitions}"
-  wait_for_consumer_group "${worker_group}"
+  wait_for_consumer_group "${worker_group}" "${worker_replicas}"
   wait_for_consumer_group "${sink_group}"
 }
 
@@ -289,6 +344,18 @@ stack_ps() {
   docker_cmd stack ps "${stack_name}"
 }
 
+scale_seckill_worker() {
+  local replicas="$1"
+  if ! [[ "${replicas}" =~ ^[1-9][0-9]*$ ]]; then
+    echo "replicas must be a positive integer" >&2
+    exit 1
+  fi
+
+  docker_cmd service scale "$(service_name "benchmark-worker-seckill")=${replicas}" >/dev/null
+  wait_for_service_replicas "benchmark-worker-seckill" "${replicas}"
+  stack_wait_seckill
+}
+
 force_update_service_image() {
   local service="$1"
   local image="$2"
@@ -363,11 +430,17 @@ run_benchmark() {
   stack_wait "${wait_mode}"
   id="$(require_runner)"
 
+  local seckill_worker_replicas=""
+  if docker_cmd service inspect "$(service_name "benchmark-worker-seckill")" >/dev/null 2>&1; then
+    seckill_worker_replicas="$(service_replica_count "benchmark-worker-seckill")"
+  fi
+
   echo "run_id=${run_id}"
   docker_cmd exec "${id}" sh -lc "
     mkdir -p '${results_dir}' &&
     export BENCHMARK_RUN_ID='${run_id}' &&
     export BENCHMARK_RESULTS_DIR='${results_dir}' &&
+    export BENCHMARK_SECKILL_WORKER_REPLICAS='${seckill_worker_replicas}' &&
     $*
   "
 }
@@ -414,6 +487,14 @@ case "${1:-}" in
   stack-ps)
     shift
     stack_ps "$@"
+    ;;
+  seckill-worker-scale)
+    shift
+    if [[ "$#" -ne 1 ]]; then
+      echo "usage: $0 seckill-worker-scale <replicas>" >&2
+      exit 1
+    fi
+    scale_seckill_worker "$1"
     ;;
   runner-id)
     shift
@@ -558,6 +639,7 @@ usage:
   swarm-benchmark.sh stack-rm
   swarm-benchmark.sh stack-services
   swarm-benchmark.sh stack-ps
+  swarm-benchmark.sh seckill-worker-scale <replicas>
   swarm-benchmark.sh runner-id
   swarm-benchmark.sh exec-runner <cmd...>
   swarm-benchmark.sh run-checkout-reset

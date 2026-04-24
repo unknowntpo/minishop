@@ -208,7 +208,7 @@ services:
       KAFKA_SECKILL_REQUEST_TOPIC_PARTITIONS: ${BENCHMARK_SECKILL_BUCKET_COUNT:-4}
       KAFKA_SECKILL_RESULT_TOPIC_PARTITIONS: ${BENCHMARK_SECKILL_BUCKET_COUNT:-4}
       KAFKA_SECKILL_DLQ_TOPIC_PARTITIONS: ${BENCHMARK_SECKILL_BUCKET_COUNT:-4}
-      KAFKA_SECKILL_STATE_DIR: /var/lib/minishop-seckill/state
+      KAFKA_SECKILL_STATE_DIR: /tmp/minishop-seckill/state
       KAFKA_SECKILL_CLEAR_STATE_ON_START: ${KAFKA_SECKILL_CLEAR_STATE_ON_START:-0}
       OTEL_TRACES_EXPORTER: none
       OTEL_METRICS_EXPORTER: none
@@ -216,8 +216,6 @@ services:
       JAVA_TOOL_OPTIONS: ${WORKER_SECKILL_JAVA_TOOL_OPTIONS:--XX:-UsePerfData -javaagent:/opt/jmx/jmx_prometheus_javaagent.jar=9404:/etc/jmx-exporter/kafka-streams.yml}
     ports:
       - "${BENCHMARK_WORKER_SECKILL_METRICS_PORT:-9404}:9404"
-    volumes:
-      - benchmark_worker_seckill_state:/var/lib/minishop-seckill/state
     deploy:
       replicas: 1
       placement:
@@ -346,7 +344,6 @@ volumes:
   benchmark_postgres_data:
   benchmark_nats_data:
   benchmark_redpanda_data:
-  benchmark_worker_seckill_state:
   benchmark_runner_results:
 
 configs:

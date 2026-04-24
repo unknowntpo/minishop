@@ -39,6 +39,8 @@ type BenchmarkConfig = {
   ensureSeckillEnabled: boolean;
   seckillBucketCount: number;
   seckillMaxProbe: number;
+  seckillWorkerReplicas?: number;
+  seckillRoutingEpoch?: number;
   directKafkaBatchSize: number;
   kafkaClient: string;
   appPublishBatchSize: number;
@@ -2451,6 +2453,8 @@ function readConfig(): BenchmarkConfig {
       readPositiveIntegerEnv("SECKILL_BUCKET_COUNT", 4),
     ),
     seckillMaxProbe: readPositiveIntegerEnv("BENCHMARK_SECKILL_MAX_PROBE", 4),
+    seckillWorkerReplicas: readOptionalPositiveIntegerEnv("BENCHMARK_SECKILL_WORKER_REPLICAS"),
+    seckillRoutingEpoch: readOptionalPositiveIntegerEnv("BENCHMARK_SECKILL_ROUTING_EPOCH"),
     directKafkaBatchSize: readPositiveIntegerEnv("BENCHMARK_DIRECT_KAFKA_BATCH_SIZE", 500),
     kafkaClient: process.env.BENCHMARK_KAFKA_CLIENT ?? "confluent-kafka-javascript",
     appPublishBatchSize: readPositiveIntegerEnv("KAFKA_SECKILL_PUBLISH_BATCH_SIZE", 64),
@@ -2491,6 +2495,12 @@ function buildScenarioTags(config: BenchmarkConfig) {
   if (config.scenarioName.includes("seckill")) {
     tags.bucket = config.seckillBucketCount;
     tags.maxProbe = config.seckillMaxProbe;
+    if (config.seckillWorkerReplicas !== undefined) {
+      tags.workerReplicas = config.seckillWorkerReplicas;
+    }
+    if (config.seckillRoutingEpoch !== undefined) {
+      tags.routingEpoch = config.seckillRoutingEpoch;
+    }
   }
   if (config.ingressImpl) {
     tags.impl = config.ingressImpl;
@@ -2694,6 +2704,22 @@ function readPositiveIntegerEnv(name: string, fallback: number) {
 
   if (!raw) {
     return fallback;
+  }
+
+  const parsed = Number.parseInt(raw, 10);
+
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`${name} must be a positive integer.`);
+  }
+
+  return parsed;
+}
+
+function readOptionalPositiveIntegerEnv(name: string) {
+  const raw = process.env[name]?.trim();
+
+  if (!raw) {
+    return undefined;
   }
 
   const parsed = Number.parseInt(raw, 10);

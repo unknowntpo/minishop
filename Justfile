@@ -27,6 +27,10 @@ stack-ps:
 stack-wait mode="all":
   ./scripts/swarm-benchmark.sh stack-wait {{mode}}
 
+# Scale the seckill Kafka Streams worker and wait for group stability
+seckill-worker-scale replicas:
+  ./scripts/swarm-benchmark.sh seckill-worker-scale {{replicas}}
+
 # Print the active benchmark runner container id
 runner-id:
   ./scripts/swarm-benchmark.sh runner-id
