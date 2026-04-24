@@ -7,6 +7,10 @@ stack_name="${BENCHMARK_STACK_NAME:-minishop-benchmark}"
 docker_context="${DOCKER_CONTEXT:-default}"
 compose_file="${repo_root}/docker-compose.benchmark.yml"
 default_image="${BENCHMARK_LOCAL_IMAGE:-minishop-benchmark-app:local}"
+go_seckill_ingress_image="${BENCHMARK_GO_SECKILL_INGRESS_IMAGE:-minishop-go-seckill-ingress:latest}"
+go_seckill_result_sink_image="${BENCHMARK_GO_SECKILL_RESULT_SINK_IMAGE:-minishop-go-seckill-result-sink:latest}"
+worker_seckill_image="${BENCHMARK_WORKER_SECKILL_IMAGE:-minishop-worker-seckill:latest}"
+worker_seckill_result_sink_image="${BENCHMARK_WORKER_SECKILL_RESULT_SINK_IMAGE:-minishop-worker-seckill-result-sink:latest}"
 runner_service_name="${stack_name}_benchmark-runner"
 
 docker_cmd() {
@@ -38,11 +42,70 @@ build_local_image() {
   docker_cmd build -t "${default_image}" "${repo_root}"
 }
 
-stack_deploy() {
+image_exists() {
+  docker_cmd image inspect "$1" >/dev/null 2>&1
+}
+
+can_build_from_repo() {
+  local dockerfile="$1"
+  shift
+
+  [[ -f "${repo_root}/${dockerfile}" ]] || return 1
+
+  local required_path
+  for required_path in "$@"; do
+    [[ -e "${repo_root}/${required_path}" ]] || return 1
+  done
+}
+
+build_if_missing() {
+  local image="$1"
+  local dockerfile="$2"
+  shift 2
+  local required_paths=("$@")
+
+  if image_exists "${image}"; then
+    return 0
+  fi
+
+  if ! can_build_from_repo "${dockerfile}" "${required_paths[@]}"; then
+    echo "missing image ${image} and cannot auto-build it from this branch" >&2
+    echo "expected dockerfile/source: ${dockerfile} ${required_paths[*]}" >&2
+    return 1
+  fi
+
+  docker_cmd build -f "${repo_root}/${dockerfile}" -t "${image}" "${repo_root}"
+}
+
+prepare_local_images() {
+  local failures=0
+
   build_local_image
+
+  build_if_missing "${go_seckill_ingress_image}" "Dockerfile.go-seckill-ingress" \
+    "services/go-seckill-ingress/go.mod" "services/go-seckill-ingress" || failures=1
+
+  build_if_missing "${go_seckill_result_sink_image}" "Dockerfile.go-seckill-result-sink" \
+    "services/go-seckill-result-sink/go.mod" "services/go-seckill-result-sink" || failures=1
+
+  build_if_missing "${worker_seckill_image}" "Dockerfile.worker" \
+    "workers/node" || failures=1
+
+  build_if_missing "${worker_seckill_result_sink_image}" "Dockerfile.worker" \
+    "workers/node" || failures=1
+
+  return "${failures}"
+}
+
+stack_deploy() {
+  prepare_local_images
 
   export BENCHMARK_RUNNER_IMAGE="${BENCHMARK_RUNNER_IMAGE:-${default_image}}"
   export BENCHMARK_GO_BACKEND_IMAGE="${BENCHMARK_GO_BACKEND_IMAGE:-${default_image}}"
+  export BENCHMARK_GO_SECKILL_INGRESS_IMAGE="${BENCHMARK_GO_SECKILL_INGRESS_IMAGE:-${go_seckill_ingress_image}}"
+  export BENCHMARK_GO_SECKILL_RESULT_SINK_IMAGE="${BENCHMARK_GO_SECKILL_RESULT_SINK_IMAGE:-${go_seckill_result_sink_image}}"
+  export BENCHMARK_WORKER_SECKILL_IMAGE="${BENCHMARK_WORKER_SECKILL_IMAGE:-${worker_seckill_image}}"
+  export BENCHMARK_WORKER_SECKILL_RESULT_SINK_IMAGE="${BENCHMARK_WORKER_SECKILL_RESULT_SINK_IMAGE:-${worker_seckill_result_sink_image}}"
 
   docker_cmd stack deploy --compose-file "${compose_file}" "${stack_name}"
 }
