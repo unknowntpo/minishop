@@ -176,6 +176,15 @@ type BenchmarkProfilingMetadata = {
   }>;
 };
 
+type BackendTimingSnapshot = {
+  available: boolean;
+  targets?: Array<{
+    url: string;
+    snapshot?: unknown;
+    error?: string;
+  }>;
+};
+
 type KafkaTopicSnapshot = {
   topic: string;
   partitions: number;
@@ -251,6 +260,7 @@ async function main() {
     if (config.resetStateBeforeRun) {
       await resetBuyIntentBenchmarkState(pool, config.mode);
     }
+    await maybeResetBackendTimings();
 
     const inventory = await readInventory(pool, config.skuId);
     const effectiveRequests =
@@ -365,6 +375,7 @@ async function main() {
       const natsSnapshot = await readNatsSnapshot();
       const kafkaAfter = await readKafkaBenchmarkSnapshot(config).catch(() => null);
       const seckillWorkerAfter = await readSeckillWorkerCounterSnapshot(config).catch(() => null);
+      const backendTimings = await maybeReadBackendTimings();
       profiling = await maybeStopProfiling(profilingPlan, profiling);
       const finishedAtIso = new Date().toISOString();
       const seckillSemanticAssertion = buildSeckillSemanticAssertion({
@@ -427,6 +438,7 @@ async function main() {
         },
         kafka: buildKafkaReport(config, kafkaBefore, kafkaAfter),
         seckillWorker: buildSeckillWorkerReport(seckillWorkerBefore, seckillWorkerAfter),
+        backendTimings,
         steadyState,
         requestPath: {
           accepted: accepted.length,
@@ -517,6 +529,7 @@ async function main() {
       const natsSnapshot = await readNatsSnapshot().catch(() => ({ available: false }));
       const kafkaAfter = await readKafkaBenchmarkSnapshot(config).catch(() => null);
       const seckillWorkerAfter = await readSeckillWorkerCounterSnapshot(config).catch(() => null);
+      const backendTimings = await maybeReadBackendTimings();
       const finishedAtIso = new Date().toISOString();
       const failureMessage = error instanceof Error ? error.message : "unknown benchmark failure";
       const intentCreation =
@@ -594,6 +607,7 @@ async function main() {
         },
         kafka: buildKafkaReport(config, kafkaBefore, kafkaAfter),
         seckillWorker: buildSeckillWorkerReport(seckillWorkerBefore, seckillWorkerAfter),
+        backendTimings,
         steadyState,
         requestPath: {
           accepted: accepted.length,
@@ -1886,6 +1900,14 @@ function ratePerSecond(total: number, durationMs: number) {
   return Number((total / Math.max(durationMs / 1000, 0.001)).toFixed(2));
 }
 
+function uniqueStrings(values: string[]) {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+}
+
+function trimTrailingSlash(value: string) {
+  return value.replace(/\/+$/, "");
+}
+
 function percentile(values: number[], percentileValue: number) {
   if (values.length === 0) {
     return 0;
@@ -2300,6 +2322,58 @@ async function maybeStopProfiling(
       error: error instanceof Error ? error.message : "unknown profiling failure",
     };
   }
+}
+
+async function maybeResetBackendTimings() {
+  if (config.ingressSource !== "http") {
+    return;
+  }
+  await Promise.all(
+    uniqueStrings(config.ingressAppUrls).map((url) =>
+      fetch(`${trimTrailingSlash(url)}/api/internal/benchmarks/timings`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-request-id": `req_${config.runId}_timings_reset`,
+          "x-trace-id": `trace_${config.runId}`,
+        },
+        body: JSON.stringify({ action: "reset", runId: config.runId }),
+      }).catch(() => undefined),
+    ),
+  );
+}
+
+async function maybeReadBackendTimings(): Promise<BackendTimingSnapshot> {
+  if (config.ingressSource !== "http") {
+    return { available: false };
+  }
+
+  const targets = await Promise.all(
+    uniqueStrings(config.ingressAppUrls).map(async (url) => {
+      try {
+        const response = await fetch(`${trimTrailingSlash(url)}/api/internal/benchmarks/timings`, {
+          headers: {
+            "x-request-id": `req_${config.runId}_timings_snapshot`,
+            "x-trace-id": `trace_${config.runId}`,
+          },
+        });
+        if (!response.ok) {
+          return { url, error: `HTTP ${response.status}` };
+        }
+        return { url, snapshot: await response.json() };
+      } catch (error) {
+        return {
+          url,
+          error: error instanceof Error ? error.message : "unknown backend timing error",
+        };
+      }
+    }),
+  );
+
+  return {
+    available: targets.some((target) => target.snapshot),
+    targets,
+  };
 }
 
 function readConfig(): BenchmarkConfig {

@@ -85,6 +85,7 @@ type app struct {
 	natsConn *nats.Conn
 	natsJS   nats.JetStreamContext
 	cache    *skuConfigCache
+	timings  *benchmarkTimingRecorder
 	tracer   trace.Tracer
 }
 
@@ -102,6 +103,27 @@ type cachedSeckillConfig struct {
 type requestContext struct {
 	requestID string
 	traceID   string
+}
+
+type benchmarkTimingRecorder struct {
+	mu      sync.Mutex
+	started time.Time
+	stages  map[string][]float64
+}
+
+type benchmarkTimingSnapshot struct {
+	StartedAt string                            `json:"startedAt"`
+	SampledAt string                            `json:"sampledAt"`
+	Stages    map[string]benchmarkTimingSummary `json:"stages"`
+}
+
+type benchmarkTimingSummary struct {
+	Count int     `json:"count"`
+	AvgMs float64 `json:"avgMs"`
+	P50Ms float64 `json:"p50Ms"`
+	P95Ms float64 `json:"p95Ms"`
+	P99Ms float64 `json:"p99Ms"`
+	MaxMs float64 `json:"maxMs"`
 }
 
 type requestBody struct {
@@ -639,7 +661,8 @@ func main() {
 		cache: &skuConfigCache{
 			entries: map[string]cachedSeckillConfig{},
 		},
-		tracer: otel.Tracer("go-backend"),
+		timings: newBenchmarkTimingRecorder(),
+		tracer:  otel.Tracer("go-backend"),
 	}
 
 	if err := instance.warmUp(context.Background()); err != nil {
@@ -817,12 +840,13 @@ func (a *app) startNetHTTPServer() (func(context.Context) error, error) {
 	mux.Handle("/api/internal/admin/dashboard", otelhttp.NewHandler(http.HandlerFunc(a.handleGetAdminDashboard), "GET /api/internal/admin/dashboard"))
 	mux.Handle("/api/internal/admin/seckill", otelhttp.NewHandler(http.HandlerFunc(a.handleUpdateAdminSeckill), "POST /api/internal/admin/seckill"))
 	mux.Handle("/api/internal/benchmarks", otelhttp.NewHandler(http.HandlerFunc(a.handleListBenchmarks), "GET /api/internal/benchmarks"))
+	mux.Handle("/api/internal/benchmarks/timings", otelhttp.NewHandler(http.HandlerFunc(a.handleBenchmarkTimings), "/api/internal/benchmarks/timings"))
 	mux.Handle("/api/internal/projections/process", otelhttp.NewHandler(http.HandlerFunc(a.handleProcessProjections), "POST /api/internal/projections/process"))
 	mux.Handle("/api/internal/checkout-intents/", otelhttp.NewHandler(http.HandlerFunc(a.handleCompleteDemoCheckout), "POST /api/internal/checkout-intents/{checkoutIntentId}/complete-demo"))
 
 	server := &http.Server{
 		Addr:              a.cfg.addr,
-		Handler:           withCORS(a.cfg, mux),
+		Handler:           benchmarkTimingHTTPMiddleware(a.timings, withCORS(a.cfg, mux)),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -843,10 +867,13 @@ func (a *app) startHertzServer() (func(context.Context) error, error) {
 		hserver.WithDisablePrintRoute(true),
 		hserver.WithReadTimeout(5*time.Second),
 	)
+	server.Use(a.hertzBenchmarkTimings())
 	server.Use(a.hertzCORS())
 	server.GET("/healthz", a.handleHealthzHertz)
 	server.POST("/api/buy-intents", a.handleBuyIntentsHertz)
 	server.GET("/api/internal/benchmarks", a.handleListBenchmarksHertz)
+	server.GET("/api/internal/benchmarks/timings", a.handleBenchmarkTimingsHertz)
+	server.POST("/api/internal/benchmarks/timings", a.handleBenchmarkTimingsHertz)
 
 	go func() {
 		log.Printf("go-backend listening on %s engine=%s", a.cfg.addr, a.cfg.httpEngine)
@@ -935,39 +962,54 @@ func (a *app) handleGetProductBySlug(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) handleBuyIntents(w http.ResponseWriter, r *http.Request) {
+	totalStarted := time.Now()
 	ctx, span := a.tracer.Start(r.Context(), "buy_intent.accept")
 	defer span.End()
 
+	stageStarted := time.Now()
 	reqCtx := requestContextFromRequest(ctx, r)
+	a.timings.ObserveSince("buy_intent.request_context", stageStarted)
+	stageStarted = time.Now()
 	body, err := decodeRequestBody[requestBody](r)
+	a.timings.ObserveSince("buy_intent.decode", stageStarted)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "invalid_json")
 		log.Printf("go-backend decode_request_failed request_id=%s err=%v", reqCtx.requestID, err)
 		writeError(w, reqCtx, http.StatusBadRequest, "Request body must be valid JSON.")
+		a.timings.ObserveSince("buy_intent.total_error", totalStarted)
 		return
 	}
+	stageStarted = time.Now()
 	if err := validateCreateCheckoutIntentRequest(body); err != nil {
+		a.timings.ObserveSince("buy_intent.validate", stageStarted)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "invalid_request")
 		log.Printf("go-backend validate_request_failed request_id=%s err=%v body=%+v", reqCtx.requestID, err, body)
 		writeError(w, reqCtx, http.StatusBadRequest, err.Error())
+		a.timings.ObserveSince("buy_intent.total_error", totalStarted)
 		return
 	}
+	a.timings.ObserveSince("buy_intent.validate", stageStarted)
 
+	stageStarted = time.Now()
 	decision, err := a.classifyItemsForSeckill(ctx, body.Items)
+	a.timings.ObserveSince("buy_intent.classify", stageStarted)
 	if err != nil {
 		if errors.Is(err, errMixedCartWithSeckill) {
 			writeError(w, reqCtx, http.StatusBadRequest, err.Error())
+			a.timings.ObserveSince("buy_intent.total_error", totalStarted)
 			return
 		}
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "routing_failed")
 		log.Printf("go-backend classify_seckill_failed request_id=%s err=%v", reqCtx.requestID, err)
 		writeError(w, reqCtx, http.StatusInternalServerError, "Buy intent command could not be accepted. Please try again.")
+		a.timings.ObserveSince("buy_intent.total_error", totalStarted)
 		return
 	}
 
+	stageStarted = time.Now()
 	commandID := uuid.NewString()
 	correlationID := uuid.NewString()
 	idempotencyKey := strings.TrimSpace(r.Header.Get("idempotency-key"))
@@ -994,66 +1036,92 @@ func (a *app) handleBuyIntents(w http.ResponseWriter, r *http.Request) {
 		},
 		IssuedAt: time.Now().UTC().Format(time.RFC3339Nano),
 	}
+	a.timings.ObserveSince("buy_intent.command_build", stageStarted)
 
+	stageStarted = time.Now()
 	if decision.kind == "single_seckill" {
 		if err := a.publishSeckillCommand(ctx, body, command, decision.stockLimit, reqCtx); err != nil {
+			a.timings.ObserveSince("buy_intent.publish_seckill", stageStarted)
 			span.RecordError(err)
 			span.SetStatus(codes.Error, "publish_failed")
 			log.Printf("go-backend publish_seckill_failed request_id=%s command_id=%s err=%v", reqCtx.requestID, commandID, err)
 			writeError(w, reqCtx, http.StatusInternalServerError, "Buy intent command could not be accepted. Please try again.")
+			a.timings.ObserveSince("buy_intent.total_error", totalStarted)
 			return
 		}
+		a.timings.ObserveSince("buy_intent.publish_seckill", stageStarted)
 	} else {
 		if err := a.publishBuyIntentCommand(ctx, command); err != nil {
+			a.timings.ObserveSince("buy_intent.publish_regular", stageStarted)
 			span.RecordError(err)
 			span.SetStatus(codes.Error, "publish_failed")
 			log.Printf("go-backend publish_regular_failed request_id=%s command_id=%s err=%v", reqCtx.requestID, commandID, err)
 			writeError(w, reqCtx, http.StatusInternalServerError, "Buy intent command could not be accepted. Please try again.")
+			a.timings.ObserveSince("buy_intent.total_error", totalStarted)
 			return
 		}
+		a.timings.ObserveSince("buy_intent.publish_regular", stageStarted)
 	}
 
+	stageStarted = time.Now()
 	writeJSON(w, http.StatusAccepted, reqCtx, acceptResponse{
 		CommandID:     commandID,
 		CorrelationID: correlationID,
 		Status:        "accepted",
 	})
+	a.timings.ObserveSince("buy_intent.response_write", stageStarted)
+	a.timings.ObserveSince("buy_intent.total_success", totalStarted)
 }
 
 func (a *app) handleBuyIntentsHertz(base context.Context, c *hertzapp.RequestContext) {
+	totalStarted := time.Now()
 	ctx, span := a.tracer.Start(base, "buy_intent.accept")
 	defer span.End()
 
+	stageStarted := time.Now()
 	reqCtx := requestContextFromHertz(ctx, c)
+	a.timings.ObserveSince("buy_intent.request_context", stageStarted)
+	stageStarted = time.Now()
 	body, err := decodeHertzBody[requestBody](c)
+	a.timings.ObserveSince("buy_intent.decode", stageStarted)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "invalid_json")
 		log.Printf("go-backend decode_request_failed request_id=%s err=%v", reqCtx.requestID, err)
 		writeErrorHertz(c, reqCtx, consts.StatusBadRequest, "Request body must be valid JSON.")
+		a.timings.ObserveSince("buy_intent.total_error", totalStarted)
 		return
 	}
+	stageStarted = time.Now()
 	if err := validateCreateCheckoutIntentRequest(body); err != nil {
+		a.timings.ObserveSince("buy_intent.validate", stageStarted)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "invalid_request")
 		log.Printf("go-backend validate_request_failed request_id=%s err=%v body=%+v", reqCtx.requestID, err, body)
 		writeErrorHertz(c, reqCtx, consts.StatusBadRequest, err.Error())
+		a.timings.ObserveSince("buy_intent.total_error", totalStarted)
 		return
 	}
+	a.timings.ObserveSince("buy_intent.validate", stageStarted)
 
+	stageStarted = time.Now()
 	decision, err := a.classifyItemsForSeckill(ctx, body.Items)
+	a.timings.ObserveSince("buy_intent.classify", stageStarted)
 	if err != nil {
 		if errors.Is(err, errMixedCartWithSeckill) {
 			writeErrorHertz(c, reqCtx, consts.StatusBadRequest, err.Error())
+			a.timings.ObserveSince("buy_intent.total_error", totalStarted)
 			return
 		}
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "routing_failed")
 		log.Printf("go-backend classify_seckill_failed request_id=%s err=%v", reqCtx.requestID, err)
 		writeErrorHertz(c, reqCtx, consts.StatusInternalServerError, "Buy intent command could not be accepted. Please try again.")
+		a.timings.ObserveSince("buy_intent.total_error", totalStarted)
 		return
 	}
 
+	stageStarted = time.Now()
 	commandID := uuid.NewString()
 	correlationID := uuid.NewString()
 	idempotencyKey := strings.TrimSpace(string(c.Request.Header.Peek("idempotency-key")))
@@ -1080,30 +1148,41 @@ func (a *app) handleBuyIntentsHertz(base context.Context, c *hertzapp.RequestCon
 		},
 		IssuedAt: time.Now().UTC().Format(time.RFC3339Nano),
 	}
+	a.timings.ObserveSince("buy_intent.command_build", stageStarted)
 
+	stageStarted = time.Now()
 	if decision.kind == "single_seckill" {
 		if err := a.publishSeckillCommand(ctx, body, command, decision.stockLimit, reqCtx); err != nil {
+			a.timings.ObserveSince("buy_intent.publish_seckill", stageStarted)
 			span.RecordError(err)
 			span.SetStatus(codes.Error, "publish_failed")
 			log.Printf("go-backend publish_seckill_failed request_id=%s command_id=%s err=%v", reqCtx.requestID, commandID, err)
 			writeErrorHertz(c, reqCtx, consts.StatusInternalServerError, "Buy intent command could not be accepted. Please try again.")
+			a.timings.ObserveSince("buy_intent.total_error", totalStarted)
 			return
 		}
+		a.timings.ObserveSince("buy_intent.publish_seckill", stageStarted)
 	} else {
 		if err := a.publishBuyIntentCommand(ctx, command); err != nil {
+			a.timings.ObserveSince("buy_intent.publish_regular", stageStarted)
 			span.RecordError(err)
 			span.SetStatus(codes.Error, "publish_failed")
 			log.Printf("go-backend publish_regular_failed request_id=%s command_id=%s err=%v", reqCtx.requestID, commandID, err)
 			writeErrorHertz(c, reqCtx, consts.StatusInternalServerError, "Buy intent command could not be accepted. Please try again.")
+			a.timings.ObserveSince("buy_intent.total_error", totalStarted)
 			return
 		}
+		a.timings.ObserveSince("buy_intent.publish_regular", stageStarted)
 	}
 
+	stageStarted = time.Now()
 	writeJSONHertz(c, consts.StatusAccepted, reqCtx, acceptResponse{
 		CommandID:     commandID,
 		CorrelationID: correlationID,
 		Status:        "accepted",
 	})
+	a.timings.ObserveSince("buy_intent.response_write", stageStarted)
+	a.timings.ObserveSince("buy_intent.total_success", totalStarted)
 }
 
 func (a *app) publishBuyIntentCommand(ctx context.Context, command buyIntentCommand) error {
@@ -1138,6 +1217,7 @@ func (a *app) publishSeckillCommand(
 	if stableKey == "" {
 		stableKey = command.CommandID
 	}
+	stageStarted := time.Now()
 	primaryBucketID := selectPrimaryBucket(stableKey, a.cfg.kafkaBucketCount)
 	payload, err := json.Marshal(seckillBuyIntentRequest{
 		SkuID:             item.SkuID,
@@ -1167,12 +1247,16 @@ func (a *app) publishSeckillCommand(
 	if err != nil {
 		return err
 	}
+	a.timings.ObserveSince("seckill_publish.payload_marshal", stageStarted)
+	stageStarted = time.Now()
 	headers := make([]kgo.RecordHeader, 0, 3)
 	for key, value := range injectTraceCarrier(ctx) {
 		if strings.TrimSpace(value) != "" {
 			headers = append(headers, kgo.RecordHeader{Key: key, Value: []byte(value)})
 		}
 	}
+	a.timings.ObserveSince("seckill_publish.headers", stageStarted)
+	stageStarted = time.Now()
 	processingKey := buildProcessingKey(item.SkuID, primaryBucketID)
 	record := &kgo.Record{
 		Topic:     a.cfg.kafkaRequestTopic,
@@ -1194,6 +1278,7 @@ func (a *app) publishSeckillCommand(
 		}
 		log.Printf("go-backend async_seckill_publish_failed request_id=%s command_id=%s topic=%s partition=%d: %v", reqCtx.requestID, command.CommandID, topic, partition, err)
 	})
+	a.timings.ObserveSince("seckill_publish.produce_call", stageStarted)
 	return nil
 }
 
@@ -1414,6 +1499,52 @@ func (a *app) handleListBenchmarksHertz(base context.Context, c *hertzapp.Reques
 		return
 	}
 	writeJSONHertz(c, consts.StatusOK, reqCtx, runs)
+}
+
+func (a *app) handleBenchmarkTimings(w http.ResponseWriter, r *http.Request) {
+	ctx, span := a.tracer.Start(r.Context(), "admin.benchmark_timings")
+	defer span.End()
+
+	reqCtx := requestContextFromRequest(ctx, r)
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, http.StatusOK, reqCtx, a.timings.Snapshot())
+	case http.MethodPost:
+		body, _ := decodeLooseBody(r)
+		action := strings.ToLower(strings.TrimSpace(stringValue(body["action"], "snapshot")))
+		if action == "reset" {
+			a.timings.Reset()
+		}
+		writeJSON(w, http.StatusOK, reqCtx, a.timings.Snapshot())
+	default:
+		span.SetStatus(codes.Error, "method_not_allowed")
+		writeError(w, reqCtx, http.StatusMethodNotAllowed, "Method not allowed.")
+	}
+}
+
+func (a *app) handleBenchmarkTimingsHertz(base context.Context, c *hertzapp.RequestContext) {
+	ctx, span := a.tracer.Start(base, "admin.benchmark_timings")
+	defer span.End()
+
+	reqCtx := requestContextFromHertz(ctx, c)
+	switch string(c.Method()) {
+	case http.MethodGet:
+		writeJSONHertz(c, consts.StatusOK, reqCtx, a.timings.Snapshot())
+	case http.MethodPost:
+		action := "snapshot"
+		body := map[string]any{}
+		if len(c.Request.Body()) > 0 {
+			_ = gojson.Unmarshal(c.Request.Body(), &body)
+			action = strings.ToLower(strings.TrimSpace(stringValue(body["action"], action)))
+		}
+		if action == "reset" {
+			a.timings.Reset()
+		}
+		writeJSONHertz(c, consts.StatusOK, reqCtx, a.timings.Snapshot())
+	default:
+		span.SetStatus(codes.Error, "method_not_allowed")
+		writeErrorHertz(c, reqCtx, consts.StatusMethodNotAllowed, "Method not allowed.")
+	}
 }
 
 func (a *app) handleUpdateAdminSeckill(w http.ResponseWriter, r *http.Request) {
@@ -2922,6 +3053,84 @@ func validateCreateCheckoutIntentRequest(body requestBody) error {
 	return nil
 }
 
+func newBenchmarkTimingRecorder() *benchmarkTimingRecorder {
+	now := time.Now().UTC()
+	return &benchmarkTimingRecorder{
+		started: now,
+		stages:  map[string][]float64{},
+	}
+}
+
+func (r *benchmarkTimingRecorder) Reset() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.started = time.Now().UTC()
+	r.stages = map[string][]float64{}
+}
+
+func (r *benchmarkTimingRecorder) ObserveSince(stage string, started time.Time) {
+	if r == nil || strings.TrimSpace(stage) == "" || started.IsZero() {
+		return
+	}
+	elapsedMs := float64(time.Since(started).Microseconds()) / 1000
+	r.mu.Lock()
+	r.stages[stage] = append(r.stages[stage], elapsedMs)
+	r.mu.Unlock()
+}
+
+func (r *benchmarkTimingRecorder) Snapshot() benchmarkTimingSnapshot {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	stages := make(map[string]benchmarkTimingSummary, len(r.stages))
+	for stage, samples := range r.stages {
+		stages[stage] = summarizeTimingSamples(samples)
+	}
+	return benchmarkTimingSnapshot{
+		StartedAt: r.started.Format(time.RFC3339Nano),
+		SampledAt: time.Now().UTC().Format(time.RFC3339Nano),
+		Stages:    stages,
+	}
+}
+
+func summarizeTimingSamples(samples []float64) benchmarkTimingSummary {
+	if len(samples) == 0 {
+		return benchmarkTimingSummary{}
+	}
+	sortedSamples := append([]float64(nil), samples...)
+	sort.Float64s(sortedSamples)
+	var sum float64
+	for _, sample := range sortedSamples {
+		sum += sample
+	}
+	return benchmarkTimingSummary{
+		Count: len(sortedSamples),
+		AvgMs: roundMillis(sum / float64(len(sortedSamples))),
+		P50Ms: roundMillis(percentile(sortedSamples, 0.50)),
+		P95Ms: roundMillis(percentile(sortedSamples, 0.95)),
+		P99Ms: roundMillis(percentile(sortedSamples, 0.99)),
+		MaxMs: roundMillis(sortedSamples[len(sortedSamples)-1]),
+	}
+}
+
+func percentile(sortedSamples []float64, quantile float64) float64 {
+	if len(sortedSamples) == 0 {
+		return 0
+	}
+	if quantile <= 0 {
+		return sortedSamples[0]
+	}
+	if quantile >= 1 {
+		return sortedSamples[len(sortedSamples)-1]
+	}
+	index := int(float64(len(sortedSamples)-1) * quantile)
+	return sortedSamples[index]
+}
+
+func roundMillis(value float64) float64 {
+	return float64(int(value*1000+0.5)) / 1000
+}
+
 func decodeRequestBody[T any](r *http.Request) (T, error) {
 	var body T
 	data, err := io.ReadAll(r.Body)
@@ -3072,6 +3281,26 @@ func withCORS(cfg config, next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func benchmarkTimingHTTPMiddleware(recorder *benchmarkTimingRecorder, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		started := time.Now()
+		next.ServeHTTP(w, r)
+		if r.URL.Path == "/api/buy-intents" {
+			recorder.ObserveSince("http_server.buy_intents.total", started)
+		}
+	})
+}
+
+func (a *app) hertzBenchmarkTimings() hertzapp.HandlerFunc {
+	return func(ctx context.Context, c *hertzapp.RequestContext) {
+		started := time.Now()
+		c.Next(ctx)
+		if string(c.Path()) == "/api/buy-intents" {
+			a.timings.ObserveSince("http_server.buy_intents.total", started)
+		}
+	}
 }
 
 func (a *app) hertzCORS() hertzapp.HandlerFunc {
