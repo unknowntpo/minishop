@@ -378,6 +378,12 @@ run_benchmark() {
   "
 }
 
+default_load_env() {
+  local requests="$1"
+  local concurrency="$2"
+  printf "export BENCHMARK_REQUESTS=\"\${BENCHMARK_REQUESTS:-%s}\" && export BENCHMARK_HTTP_CONCURRENCY=\"\${BENCHMARK_HTTP_CONCURRENCY:-%s}\" && " "${requests}" "${concurrency}"
+}
+
 artifact_pull() {
   local run_id="$1"
   local id
@@ -442,6 +448,7 @@ case "${1:-}" in
   run-nats-bypass)
     shift
     run_benchmark nats-bypass async "
+      $(default_load_env 1000 100)
       export BENCHMARK_SCENARIO_NAME='buy-intent-bypass-created' &&
       export BENCHMARK_SCENARIO_FAMILY='buy-intent-bypass' &&
       export BENCHMARK_PATH_TAG='buy_intent_bypass' &&
@@ -457,6 +464,7 @@ case "${1:-}" in
   run-nats-bypass-steady)
     shift
     run_benchmark nats-bypass-steady async "
+      $(default_load_env 1000 100)
       export BENCHMARK_SCENARIO_NAME='buy-intent-bypass-created-steady' &&
       export BENCHMARK_SCENARIO_FAMILY='buy-intent-bypass' &&
       export BENCHMARK_PATH_TAG='buy_intent_bypass' &&
@@ -473,6 +481,7 @@ case "${1:-}" in
   run-seckill-full-api)
     shift
     run_benchmark seckill-full-api seckill "
+      $(default_load_env 1000 100)
       export BENCHMARK_SCENARIO_NAME='seckill-full-api' &&
       export BENCHMARK_SCENARIO_FAMILY='seckill-full-api' &&
       export BENCHMARK_PATH_TAG='seckill_full_api' &&
@@ -486,6 +495,7 @@ case "${1:-}" in
   run-seckill-direct-kafka)
     shift
     run_benchmark seckill-direct-kafka seckill "
+      $(default_load_env 10000 200)
       export BENCHMARK_SCENARIO_NAME='seckill-direct-kafka' &&
       export BENCHMARK_SCENARIO_FAMILY='seckill-direct-kafka' &&
       export BENCHMARK_PATH_TAG='seckill_direct_kafka' &&
@@ -499,6 +509,7 @@ case "${1:-}" in
   run-seckill-full-api-steady)
     shift
     run_benchmark seckill-full-api-steady seckill "
+      $(default_load_env 1000 100)
       export BENCHMARK_SCENARIO_NAME='seckill-full-api-steady' &&
       export BENCHMARK_SCENARIO_FAMILY='seckill-full-api' &&
       export BENCHMARK_PATH_TAG='seckill_full_api' &&
@@ -513,6 +524,7 @@ case "${1:-}" in
   run-seckill-direct-kafka-steady)
     shift
     run_benchmark seckill-direct-kafka-steady seckill "
+      $(default_load_env 10000 200)
       export BENCHMARK_SCENARIO_NAME='seckill-direct-kafka-steady' &&
       export BENCHMARK_SCENARIO_FAMILY='seckill-direct-kafka' &&
       export BENCHMARK_PATH_TAG='seckill_direct_kafka' &&
