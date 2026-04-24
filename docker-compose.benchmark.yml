@@ -115,35 +115,6 @@ services:
       restart_policy:
         condition: any
 
-  benchmark-go-seckill-ingress:
-    image: ${BENCHMARK_GO_SECKILL_INGRESS_IMAGE:-minishop-go-seckill-ingress:local}
-    networks: [benchmark]
-    ports:
-      - "${BENCHMARK_GO_SECKILL_INGRESS_PORT:-3304}:3000"
-    environment:
-      GO_SECKILL_INGRESS_ADDR: :3000
-      DATABASE_URL: postgres://postgres:postgres@benchmark-postgres:5432/minishop
-      DATABASE_POOL_MAX: ${GO_SECKILL_INGRESS_DATABASE_POOL_MAX:-4}
-      KAFKA_BROKERS: ${KAFKA_BROKERS:-benchmark-redpanda:9092}
-      KAFKA_CLIENT_ID: ${GO_SECKILL_INGRESS_KAFKA_CLIENT_ID:-benchmark-go-seckill-ingress}
-      KAFKA_SECKILL_REQUEST_TOPIC: ${BENCHMARK_KAFKA_SECKILL_REQUEST_TOPIC:-inventory.seckill.requested}
-      KAFKA_SECKILL_BUCKET_COUNT: ${BENCHMARK_SECKILL_BUCKET_COUNT:-4}
-      KAFKA_SECKILL_REQUEST_TOPIC_PARTITIONS: ${BENCHMARK_SECKILL_BUCKET_COUNT:-4}
-      KAFKA_SECKILL_RESULT_TOPIC_PARTITIONS: ${BENCHMARK_SECKILL_BUCKET_COUNT:-4}
-      KAFKA_SECKILL_DLQ_TOPIC_PARTITIONS: ${BENCHMARK_SECKILL_BUCKET_COUNT:-4}
-      KAFKA_SECKILL_MAX_PROBE: ${BENCHMARK_SECKILL_MAX_PROBE:-4}
-      KAFKA_SECKILL_CONFIG_CACHE_TTL_MS: ${KAFKA_SECKILL_CONFIG_CACHE_TTL_MS:-60000}
-      KAFKA_SECKILL_CLIENT_LINGER_MS: ${KAFKA_SECKILL_CLIENT_LINGER_MS:-1}
-      KAFKA_SECKILL_CLIENT_BATCH_NUM_MESSAGES: ${KAFKA_SECKILL_CLIENT_BATCH_NUM_MESSAGES:-10000}
-      KAFKA_SECKILL_CLIENT_COMPRESSION: ${KAFKA_SECKILL_CLIENT_COMPRESSION:-none}
-      OTEL_ENABLED: ${BENCHMARK_OTEL_ENABLED:-0}
-    deploy:
-      replicas: 1
-      placement:
-        constraints:
-          - node.labels.benchmark.role.api == true
-      restart_policy:
-        condition: any
 
   benchmark-worker-buy-intents-ingest:
     image: ${BENCHMARK_NODE_WORKER_IMAGE:-minishop-node-worker:local}
@@ -329,8 +300,8 @@ services:
       BENCHMARK_RESULTS_DIR: /tmp/benchmark-results
       BENCHMARK_APP_URL: http://benchmark-go-backend:3000
       BENCHMARK_APP_URLS: http://benchmark-go-backend:3000
-      BENCHMARK_INGRESS_APP_URLS: http://benchmark-go-seckill-ingress:3000
-      BENCHMARK_INGRESS_HEALTH_PATH: /healthz
+      BENCHMARK_INGRESS_APP_URLS: http://benchmark-go-backend:3000
+      BENCHMARK_INGRESS_HEALTH_PATH: /api/products
       BENCHMARK_PROMETHEUS_URL: http://benchmark-prometheus:9090
       BENCHMARK_NATS_MONITOR_URL: http://benchmark-nats:8222
       BENCHMARK_KAFKA_CLIENT: ${BENCHMARK_KAFKA_CLIENT:-confluent-kafka-javascript}
@@ -338,6 +309,8 @@ services:
       BENCHMARK_KAFKA_SECKILL_REQUEST_TOPIC: ${BENCHMARK_KAFKA_SECKILL_REQUEST_TOPIC:-inventory.seckill.requested}
       BENCHMARK_KAFKA_SECKILL_RESULT_TOPIC: ${BENCHMARK_KAFKA_SECKILL_RESULT_TOPIC:-inventory.seckill.result}
       BENCHMARK_KAFKA_SECKILL_DLQ_TOPIC: ${BENCHMARK_KAFKA_SECKILL_DLQ_TOPIC:-inventory.seckill.dlq}
+      BENCHMARK_SECKILL_BUCKET_COUNT: ${BENCHMARK_SECKILL_BUCKET_COUNT:-4}
+      KAFKA_SECKILL_BUCKET_COUNT: ${BENCHMARK_SECKILL_BUCKET_COUNT:-4}
       KAFKA_SECKILL_REQUEST_TOPIC_PARTITIONS: ${BENCHMARK_SECKILL_BUCKET_COUNT:-4}
       KAFKA_SECKILL_RESULT_TOPIC_PARTITIONS: ${BENCHMARK_SECKILL_BUCKET_COUNT:-4}
       KAFKA_SECKILL_DLQ_TOPIC_PARTITIONS: ${BENCHMARK_SECKILL_BUCKET_COUNT:-4}
