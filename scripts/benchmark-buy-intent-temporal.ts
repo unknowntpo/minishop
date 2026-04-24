@@ -1638,7 +1638,8 @@ async function readInventory(pool: Pool, skuId: string) {
 
 async function readNatsSnapshot() {
   try {
-    const jszResponse = await fetch("http://localhost:8222/jsz?streams=true&consumers=true");
+    const monitorUrl = process.env.BENCHMARK_NATS_MONITOR_URL?.trim() || "http://localhost:8222";
+    const jszResponse = await fetch(`${monitorUrl.replace(/\/+$/, "")}/jsz?streams=true&consumers=true`);
 
     if (!jszResponse.ok) {
       return {
