@@ -19,6 +19,10 @@ stack-services:
 stack-ps:
   ./scripts/swarm-benchmark.sh stack-ps
 
+# Wait for benchmark stack readiness gates
+stack-wait mode="all":
+  ./scripts/swarm-benchmark.sh stack-wait {{mode}}
+
 # Print the active benchmark runner container id
 runner-id:
   ./scripts/swarm-benchmark.sh runner-id
