@@ -15,13 +15,12 @@ async function main() {
   const resolvedScenarioName = readScenarioName();
   let benchmarkFailed = false;
 
-  await assertAppReachable(appUrl);
-
   if (shouldReset) {
     console.log("[benchmark] resetting local benchmark database");
     await runPnpm(["db:reset:dev"]);
-    await assertAppReachable(appUrl);
   }
+
+  await assertAppReachable(appUrl);
 
   console.log("[benchmark] running checkout-postgres-baseline");
   try {
@@ -74,11 +73,11 @@ async function main() {
 }
 
 async function assertAppReachable(appUrl: string) {
-  const response = await fetch(`${appUrl}/products`);
+  const response = await fetch(`${appUrl}/api/products`);
 
   if (!response.ok) {
     throw new Error(
-      `Benchmark app preflight failed: ${appUrl}/products returned HTTP ${response.status}.`,
+      `Benchmark app preflight failed: ${appUrl}/api/products returned HTTP ${response.status}.`,
     );
   }
 }
@@ -99,7 +98,10 @@ async function runPnpm(args: string[]) {
 }
 
 async function readLatestArtifact(resultsRoot: string, scenario: string) {
-  const directory = path.join(process.cwd(), resultsRoot, scenario);
+  const baseDirectory = path.isAbsolute(resultsRoot)
+    ? resultsRoot
+    : path.join(process.cwd(), resultsRoot);
+  const directory = path.join(baseDirectory, scenario);
   const files = (await readdir(directory).catch(() => []))
     .filter((file) => file.endsWith(".json"))
     .sort()
