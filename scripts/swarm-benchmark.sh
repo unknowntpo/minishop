@@ -116,6 +116,23 @@ ensure_topic() {
   docker_cmd exec "${id}" sh -lc "rpk topic describe '${topic}' >/dev/null 2>&1 || rpk topic create '${topic}' -p '${partitions}' -r 1 >/dev/null"
 }
 
+reset_topic() {
+  local topic="$1"
+  local partitions="$2"
+  local id
+  id="$(service_container_id "benchmark-redpanda")"
+  docker_cmd exec "${id}" sh -lc "
+    rpk topic delete '${topic}' >/dev/null 2>&1 || true
+    for attempt in \$(seq 1 30); do
+      if rpk topic create '${topic}' -p '${partitions}' -r 1 >/dev/null 2>&1; then
+        exit 0
+      fi
+      sleep 1
+    done
+    rpk topic create '${topic}' -p '${partitions}' -r 1 >/dev/null
+  "
+}
+
 wait_for_consumer_group() {
   local group_id="$1"
   local expected_members="${2:-1}"
@@ -298,6 +315,34 @@ rollout_local_images() {
   force_update_service_image "benchmark-runner" "${node_worker_image}"
 }
 
+prepare_seckill_run() {
+  local run_id="$1"
+  local request_topic="${BENCHMARK_KAFKA_SECKILL_REQUEST_TOPIC:-inventory.seckill.requested}"
+  local result_topic="${BENCHMARK_KAFKA_SECKILL_RESULT_TOPIC:-inventory.seckill.result}"
+  local dlq_topic="${BENCHMARK_KAFKA_SECKILL_DLQ_TOPIC:-inventory.seckill.dlq}"
+  local partitions="${BENCHMARK_SECKILL_BUCKET_COUNT:-4}"
+  local worker_group="minishop-seckill-worker-benchmark-${run_id}"
+  local sink_group="minishop-seckill-result-sink-benchmark-${run_id}"
+
+  wait_for_redpanda_ready
+  reset_topic "${request_topic}" "${partitions}"
+  reset_topic "${result_topic}" "${partitions}"
+  reset_topic "${dlq_topic}" "${partitions}"
+
+  docker_cmd service update --detach=true --force \
+    --env-add "KAFKA_SECKILL_APPLICATION_ID=${worker_group}" \
+    --env-add "KAFKA_SECKILL_CLEAR_STATE_ON_START=1" \
+    "$(service_name "benchmark-worker-seckill")" >/dev/null
+
+  docker_cmd service update --detach=true --force \
+    --env-add "KAFKA_SECKILL_RESULT_SINK_GROUP_ID=${sink_group}" \
+    --env-add "KAFKA_SECKILL_RESULT_SINK_CLIENT_ID=${sink_group}" \
+    "$(service_name "benchmark-worker-seckill-result-sink")" >/dev/null
+
+  export KAFKA_SECKILL_APPLICATION_ID="${worker_group}"
+  export KAFKA_SECKILL_RESULT_SINK_GROUP_ID="${sink_group}"
+}
+
 exec_runner() {
   local id
   id="$(require_runner)"
@@ -316,6 +361,11 @@ run_benchmark() {
   local run_id="${BENCHMARK_RUN_ID:-${label}_$(timestamp_run_id)}"
   local results_dir="/tmp/benchmark-results/${run_id}"
   local id
+
+  if [[ "${wait_mode}" == "seckill" ]]; then
+    prepare_seckill_run "${run_id}"
+  fi
+
   stack_wait "${wait_mode}"
   id="$(require_runner)"
 
