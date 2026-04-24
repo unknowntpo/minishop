@@ -1,0 +1,17 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets:
+          - benchmark-prometheus:9090
+
+  - job_name: seckill-workers
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - benchmark-worker-seckill:9090
+          - benchmark-go-backend:9090
+          - benchmark-go-seckill-ingress:9090

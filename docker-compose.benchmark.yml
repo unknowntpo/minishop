@@ -1,62 +1,271 @@
 services:
   benchmark-postgres:
-    image: postgres:17-alpine
-    restart: unless-stopped
+    image: ${BENCHMARK_POSTGRES_IMAGE:-postgres:17-alpine}
     environment:
       POSTGRES_DB: minishop
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
+    networks:
+      - benchmark
     ports:
-      - "${MINISHOP_BENCHMARK_POSTGRES_PORT:-5543}:5432"
+      - "${BENCHMARK_POSTGRES_PORT:-5543}:5432"
     volumes:
-      - minishop_benchmark_postgres_data:/var/lib/postgresql/data
+      - benchmark_postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d minishop"]
       interval: 5s
       timeout: 5s
       retries: 10
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.labels.role == db
+      restart_policy:
+        condition: any
 
-  benchmark-app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    restart: unless-stopped
+  benchmark-nats:
+    image: ${BENCHMARK_NATS_IMAGE:-nats:2.11}
+    command: ["-js", "-sd", "/data", "-m", "8222"]
+    networks:
+      - benchmark
+    ports:
+      - "${BENCHMARK_NATS_PORT:-4223}:4222"
+      - "${BENCHMARK_NATS_MONITOR_PORT:-8223}:8222"
+    volumes:
+      - benchmark_nats_data:/data
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.labels.role == msg
+      restart_policy:
+        condition: any
+
+  benchmark-redpanda:
+    image: ${BENCHMARK_REDPANDA_IMAGE:-docker.redpanda.com/redpandadata/redpanda:v24.2.18}
+    command:
+      - redpanda
+      - start
+      - --overprovisioned
+      - --smp
+      - "1"
+      - --memory
+      - "1G"
+      - --reserve-memory
+      - "0M"
+      - --node-id
+      - "0"
+      - --check=false
+      - --set
+      - redpanda.auto_create_topics_enabled=false
+      - --kafka-addr
+      - PLAINTEXT://0.0.0.0:9092,OUTSIDE://0.0.0.0:19092
+      - --advertise-kafka-addr
+      - PLAINTEXT://benchmark-redpanda:9092,OUTSIDE://benchmark-redpanda:19092
+    networks:
+      - benchmark
+    ports:
+      - "${BENCHMARK_KAFKA_PORT:-19092}:19092"
+      - "${BENCHMARK_REDPANDA_METRICS_PORT:-9644}:9644"
+    volumes:
+      - benchmark_redpanda_data:/var/lib/redpanda/data
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.labels.role == msg
+      restart_policy:
+        condition: any
+
+  benchmark-go-backend:
+    image: ${BENCHMARK_GO_BACKEND_IMAGE:-minishop-benchmark-app:local}
+    networks:
+      - benchmark
+    ports:
+      - "${BENCHMARK_GO_BACKEND_PORT:-3300}:3000"
     environment:
       DATABASE_URL: postgres://postgres:postgres@benchmark-postgres:5432/minishop
       HOSTNAME: 0.0.0.0
       PORT: 3000
-    ports:
-      - "${MINISHOP_BENCHMARK_APP_PORT:-3300}:3000"
-    depends_on:
-      benchmark-postgres:
-        condition: service_healthy
-    command: >
-      sh -lc "pnpm db:migrate && pnpm db:seed:dev && pnpm start"
-    healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "node -e \"fetch('http://127.0.0.1:3000/products').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))\"",
-        ]
-      interval: 5s
-      timeout: 5s
-      retries: 20
-      start_period: 20s
+      NATS_URL: nats://benchmark-nats:4222
+      KAFKA_BROKERS: benchmark-redpanda:9092
+      KAFKA_SECKILL_REQUEST_TOPIC: ${BENCHMARK_KAFKA_SECKILL_REQUEST_TOPIC:-inventory.seckill.requested}
+      KAFKA_SECKILL_RESULT_TOPIC: ${BENCHMARK_KAFKA_SECKILL_RESULT_TOPIC:-inventory.seckill.result}
+      KAFKA_SECKILL_DLQ_TOPIC: ${BENCHMARK_KAFKA_SECKILL_DLQ_TOPIC:-inventory.seckill.dlq}
+      KAFKA_SECKILL_BUCKET_COUNT: ${BENCHMARK_SECKILL_BUCKET_COUNT:-4}
+      KAFKA_SECKILL_REQUEST_TOPIC_PARTITIONS: ${BENCHMARK_SECKILL_BUCKET_COUNT:-4}
+      KAFKA_SECKILL_RESULT_TOPIC_PARTITIONS: ${BENCHMARK_SECKILL_BUCKET_COUNT:-4}
+      KAFKA_SECKILL_DLQ_TOPIC_PARTITIONS: ${BENCHMARK_SECKILL_BUCKET_COUNT:-4}
+      KAFKA_SECKILL_MAX_PROBE: ${BENCHMARK_SECKILL_MAX_PROBE:-4}
+      KAFKA_SECKILL_CLIENT_LINGER_MS: ${KAFKA_SECKILL_CLIENT_LINGER_MS:-50}
+      KAFKA_SECKILL_CLIENT_BATCH_NUM_MESSAGES: ${KAFKA_SECKILL_CLIENT_BATCH_NUM_MESSAGES:-5000}
+      GO_BACKEND_FORCE_SECKILL_SKUS: ${GO_BACKEND_FORCE_SECKILL_SKUS:-sku_hot_001:1000000}
+      OTEL_ENABLED: ${BENCHMARK_OTEL_ENABLED:-0}
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.labels.role == api
+      restart_policy:
+        condition: any
 
-  benchmark-runner:
-    build:
-      context: .
-      dockerfile: Dockerfile
+  benchmark-go-seckill-ingress:
+    image: ${BENCHMARK_GO_SECKILL_INGRESS_IMAGE:-minishop-go-seckill-ingress:latest}
+    networks:
+      - benchmark
+    ports:
+      - "${BENCHMARK_GO_SECKILL_INGRESS_PORT:-3304}:3000"
     environment:
       DATABASE_URL: postgres://postgres:postgres@benchmark-postgres:5432/minishop
-      BENCHMARK_APP_URL: http://benchmark-app:3000
-      BENCHMARK_NEXT_MODE: next start
+      KAFKA_BROKERS: benchmark-redpanda:9092
+      KAFKA_SECKILL_REQUEST_TOPIC: ${BENCHMARK_KAFKA_SECKILL_REQUEST_TOPIC:-inventory.seckill.requested}
+      KAFKA_SECKILL_BUCKET_COUNT: ${BENCHMARK_SECKILL_BUCKET_COUNT:-4}
+      KAFKA_SECKILL_REQUEST_TOPIC_PARTITIONS: ${BENCHMARK_SECKILL_BUCKET_COUNT:-4}
+      KAFKA_SECKILL_RESULT_TOPIC_PARTITIONS: ${BENCHMARK_SECKILL_BUCKET_COUNT:-4}
+      KAFKA_SECKILL_DLQ_TOPIC_PARTITIONS: ${BENCHMARK_SECKILL_BUCKET_COUNT:-4}
+      KAFKA_SECKILL_MAX_PROBE: ${BENCHMARK_SECKILL_MAX_PROBE:-4}
+      KAFKA_SECKILL_CLIENT_LINGER_MS: ${KAFKA_SECKILL_CLIENT_LINGER_MS:-50}
+      KAFKA_SECKILL_CLIENT_BATCH_NUM_MESSAGES: ${KAFKA_SECKILL_CLIENT_BATCH_NUM_MESSAGES:-5000}
+      OTEL_ENABLED: ${BENCHMARK_OTEL_ENABLED:-0}
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.labels.role == api
+      restart_policy:
+        condition: any
+
+  benchmark-worker-seckill:
+    image: ${BENCHMARK_WORKER_SECKILL_IMAGE:-minishop-worker-seckill:latest}
+    networks:
+      - benchmark
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@benchmark-postgres:5432/minishop
+      KAFKA_BROKERS: benchmark-redpanda:9092
+      KAFKA_SECKILL_REQUEST_TOPIC: ${BENCHMARK_KAFKA_SECKILL_REQUEST_TOPIC:-inventory.seckill.requested}
+      KAFKA_SECKILL_RESULT_TOPIC: ${BENCHMARK_KAFKA_SECKILL_RESULT_TOPIC:-inventory.seckill.result}
+      KAFKA_SECKILL_DLQ_TOPIC: ${BENCHMARK_KAFKA_SECKILL_DLQ_TOPIC:-inventory.seckill.dlq}
+      KAFKA_SECKILL_BUCKET_COUNT: ${BENCHMARK_SECKILL_BUCKET_COUNT:-4}
+      KAFKA_SECKILL_REQUEST_TOPIC_PARTITIONS: ${BENCHMARK_SECKILL_BUCKET_COUNT:-4}
+      KAFKA_SECKILL_RESULT_TOPIC_PARTITIONS: ${BENCHMARK_SECKILL_BUCKET_COUNT:-4}
+      KAFKA_SECKILL_DLQ_TOPIC_PARTITIONS: ${BENCHMARK_SECKILL_BUCKET_COUNT:-4}
+      KAFKA_SECKILL_MAX_PROBE: ${BENCHMARK_SECKILL_MAX_PROBE:-4}
+      KAFKA_SECKILL_APPLICATION_ID: ${KAFKA_SECKILL_APPLICATION_ID:-minishop-seckill-worker-benchmark}
+      KAFKA_SECKILL_CLEAR_STATE_ON_START: ${KAFKA_SECKILL_CLEAR_STATE_ON_START:-0}
+      KAFKA_STREAMS_STATE_DIR: /var/lib/minishop/kafka-streams
+      OTEL_ENABLED: ${BENCHMARK_OTEL_ENABLED:-0}
+    volumes:
+      - benchmark_worker_seckill_state:/var/lib/minishop/kafka-streams
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.labels.role == worker
+      restart_policy:
+        condition: any
+
+  benchmark-worker-seckill-result-sink:
+    image: ${BENCHMARK_WORKER_SECKILL_RESULT_SINK_IMAGE:-minishop-worker-seckill-result-sink:latest}
+    networks:
+      - benchmark
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@benchmark-postgres:5432/minishop
+      KAFKA_BROKERS: benchmark-redpanda:9092
+      KAFKA_SECKILL_RESULT_TOPIC: ${BENCHMARK_KAFKA_SECKILL_RESULT_TOPIC:-inventory.seckill.result}
+      KAFKA_SECKILL_DLQ_TOPIC: ${BENCHMARK_KAFKA_SECKILL_DLQ_TOPIC:-inventory.seckill.dlq}
+      KAFKA_SECKILL_RESULT_SINK_GROUP_ID: ${KAFKA_SECKILL_RESULT_SINK_GROUP_ID:-minishop-seckill-result-sink-benchmark}
+      OTEL_ENABLED: ${BENCHMARK_OTEL_ENABLED:-0}
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.labels.role == worker
+      restart_policy:
+        condition: any
+
+  benchmark-go-seckill-result-sink:
+    image: ${BENCHMARK_GO_SECKILL_RESULT_SINK_IMAGE:-minishop-go-seckill-result-sink:latest}
+    networks:
+      - benchmark
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@benchmark-postgres:5432/minishop
+      KAFKA_BROKERS: benchmark-redpanda:9092
+      KAFKA_SECKILL_RESULT_TOPIC: ${BENCHMARK_KAFKA_SECKILL_RESULT_TOPIC:-inventory.seckill.result}
+      KAFKA_SECKILL_DLQ_TOPIC: ${BENCHMARK_KAFKA_SECKILL_DLQ_TOPIC:-inventory.seckill.dlq}
+      KAFKA_SECKILL_RESULT_SINK_GROUP_ID: ${KAFKA_SECKILL_RESULT_SINK_GROUP_ID:-minishop-seckill-result-sink-benchmark}
+      OTEL_ENABLED: ${BENCHMARK_OTEL_ENABLED:-0}
+    deploy:
+      replicas: 0
+      placement:
+        constraints:
+          - node.labels.role == worker
+      restart_policy:
+        condition: any
+
+  benchmark-prometheus:
+    image: ${BENCHMARK_PROMETHEUS_IMAGE:-prom/prometheus:v3.5.0}
+    command: ["--config.file=/etc/prometheus/prometheus.yml"]
+    configs:
+      - source: benchmark_prometheus_config
+        target: /etc/prometheus/prometheus.yml
+    networks:
+      - benchmark
+    ports:
+      - "${BENCHMARK_PROMETHEUS_PORT:-9090}:9090"
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.labels.role == obs
+      restart_policy:
+        condition: any
+
+  benchmark-runner:
+    image: ${BENCHMARK_RUNNER_IMAGE:-minishop-benchmark-app:local}
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@benchmark-postgres:5432/minishop
       MINISHOP_ALLOWED_RESET_HOSTS: benchmark-postgres
-    depends_on:
-      benchmark-app:
-        condition: service_healthy
-    profiles: ["runner"]
-    command: ["pnpm", "benchmark:checkout:postgres:cart:reset"]
+      BENCHMARK_IN_CONTAINER: "1"
+      BENCHMARK_RESULTS_DIR: /tmp/benchmark-results
+      BENCHMARK_APP_URL: http://benchmark-go-backend:3000
+      BENCHMARK_APP_URLS: http://benchmark-go-backend:3000
+      BENCHMARK_INGRESS_APP_URLS: http://benchmark-go-seckill-ingress:3000
+      BENCHMARK_INGRESS_HEALTH_PATH: /healthz
+      BENCHMARK_PROMETHEUS_URL: http://benchmark-prometheus:9090
+      BENCHMARK_KAFKA_BROKERS: benchmark-redpanda:9092
+      BENCHMARK_KAFKA_SECKILL_REQUEST_TOPIC: ${BENCHMARK_KAFKA_SECKILL_REQUEST_TOPIC:-inventory.seckill.requested}
+      BENCHMARK_KAFKA_SECKILL_RESULT_TOPIC: ${BENCHMARK_KAFKA_SECKILL_RESULT_TOPIC:-inventory.seckill.result}
+      BENCHMARK_KAFKA_SECKILL_DLQ_TOPIC: ${BENCHMARK_KAFKA_SECKILL_DLQ_TOPIC:-inventory.seckill.dlq}
+      BENCHMARK_NEXT_MODE: next start
+    command:
+      - sh
+      - -lc
+      - trap 'exit 0' TERM INT; while :; do sleep 3600; done
+    networks:
+      - benchmark
+    volumes:
+      - benchmark_runner_results:/tmp/benchmark-results
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.labels.role == bench
+      restart_policy:
+        condition: any
+
+networks:
+  benchmark:
+    driver: overlay
+    attachable: true
 
 volumes:
-  minishop_benchmark_postgres_data:
+  benchmark_postgres_data:
+  benchmark_nats_data:
+  benchmark_redpanda_data:
+  benchmark_worker_seckill_state:
+  benchmark_runner_results:
+
+configs:
+  benchmark_prometheus_config:
+    file: ./ops/benchmark/prometheus.yml
