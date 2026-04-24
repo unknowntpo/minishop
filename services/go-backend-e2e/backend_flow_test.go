@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -317,6 +319,66 @@ var _ = Describe("go-backend buyer APIs", func() {
 			}
 			return nil
 		}).Should(Succeed())
+	})
+
+	It("processes concurrent seckill buy intents through the Go backend", Label("full"), func() {
+		Expect(testEnv.enableSeckill(context.Background(), "sku_hot_001", 20, 100)).To(Succeed())
+
+		const requestCount = 12
+		accepted := make([]acceptBuyIntentResponse, requestCount)
+		errs := make([]error, requestCount)
+		var wg sync.WaitGroup
+		for i := 0; i < requestCount; i++ {
+			i := i
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				status, body, err := testEnv.requestJSON(context.Background(), http.MethodPost, "/api/buy-intents", createBuyIntentRequest{
+					BuyerID: fmt.Sprintf("buyer_seckill_concurrent_%02d", i),
+					Items: []requestItem{
+						{
+							SkuID:                "sku_hot_001",
+							Quantity:             1,
+							UnitPriceAmountMinor: 100000,
+							Currency:             "TWD",
+						},
+					},
+				})
+				if err != nil {
+					errs[i] = err
+					return
+				}
+				if status != http.StatusAccepted {
+					errs[i] = fmt.Errorf("request %d returned status %d", i, status)
+					return
+				}
+				if err := json.Unmarshal(body, &accepted[i]); err != nil {
+					errs[i] = err
+					return
+				}
+				if accepted[i].CommandID == "" {
+					errs[i] = errors.New("command id is empty")
+				}
+			}()
+		}
+		wg.Wait()
+		for _, err := range errs {
+			Expect(err).NotTo(HaveOccurred())
+		}
+
+		for _, command := range accepted {
+			command := command
+			Eventually(func() error {
+				readStatus, result, _, err := testEnv.readCommandStatus(context.Background(), command.CommandID)
+				if err != nil {
+					return err
+				}
+				if readStatus != http.StatusOK || result.Status != "created" || result.CheckoutIntentID == nil {
+					return errors.New("concurrent seckill command not created yet")
+				}
+				return nil
+			}, "45s", "500ms").Should(Succeed())
+		}
 	})
 
 	It("rejects mixed-cart requests when a seckill SKU is present", Label("smoke", "full"), func() {

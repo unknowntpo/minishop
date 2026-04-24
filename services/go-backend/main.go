@@ -1173,18 +1173,27 @@ func (a *app) publishSeckillCommand(
 			headers = append(headers, kgo.RecordHeader{Key: key, Value: []byte(value)})
 		}
 	}
+	processingKey := buildProcessingKey(item.SkuID, primaryBucketID)
 	record := &kgo.Record{
 		Topic:     a.cfg.kafkaRequestTopic,
 		Partition: normalizeSeckillPartition(primaryBucketID),
-		Key:       []byte(buildProcessingKey(item.SkuID, primaryBucketID)),
+		Key:       []byte(processingKey),
 		Value:     payload,
 		Timestamp: time.Now().UTC(),
 		Headers:   headers,
 	}
-	if err := a.kafka.ProduceSync(ctx, record).FirstErr(); err != nil {
-		return err
-	}
-	_ = reqCtx
+	a.kafka.Produce(context.Background(), record, func(produced *kgo.Record, err error) {
+		if err == nil {
+			return
+		}
+		topic := record.Topic
+		partition := record.Partition
+		if produced != nil {
+			topic = produced.Topic
+			partition = produced.Partition
+		}
+		log.Printf("go-backend async_seckill_publish_failed request_id=%s command_id=%s topic=%s partition=%d: %v", reqCtx.requestID, command.CommandID, topic, partition, err)
+	})
 	return nil
 }
 

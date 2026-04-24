@@ -8,7 +8,6 @@ docker_context="${DOCKER_CONTEXT:-default}"
 compose_file="${repo_root}/docker-compose.benchmark.yml"
 go_backend_image="${BENCHMARK_GO_BACKEND_IMAGE:-minishop-go-backend:local}"
 node_worker_image="${BENCHMARK_NODE_WORKER_IMAGE:-minishop-node-worker:local}"
-go_seckill_ingress_image="${BENCHMARK_GO_SECKILL_INGRESS_IMAGE:-minishop-go-seckill-ingress:local}"
 go_seckill_result_sink_image="${BENCHMARK_GO_SECKILL_RESULT_SINK_IMAGE:-minishop-go-seckill-result-sink:local}"
 worker_seckill_image="${BENCHMARK_WORKER_SECKILL_IMAGE:-minishop-worker-seckill:local}"
 runner_service_name="${stack_name}_benchmark-runner"
@@ -172,10 +171,8 @@ stack_wait_seckill() {
   local sink_group="${KAFKA_SECKILL_RESULT_SINK_GROUP_ID:-minishop-seckill-result-sink-benchmark}"
 
   stack_wait_checkout
-  wait_for_service_container "benchmark-go-seckill-ingress"
   wait_for_service_container "benchmark-worker-seckill"
   wait_for_service_container "benchmark-worker-seckill-result-sink"
-  wait_for_http_from_runner "http://benchmark-go-seckill-ingress:3000/healthz" "go-seckill-ingress /healthz" 1
   ensure_topic "${request_topic}" "${partitions}"
   ensure_topic "${result_topic}" "${partitions}"
   ensure_topic "${dlq_topic}" "${partitions}"
@@ -237,7 +234,6 @@ prepare_local_images() {
 
   ensure_image "${go_backend_image}" "Dockerfile.go-backend" "${strict}"
   ensure_image "${node_worker_image}" "Dockerfile.worker" "${strict}"
-  ensure_image "${go_seckill_ingress_image}" "Dockerfile.go-seckill-ingress" "${strict}"
   ensure_image "${go_seckill_result_sink_image}" "Dockerfile.go-seckill-result-sink" "${strict}"
   ensure_image "${worker_seckill_image}" "Dockerfile.seckill-worker" "${strict}"
 }
@@ -269,12 +265,11 @@ stack_deploy() {
   export BENCHMARK_GO_BACKEND_IMAGE="${BENCHMARK_GO_BACKEND_IMAGE:-${go_backend_image}}"
   export BENCHMARK_NODE_WORKER_IMAGE="${BENCHMARK_NODE_WORKER_IMAGE:-${node_worker_image}}"
   export BENCHMARK_RUNNER_IMAGE="${BENCHMARK_RUNNER_IMAGE:-${node_worker_image}}"
-  export BENCHMARK_GO_SECKILL_INGRESS_IMAGE="${BENCHMARK_GO_SECKILL_INGRESS_IMAGE:-${go_seckill_ingress_image}}"
   export BENCHMARK_GO_SECKILL_RESULT_SINK_IMAGE="${BENCHMARK_GO_SECKILL_RESULT_SINK_IMAGE:-${go_seckill_result_sink_image}}"
   export BENCHMARK_WORKER_SECKILL_IMAGE="${BENCHMARK_WORKER_SECKILL_IMAGE:-${worker_seckill_image}}"
   export BENCHMARK_PROMETHEUS_CONFIG_NAME="${BENCHMARK_PROMETHEUS_CONFIG_NAME:-${stack_name}_benchmark_prometheus_config_${prometheus_config_hash}}"
 
-  docker_cmd stack deploy --compose-file "${compose_file}" "${stack_name}"
+  docker_cmd stack deploy --prune --compose-file "${compose_file}" "${stack_name}"
   rollout_local_images
 }
 
@@ -305,7 +300,6 @@ force_update_service_image() {
 
 rollout_local_images() {
   force_update_service_image "benchmark-go-backend" "${go_backend_image}"
-  force_update_service_image "benchmark-go-seckill-ingress" "${go_seckill_ingress_image}"
   force_update_service_image "benchmark-go-seckill-result-sink" "${go_seckill_result_sink_image}"
   force_update_service_image "benchmark-worker-seckill" "${worker_seckill_image}"
   force_update_service_image "benchmark-worker-buy-intents-ingest" "${node_worker_image}"

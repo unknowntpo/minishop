@@ -197,50 +197,6 @@ services:
     ports:
       - "${MINISHOP_APP_PORT:-3001}:3000"
 
-  go-seckill-ingress:
-    build:
-      context: .
-      dockerfile: Dockerfile.go-seckill-ingress
-    restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redpanda:
-        condition: service_started
-      tempo:
-        condition: service_started
-    environment:
-      GO_SECKILL_INGRESS_ADDR: :3000
-      DATABASE_URL: postgres://postgres:postgres@postgres:5432/minishop
-      DATABASE_POOL_MAX: ${GO_SECKILL_INGRESS_DATABASE_POOL_MAX:-4}
-      KAFKA_BROKERS: ${KAFKA_BROKERS:-redpanda:9092}
-      KAFKA_CLIENT_ID: ${GO_SECKILL_INGRESS_KAFKA_CLIENT_ID:-minishop-go-seckill-ingress}
-      KAFKA_SECKILL_REQUEST_TOPIC: ${KAFKA_SECKILL_REQUEST_TOPIC:-inventory.seckill.requested}
-      KAFKA_SECKILL_BUCKET_COUNT: ${KAFKA_SECKILL_BUCKET_COUNT:-${SECKILL_BUCKET_COUNT:-4}}
-      KAFKA_SECKILL_REQUEST_TOPIC_PARTITIONS: ${KAFKA_SECKILL_REQUEST_TOPIC_PARTITIONS:-${SECKILL_BUCKET_COUNT:-4}}
-      KAFKA_SECKILL_RESULT_TOPIC_PARTITIONS: ${KAFKA_SECKILL_RESULT_TOPIC_PARTITIONS:-${SECKILL_BUCKET_COUNT:-4}}
-      KAFKA_SECKILL_DLQ_TOPIC_PARTITIONS: ${KAFKA_SECKILL_DLQ_TOPIC_PARTITIONS:-${SECKILL_BUCKET_COUNT:-4}}
-      KAFKA_SECKILL_MAX_PROBE: ${KAFKA_SECKILL_MAX_PROBE:-4}
-      KAFKA_SECKILL_CONFIG_CACHE_TTL_MS: ${KAFKA_SECKILL_CONFIG_CACHE_TTL_MS:-60000}
-      KAFKA_SECKILL_CLIENT_LINGER_MS: ${KAFKA_SECKILL_CLIENT_LINGER_MS:-1}
-      KAFKA_SECKILL_CLIENT_BATCH_NUM_MESSAGES: ${KAFKA_SECKILL_CLIENT_BATCH_NUM_MESSAGES:-10000}
-      KAFKA_SECKILL_CLIENT_COMPRESSION: ${KAFKA_SECKILL_CLIENT_COMPRESSION:-none}
-      OTEL_ENABLED: ${OTEL_ENABLED:-1}
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://tempo:4318}
-      OTEL_SERVICE_NAME: ${GO_SECKILL_INGRESS_OTEL_SERVICE_NAME:-go-seckill-ingress}
-    expose:
-      - "3000"
-
-  go-seckill-ingress-lb:
-    image: nginx:1.27-alpine
-    container_name: minishop-go-seckill-ingress-lb
-    restart: unless-stopped
-    depends_on:
-      - go-seckill-ingress
-    volumes:
-      - ./ops/nginx/go-seckill-ingress-lb.conf:/etc/nginx/conf.d/default.conf:ro
-    ports:
-      - "${MINISHOP_GO_SECKILL_INGRESS_PORT:-3004}:3000"
 
   worker-buy-intents-ingest:
     build:
