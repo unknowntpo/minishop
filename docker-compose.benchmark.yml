@@ -20,7 +20,7 @@ services:
       replicas: 1
       placement:
         constraints:
-          - node.labels.role == db
+          - node.labels.benchmark.role.db == true
       restart_policy:
         condition: any
 
@@ -38,7 +38,7 @@ services:
       replicas: 1
       placement:
         constraints:
-          - node.labels.role == msg
+          - node.labels.benchmark.role.msg == true
       restart_policy:
         condition: any
 
@@ -74,7 +74,7 @@ services:
       replicas: 1
       placement:
         constraints:
-          - node.labels.role == msg
+          - node.labels.benchmark.role.msg == true
       restart_policy:
         condition: any
 
@@ -106,7 +106,7 @@ services:
       replicas: 1
       placement:
         constraints:
-          - node.labels.role == api
+          - node.labels.benchmark.role.api == true
       restart_policy:
         condition: any
 
@@ -132,7 +132,7 @@ services:
       replicas: 1
       placement:
         constraints:
-          - node.labels.role == api
+          - node.labels.benchmark.role.api == true
       restart_policy:
         condition: any
 
@@ -161,7 +161,7 @@ services:
       replicas: 1
       placement:
         constraints:
-          - node.labels.role == worker
+          - node.labels.benchmark.role.worker == true
       restart_policy:
         condition: any
 
@@ -180,7 +180,7 @@ services:
       replicas: 1
       placement:
         constraints:
-          - node.labels.role == worker
+          - node.labels.benchmark.role.worker == true
       restart_policy:
         condition: any
 
@@ -199,7 +199,7 @@ services:
       replicas: 0
       placement:
         constraints:
-          - node.labels.role == worker
+          - node.labels.benchmark.role.worker == true
       restart_policy:
         condition: any
 
@@ -217,7 +217,7 @@ services:
       replicas: 1
       placement:
         constraints:
-          - node.labels.role == obs
+          - node.labels.benchmark.role.obs == true
       restart_policy:
         condition: any
 
@@ -250,7 +250,7 @@ services:
       replicas: 1
       placement:
         constraints:
-          - node.labels.role == bench
+          - node.labels.benchmark.role.bench == true
       restart_policy:
         condition: any
 
