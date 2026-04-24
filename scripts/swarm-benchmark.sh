@@ -269,7 +269,7 @@ stack_deploy() {
   export BENCHMARK_WORKER_SECKILL_IMAGE="${BENCHMARK_WORKER_SECKILL_IMAGE:-${worker_seckill_image}}"
   export BENCHMARK_PROMETHEUS_CONFIG_NAME="${BENCHMARK_PROMETHEUS_CONFIG_NAME:-${stack_name}_benchmark_prometheus_config_${prometheus_config_hash}}"
 
-  docker_cmd stack deploy --compose-file "${compose_file}" "${stack_name}"
+  docker_cmd stack deploy --prune --compose-file "${compose_file}" "${stack_name}"
   rollout_local_images
 }
 

@@ -20,12 +20,11 @@ core_services=(
   postgres
   nats
   redpanda
-  app
+  go-backend
   worker-seckill
 )
 
 no_dep_services=(
-  go-seckill-ingress
   go-seckill-result-sink
 )
 
@@ -78,8 +77,8 @@ for max_wait in "${max_waits[@]}"; do
     -e BENCHMARK_APP_URL=http://go-backend:3000 \
     -e BENCHMARK_APP_URLS=http://go-backend:3000 \
     -e BENCHMARK_PROMETHEUS_URL=http://prometheus:9090 \
-    -e BENCHMARK_INGRESS_APP_URLS=http://go-seckill-ingress:3000 \
-    -e BENCHMARK_INGRESS_HEALTH_PATH=/healthz \
+    -e BENCHMARK_INGRESS_APP_URLS=http://go-backend:3000 \
+    -e BENCHMARK_INGRESS_HEALTH_PATH=/api/products \
     -e KAFKA_SECKILL_CLIENT_LINGER_MS=50 \
     -e KAFKA_SECKILL_CLIENT_BATCH_NUM_MESSAGES=5000 \
     -e GO_SECKILL_RESULT_SINK_MAX_WAIT_MS="$max_wait" \

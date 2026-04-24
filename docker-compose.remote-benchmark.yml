@@ -1,5 +1,5 @@
 services:
-  app:
+  go-backend:
     command: >
       sh -lc "pnpm --config.engine-strict=false db:migrate &&
       SEED_DEV_CATALOG_ON_HAND_OVERRIDES=sku_hot_001:200000 npx tsx scripts/seed-dev-catalog.ts &&
@@ -7,15 +7,6 @@ services:
     environment:
       OTEL_ENABLED: "0"
 
-  go-seckill-ingress:
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redpanda:
-        condition: service_started
-    environment:
-      OTEL_ENABLED: "0"
-      OTEL_EXPORTER_OTLP_ENDPOINT: ""
 
   worker-seckill:
     environment:

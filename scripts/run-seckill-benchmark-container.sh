@@ -29,10 +29,6 @@ core_services=(
   worker-seckill-result-sink
 )
 
-if [[ "${BENCHMARK_INGRESS_IMPL:-node}" == "go" ]]; then
-  core_services+=(go-seckill-ingress)
-fi
-
 if [[ "${BENCHMARK_RESULT_SINK_IMPL:-node}" == "go" ]]; then
   filtered_services=()
   for service in "${core_services[@]}"; do
