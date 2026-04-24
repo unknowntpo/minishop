@@ -109,12 +109,14 @@ type benchmarkTimingRecorder struct {
 	mu      sync.Mutex
 	started time.Time
 	stages  map[string][]float64
+	counts  map[string]int
 }
 
 type benchmarkTimingSnapshot struct {
 	StartedAt string                            `json:"startedAt"`
 	SampledAt string                            `json:"sampledAt"`
 	Stages    map[string]benchmarkTimingSummary `json:"stages"`
+	Counts    map[string]int                    `json:"counts"`
 }
 
 type benchmarkTimingSummary struct {
@@ -1266,10 +1268,14 @@ func (a *app) publishSeckillCommand(
 		Timestamp: time.Now().UTC(),
 		Headers:   headers,
 	}
+	deliveryStarted := time.Now()
 	a.kafka.Produce(context.Background(), record, func(produced *kgo.Record, err error) {
+		a.timings.ObserveSince("seckill_publish.delivery_ack", deliveryStarted)
 		if err == nil {
+			a.timings.Increment("seckill_publish.delivery_success")
 			return
 		}
+		a.timings.Increment("seckill_publish.delivery_error")
 		topic := record.Topic
 		partition := record.Partition
 		if produced != nil {
@@ -3058,6 +3064,7 @@ func newBenchmarkTimingRecorder() *benchmarkTimingRecorder {
 	return &benchmarkTimingRecorder{
 		started: now,
 		stages:  map[string][]float64{},
+		counts:  map[string]int{},
 	}
 }
 
@@ -3066,6 +3073,7 @@ func (r *benchmarkTimingRecorder) Reset() {
 	defer r.mu.Unlock()
 	r.started = time.Now().UTC()
 	r.stages = map[string][]float64{}
+	r.counts = map[string]int{}
 }
 
 func (r *benchmarkTimingRecorder) ObserveSince(stage string, started time.Time) {
@@ -3078,6 +3086,15 @@ func (r *benchmarkTimingRecorder) ObserveSince(stage string, started time.Time) 
 	r.mu.Unlock()
 }
 
+func (r *benchmarkTimingRecorder) Increment(name string) {
+	if r == nil || strings.TrimSpace(name) == "" {
+		return
+	}
+	r.mu.Lock()
+	r.counts[name]++
+	r.mu.Unlock()
+}
+
 func (r *benchmarkTimingRecorder) Snapshot() benchmarkTimingSnapshot {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -3086,10 +3103,15 @@ func (r *benchmarkTimingRecorder) Snapshot() benchmarkTimingSnapshot {
 	for stage, samples := range r.stages {
 		stages[stage] = summarizeTimingSamples(samples)
 	}
+	counts := make(map[string]int, len(r.counts))
+	for name, count := range r.counts {
+		counts[name] = count
+	}
 	return benchmarkTimingSnapshot{
 		StartedAt: r.started.Format(time.RFC3339Nano),
 		SampledAt: time.Now().UTC().Format(time.RFC3339Nano),
 		Stages:    stages,
+		Counts:    counts,
 	}
 }
 
