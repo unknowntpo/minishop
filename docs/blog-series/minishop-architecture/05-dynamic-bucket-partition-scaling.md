@@ -1,5 +1,7 @@
 # 動態擴展 bucket 與 partition：Redis slot 類比的限制
 
+基準版本：`main` at `ce9d291796ff22c4496ca14ccb934bc962cf836c`
+
 Seckill scaling 最容易出現的一個直覺，是把 bucket 設計成類似 Redis Cluster slot：先切很多 virtual bucket，再把 bucket 分配到不同節點。如果需要擴容，就把部分 bucket 搬到新節點。
 
 這個類比有幫助，但不能直接套用。

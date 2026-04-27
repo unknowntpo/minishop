@@ -1,5 +1,7 @@
 # 先讓數字可信：PostgreSQL baseline、artifact schema 與 profiling
 
+基準版本：`main` at `ce9d291796ff22c4496ca14ccb934bc962cf836c`
+
 Minishop 的架構演進高度依賴 benchmark。這代表 benchmark 本身不能只是「跑起來看一下」。如果 benchmark artifact 不穩定、路徑不清楚、profile 無法回溯到 run，就無法用數字做架構決策。
 
 因此 Minishop 把 benchmark 視為一個獨立平台，而不是臨時 script。

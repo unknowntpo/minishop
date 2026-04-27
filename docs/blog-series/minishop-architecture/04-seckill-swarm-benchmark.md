@@ -1,5 +1,7 @@
 # Seckill 壓測路徑：為什麼 full API 與 direct Kafka 都要存在
 
+基準版本：`main` at `ce9d291796ff22c4496ca14ccb934bc962cf836c`
+
 Minishop 的 seckill path 不是一般 checkout path 的簡單放大。Hot SKU 在短時間內承受大量請求時，系統同時要處理 ingress throughput、Kafka partition、worker state、result sink 與 read model 更新。
 
 因此 benchmark 需要兩條路徑：

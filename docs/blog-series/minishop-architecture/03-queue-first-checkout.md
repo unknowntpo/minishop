@@ -1,5 +1,7 @@
 # Queue-first checkout：CommandAccepted 與 CheckoutIntentCreated 為什麼要分開
 
+基準版本：`main` at `ce9d291796ff22c4496ca14ccb934bc962cf836c`
+
 PostgreSQL event store baseline 讓 Minishop 有了清楚的 durable fact boundary，但也暴露出下一個問題：如果每個 HTTP request 都要同步建立 `CheckoutIntentCreated`，client latency 與 burst handling 會被 PostgreSQL append capacity 直接制約。
 
 Queue-first checkout 的目標不是把 PostgreSQL 移除，而是把 request path 與 durable fact creation 解耦。

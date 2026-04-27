@@ -2,6 +2,12 @@
 
 這個目錄整理 Minishop repo 目前累積在 Spectra 規格、benchmark 實作與 seckill 壓測中的設計決策。文章目標不是重述所有程式碼，而是把「為什麼這樣設計」、「遇到什麼問題」、「最後如何修正」整理成可連載的中文技術文章。
 
+## 基準版本
+
+- Branch: `main`
+- Commit: `ce9d291796ff22c4496ca14ccb934bc962cf836c`
+- 用途：本文系列的技術描述、檔案引用與 benchmark 架構，皆以此 commit 的 repo 狀態為基準。
+
 ## 文章列表
 
 1. [從同步扣庫存到事件源流：Minishop 的第一個架構邊界](./01-event-sourced-checkout.md)
