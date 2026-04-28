@@ -46,6 +46,8 @@ type BenchmarkConfig = {
   directKafkaBatchSize: number;
   directKafkaProducerClient: "franz-go" | "confluent-kafka-javascript";
   directKafkaFranzPublisherBin: string;
+  httpClient: "node-fetch" | "go-http";
+  httpGoLoadgenBin: string;
   kafkaClient: string;
   appPublishBatchSize: number;
   appPublishLingerMs: number;
@@ -335,14 +337,9 @@ async function main() {
             config,
           );
         } else {
-          const observer = createConcurrencyObserver(effectiveRequests, config.httpConcurrency);
-          acceptResults = await runWithConcurrency(
-            effectiveRequests,
-            config.httpConcurrency,
-            async (index) => createBuyIntent(index),
-            observer,
-          );
-          concurrencyObservation = observer.snapshot();
+          const acceptedOverHttp = await acceptBuyIntentsOverHttp(effectiveRequests, config);
+          acceptResults = acceptedOverHttp.results;
+          concurrencyObservation = acceptedOverHttp.concurrencyObservation;
         }
         acceptDurationMs = performance.now() - acceptStartedAt;
 
@@ -1251,6 +1248,106 @@ async function createBuyIntent(index: number): Promise<AcceptResult> {
       error: error instanceof Error ? error.message : "unknown_error",
     };
   }
+}
+
+async function acceptBuyIntentsOverHttp(
+  total: number,
+  config: BenchmarkConfig,
+): Promise<{
+  results: AcceptResult[];
+  concurrencyObservation: ConcurrencyObservation | null;
+}> {
+  if (config.httpClient === "go-http") {
+    const results = await acceptBuyIntentsWithGoHTTP(total, config);
+    return {
+      results,
+      concurrencyObservation: {
+        configured: config.httpConcurrency,
+        workers: Math.max(1, Math.min(config.httpConcurrency, total)),
+        maxInFlight: Math.max(1, Math.min(config.httpConcurrency, total)),
+        totalStarted: total,
+        totalCompleted: results.length,
+      },
+    };
+  }
+
+  const observer = createConcurrencyObserver(total, config.httpConcurrency);
+  const results = await runWithConcurrency(
+    total,
+    config.httpConcurrency,
+    async (index) => createBuyIntent(index),
+    observer,
+  );
+  return {
+    results,
+    concurrencyObservation: observer.snapshot(),
+  };
+}
+
+async function acceptBuyIntentsWithGoHTTP(
+  total: number,
+  config: BenchmarkConfig,
+): Promise<AcceptResult[]> {
+  const input = {
+    targetUrls: config.ingressAppUrls,
+    requests: total,
+    concurrency: config.httpConcurrency,
+    runId: config.runId,
+    skuId: config.skuId,
+    buyerPrefix: config.buyerPrefix,
+    unitPriceAmountMinor: config.unitPriceAmountMinor,
+    currency: config.currency,
+    collectResults: true,
+  };
+  const output = await runGoHTTPLoadgen(config.httpGoLoadgenBin, input);
+  return output.results;
+}
+
+async function runGoHTTPLoadgen(
+  binaryPath: string,
+  input: Record<string, unknown>,
+): Promise<{
+  results: AcceptResult[];
+}> {
+  const child = spawn(binaryPath, [], {
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+
+  const stdoutChunks: Buffer[] = [];
+  const stderrChunks: Buffer[] = [];
+
+  child.stdout.on("data", (chunk: Buffer) => {
+    stdoutChunks.push(chunk);
+  });
+  child.stderr.on("data", (chunk: Buffer) => {
+    stderrChunks.push(chunk);
+  });
+
+  child.stdin.end(JSON.stringify(input));
+
+  const exitCode = await new Promise<number | null>((resolve, reject) => {
+    child.on("error", reject);
+    child.on("close", resolve);
+  });
+
+  const stdout = Buffer.concat(stdoutChunks).toString("utf8").trim();
+  const stderr = Buffer.concat(stderrChunks).toString("utf8").trim();
+
+  if (exitCode !== 0) {
+    throw new Error(
+      `go HTTP loadgen failed with exit=${exitCode}${stderr ? `: ${stderr}` : ""}`,
+    );
+  }
+  if (stderr) {
+    console.warn(`[benchmark] go HTTP loadgen stderr: ${stderr}`);
+  }
+
+  const parsed = JSON.parse(stdout) as {
+    results?: AcceptResult[];
+  };
+  return {
+    results: parsed.results ?? [],
+  };
 }
 
 async function publishSeckillRequestsDirectly(
@@ -2855,6 +2952,9 @@ function readConfig(): BenchmarkConfig {
     directKafkaFranzPublisherBin:
       process.env.BENCHMARK_DIRECT_KAFKA_FRANZ_PUBLISHER_BIN ??
       "/usr/local/bin/seckill-direct-franz-publisher",
+    httpClient: readHTTPClient(),
+    httpGoLoadgenBin:
+      process.env.BENCHMARK_HTTP_GO_LOADGEN_BIN ?? "/usr/local/bin/seckill-http-loadgen",
     kafkaClient: process.env.BENCHMARK_KAFKA_CLIENT ?? "confluent-kafka-javascript",
     appPublishBatchSize: readPositiveIntegerEnv("KAFKA_SECKILL_PUBLISH_BATCH_SIZE", 64),
     appPublishLingerMs: readPositiveIntegerEnv("KAFKA_SECKILL_PUBLISH_LINGER_MS", 2),
@@ -2903,6 +3003,9 @@ function buildScenarioTags(config: BenchmarkConfig) {
   }
   if (config.ingressImpl) {
     tags.impl = config.ingressImpl;
+  }
+  if (config.ingressSource === "http") {
+    tags.httpClient = config.httpClient;
   }
   if (config.benchmarkPath) {
     tags.path = config.benchmarkPath;
@@ -3044,6 +3147,7 @@ function buildKafkaReport(
       lingerMs: config.producerLingerMs,
       batchNumMessages: config.producerBatchNumMessages,
     },
+    httpClient: config.ingressSource === "http" ? config.httpClient : undefined,
     requestTopicOffsets: formatKafkaTopicOffsets(before?.requestTopic, after?.requestTopic),
     resultTopicOffsets: formatKafkaTopicOffsets(before?.resultTopic, after?.resultTopic),
     dlqTopicOffsets: formatKafkaTopicOffsets(before?.dlqTopic, after?.dlqTopic),
@@ -3158,6 +3262,16 @@ function readDirectKafkaProducerClient(): BenchmarkConfig["directKafkaProducerCl
   throw new Error(
     "BENCHMARK_DIRECT_KAFKA_PRODUCER_CLIENT must be franz-go or confluent-kafka-javascript.",
   );
+}
+
+function readHTTPClient(): BenchmarkConfig["httpClient"] {
+  const raw = process.env.BENCHMARK_HTTP_CLIENT?.trim() || "node-fetch";
+
+  if (raw === "node-fetch" || raw === "go-http") {
+    return raw;
+  }
+
+  throw new Error("BENCHMARK_HTTP_CLIENT must be node-fetch or go-http.");
 }
 
 function readBooleanWithDefault(name: string, fallback: boolean) {

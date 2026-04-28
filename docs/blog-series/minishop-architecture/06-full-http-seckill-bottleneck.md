@@ -6,6 +6,7 @@
 
 - `85685c54885b0d69974f045d1545ce450bfe80e9`：direct Kafka path 改用 Go/franz-go producer。
 - `981dcfc488c136c0019711b95d75bc172f614b6f`：go-backend 新增 internal seckill produce benchmark endpoint。
+- `372de937773409429b3f74d34cd0227a3eed7d0c`：新增 Go full HTTP load generator，用來隔離 Node.js HTTP client 的影響。
 
 這篇文章記錄一次 full HTTP seckill throughput 瓶頸定位。重點不是把某一個 benchmark 數字寫成絕對效能，而是建立一條可檢查的證據鏈：哪一層慢、哪一層不慢，以及下一個實驗應該切在哪裡。
 
@@ -173,12 +174,12 @@ seckill_publish.delivery_ack p95    = 143.536ms
 - franz-go producer 本身。
 - single broker 在 10k burst 下的 durable ack 能力。
 
-## 為什麼 full HTTP 仍然慢
+## 為什麼 Node full HTTP benchmark 仍然慢
 
-full HTTP 慢在「每一筆 buy intent 都要走一次外部 HTTP request/response」。這與 internal endpoint 的差異如下：
+最初的 full HTTP benchmark 慢在「每一筆 buy intent 都要由 Node.js runner 送出一次外部 HTTP request/response」。這與 internal endpoint 的差異如下：
 
 ```text
-full HTTP:
+Node full HTTP benchmark:
   10000 external HTTP requests
   -> Swarm service VIP / routing
   -> go-backend request lifecycle
@@ -211,6 +212,39 @@ API=4 full HTTP:
 
 這裡仍保留「在這組測試中」這個前提，因為 production 環境可能使用不同 L4 load balancer、host networking、kernel tuning、TLS、HTTP/2 或多 broker Redpanda。
 
+## 第四組對照：full HTTP 改用 Go load generator
+
+為了確認 Node.js benchmark client 是否混入限制，full HTTP path 也新增 Go load generator。設計與 direct Kafka Go helper 相同：Node benchmark script 只傳入一次小型 config，真正的 hot loop 由 Go binary 執行。
+
+```text
+Node benchmark script
+  -> spawn Go HTTP load generator once
+  -> pass target URLs / requests / concurrency / payload config through stdin
+  -> Go load generator sends all HTTP /api/buy-intents requests
+  -> Go load generator returns command ids / accepted timestamps once
+  -> Node benchmark script continues result collection and artifact generation
+```
+
+這個做法沒有改 production go-backend，也沒有跳過 HTTP handler。它只把 benchmark client 從 Node fetch 換成 Go `net/http`，用來測量同一條 full HTTP API path 在較可靠 load generator 下的吞吐。
+
+同樣 10k / concurrency 300 / 12 buckets / maxProbe 1 / single broker：
+
+| client | target | run id | HTTP accepted RPS | Kafka durable accepted | p95 latency |
+|---|---|---:|---:|---:|---:|
+| Node fetch | Swarm service VIP | `orb_http_vip_c300_10k_20260428T101151Z` | `1,271/s` | 10000 | `378ms` |
+| Go HTTP loadgen | Swarm service VIP | `orb_full_http_gohttp_c300_10k_20260428T105411Z` | `11,195/s` | 10000 | `58.61ms` |
+
+這個結果改變了歸因：先前 `1k-2k/s` 的 full HTTP 數字不能直接代表 go-backend 或 Swarm service VIP 的上限。它很大一部分來自 benchmark client 本身。用 Go HTTP load generator 後，同一條 full HTTP API path 可以達到約 `11.2k/s`，並且 Kafka durable accepted 仍為 `10000/10000`。
+
+因此目前的分層結論應改成：
+
+- Kafka / worker pipeline 可達約 `54.5k/s`。
+- go-backend internal produce durable ack 約 `49.7k/s`。
+- full HTTP + Go HTTP loadgen 約 `11.2k/s`。
+- full HTTP + Node fetch benchmark 約 `1.2k-1.7k/s`，這是 benchmark client path 的限制，不應當成 backend 容量。
+
+full HTTP 仍低於 internal produce，這是合理的：每筆 request 仍要經過 HTTP parse、request body decode、response write、connection scheduling、service network path 與 client-side receive loop。新的重點不再是「Go API server 是否只能處理 1k/s」，而是「production 入口層與 load generator 是否能提供足夠並行連線與 request fanout」。
+
 ## 已建立的證據鏈
 
 目前 evidence 可整理為：
@@ -221,8 +255,9 @@ API=4 full HTTP:
 | go-backend internal produce | one HTTP trigger, internal 10k produce | `49.7k/s` durable ack | Go producer path 與 direct Kafka 同量級 |
 | JSON marshal | internal timing | p95 `0.019ms` | JSON 不是主要瓶頸 |
 | producer enqueue | internal timing | p95 `0.608ms` | `Produce()` enqueue 不是主要瓶頸 |
-| full HTTP API=1 | 10k external HTTP requests | `1.67k/s` HTTP accepted | 外部 HTTP path 有明顯成本 |
-| full HTTP API=4 | 10k external HTTP requests | `1.28k/s` HTTP accepted | 加 API replica 未改善此環境瓶頸 |
+| full HTTP, Go HTTP loadgen | 10k external HTTP requests | `11.2k/s` HTTP accepted | Go backend + HTTP API path 可明顯高於 Node benchmark 數字 |
+| full HTTP API=1, Node fetch | 10k external HTTP requests | `1.67k/s` HTTP accepted | Node benchmark client path 有明顯成本 |
+| full HTTP API=4, Node fetch | 10k external HTTP requests | `1.28k/s` HTTP accepted | 加 API replica 未改善此環境瓶頸 |
 
 ## 下一個實驗
 
@@ -236,7 +271,7 @@ host/client       -> localhost:3300                # published port / routing me
 
 如果 single backend task IP 明顯高於 service VIP，瓶頸更接近 Swarm VIP / routing mesh / service load balancing。
 
-如果 single backend task IP 仍然只有 `1k-2k/s`，則應繼續檢查 benchmark runner 的 HTTP client、connection reuse、Node fetch implementation、request body construction、以及 backend HTTP server connection scheduling。
+如果 single backend task IP 仍然只有 `1k-2k/s`，則應繼續檢查 benchmark runner 的 HTTP client、connection reuse、Node fetch implementation、request body construction、以及 backend HTTP server connection scheduling。Go HTTP load generator 已證明 Node fetch path 會顯著低估 full HTTP 能力；後續容量測試應預設使用 Go HTTP load generator 或 k6，而不是 Node fetch。
 
 如果 published port 比 overlay service VIP 更慢，則 routing mesh 成本可以被獨立標記，不應把它混入 go-backend 或 Kafka 的容量判斷。
 
@@ -247,9 +282,10 @@ host/client       -> localhost:3300                # published port / routing me
 1. Direct Kafka 改用 Go/franz-go 後，10k durable ack 約 `54.5k/s`。
 2. go-backend 內部觸發同一套 seckill publish code，10k durable ack 約 `49.7k/s`。
 3. JSON marshal p95 只有 `0.019ms`，`Produce()` enqueue p95 只有 `0.608ms`。
-4. full HTTP 10k external request 只有 `1.2k-1.7k/s`。
-5. API replicas 從 1 增加到 4 沒有改善，反而下降。
+4. full HTTP + Go HTTP loadgen 10k external request 約 `11.2k/s`，Kafka durable accepted `10000/10000`。
+5. full HTTP + Node fetch benchmark 只有 `1.2k-1.7k/s`，不能代表 backend 容量。
+6. API replicas 從 1 增加到 4 沒有改善 Node benchmark 結果，反而下降。
 
-因此，目前最合理的結論是：full HTTP seckill 的主要限制在外部 HTTP ingress path，而不是 Kafka producer、JSON encode 或 Go handler 本身。
+因此，目前最合理的結論是：full HTTP seckill 的主要限制不是 Kafka producer、JSON encode 或 Go handler 本身。若使用 Node benchmark client，主要限制會落在 benchmark client / HTTP fanout path；若改用 Go HTTP load generator，同一條 full HTTP API path 可以達到約 `11.2k/s`。
 
-這個結論會直接影響後續優化方向。若目標是提高 production full HTTP throughput，下一步不應先重寫 Kafka payload，也不應先調整 JSON encoder；應先確認 HTTP ingress 的具體限制點，例如 Swarm service VIP、routing mesh、connection reuse、host-mode publish、或外部 L4 load balancer。
+這個結論會直接影響後續優化方向。若目標是提高 production full HTTP throughput，下一步不應先重寫 Kafka payload，也不應先調整 JSON encoder；應使用 Go HTTP load generator 或 k6 重新做 API replica、concurrency、Swarm service VIP、single task IP、host-mode publish、外部 L4 load balancer 的矩陣測試。
