@@ -16,11 +16,13 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	hertzapp "github.com/cloudwego/hertz/pkg/app"
 	hserver "github.com/cloudwego/hertz/pkg/app/server"
+	"github.com/cloudwego/hertz/pkg/common/adaptor"
 	"github.com/cloudwego/hertz/pkg/common/hlog"
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
 	gojson "github.com/goccy/go-json"
@@ -29,6 +31,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nats-io/nats.go"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"github.com/twmb/franz-go/pkg/kmsg"
@@ -65,6 +70,7 @@ type config struct {
 	kafkaBatchSize       int
 	kafkaLingerMs        int
 	kafkaCompression     string
+	kafkaRequiredAcks    string
 	seckillConfigTTL     time.Duration
 	forcedSeckillSKUs    map[string]int
 	benchmarkResultsRoot string
@@ -88,6 +94,17 @@ type app struct {
 	timings  *benchmarkTimingRecorder
 	tracer   trace.Tracer
 }
+
+var (
+	backendSeckillPublishDeliverySuccessTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "minishop_backend_seckill_publish_delivery_success_total",
+		Help: "Total seckill request records acknowledged successfully by Kafka or Redpanda from the Go backend producer.",
+	})
+	backendSeckillPublishDeliveryErrorTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "minishop_backend_seckill_publish_delivery_error_total",
+		Help: "Total seckill request records rejected or failed by Kafka or Redpanda from the Go backend producer.",
+	})
+)
 
 type skuConfigCache struct {
 	mu      sync.RWMutex
@@ -204,6 +221,36 @@ type acceptResponse struct {
 	CommandID     string `json:"commandId"`
 	CorrelationID string `json:"correlationId"`
 	Status        string `json:"status"`
+}
+
+type benchmarkSeckillProduceRequest struct {
+	Requests        int    `json:"requests"`
+	Concurrency     int    `json:"concurrency"`
+	SkuID           string `json:"skuId"`
+	StockLimit      int    `json:"stockLimit"`
+	UnitPriceMinor  int    `json:"unitPriceMinor"`
+	Currency        string `json:"currency"`
+	BuyerPrefix     string `json:"buyerPrefix"`
+	WaitForKafkaAck *bool  `json:"waitForKafkaAck"`
+	ResetTimings    bool   `json:"resetTimings"`
+}
+
+type benchmarkSeckillProduceResponse struct {
+	Requests          int                     `json:"requests"`
+	Concurrency       int                     `json:"concurrency"`
+	SkuID             string                  `json:"skuId"`
+	StockLimit        int                     `json:"stockLimit"`
+	WaitForKafkaAck   bool                    `json:"waitForKafkaAck"`
+	Enqueued          int                     `json:"enqueued"`
+	EnqueueErrors     int                     `json:"enqueueErrors"`
+	DeliverySuccess   int                     `json:"deliverySuccess"`
+	DeliveryErrors    int                     `json:"deliveryErrors"`
+	EnqueueDurationMs float64                 `json:"enqueueDurationMs"`
+	EnqueuePerSecond  float64                 `json:"enqueuePerSecond"`
+	AckWaitDurationMs float64                 `json:"ackWaitDurationMs,omitempty"`
+	TotalDurationMs   float64                 `json:"totalDurationMs"`
+	DurablePerSecond  float64                 `json:"durablePerSecond"`
+	Timings           benchmarkTimingSnapshot `json:"timings"`
 }
 
 type createCheckoutIntentResponse struct {
@@ -371,6 +418,11 @@ type completeDemoCheckoutResponse struct {
 	PaymentID        *string `json:"paymentId,omitempty"`
 	Reason           *string `json:"reason,omitempty"`
 }
+
+const (
+	seckillRoutingDefault = "default"
+	seckillRoutingSingle  = "single_seckill"
+)
 
 type seckillRoutingDecision struct {
 	kind       string
@@ -635,7 +687,7 @@ func main() {
 	kafkaClient, err := kgo.NewClient(
 		kgo.SeedBrokers(cfg.kafkaBrokers...),
 		kgo.ClientID(cfg.kafkaClientID),
-		kgo.RequiredAcks(kgo.AllISRAcks()),
+		kgo.RequiredAcks(kafkaRequiredAcks(cfg.kafkaRequiredAcks)),
 		kgo.RecordPartitioner(kgo.ManualPartitioner()),
 		kgo.ProducerLinger(time.Duration(cfg.kafkaLingerMs)*time.Millisecond),
 		kgo.MaxBufferedRecords(cfg.kafkaBatchSize),
@@ -723,6 +775,7 @@ func readConfig() config {
 		kafkaBatchSize:       envInt("KAFKA_SECKILL_CLIENT_BATCH_NUM_MESSAGES", 10000),
 		kafkaLingerMs:        envInt("KAFKA_SECKILL_CLIENT_LINGER_MS", 1),
 		kafkaCompression:     envDefault("KAFKA_SECKILL_CLIENT_COMPRESSION", "none"),
+		kafkaRequiredAcks:    envDefault("KAFKA_SECKILL_CLIENT_REQUIRED_ACKS", "all"),
 		seckillConfigTTL:     time.Duration(envInt("KAFKA_SECKILL_CONFIG_CACHE_TTL_MS", 60000)) * time.Millisecond,
 		forcedSeckillSKUs:    readForcedSeckillSKUs(),
 		benchmarkResultsRoot: envDefault("GO_BACKEND_BENCHMARK_RESULTS_ROOT", defaultBenchmarkResultsRoot()),
@@ -831,6 +884,7 @@ func (a *app) startServer() (func(context.Context) error, error) {
 
 func (a *app) startNetHTTPServer() (func(context.Context) error, error) {
 	mux := http.NewServeMux()
+	mux.Handle("/metrics", promhttp.Handler())
 	mux.Handle("/healthz", otelhttp.NewHandler(http.HandlerFunc(a.handleHealthz), "GET /healthz"))
 	mux.Handle("/api/products", otelhttp.NewHandler(http.HandlerFunc(a.handleListProducts), "GET /api/products"))
 	mux.Handle("/api/products/", otelhttp.NewHandler(http.HandlerFunc(a.handleGetProductBySlug), "GET /api/products/{slug}"))
@@ -843,6 +897,7 @@ func (a *app) startNetHTTPServer() (func(context.Context) error, error) {
 	mux.Handle("/api/internal/admin/seckill", otelhttp.NewHandler(http.HandlerFunc(a.handleUpdateAdminSeckill), "POST /api/internal/admin/seckill"))
 	mux.Handle("/api/internal/benchmarks", otelhttp.NewHandler(http.HandlerFunc(a.handleListBenchmarks), "GET /api/internal/benchmarks"))
 	mux.Handle("/api/internal/benchmarks/timings", otelhttp.NewHandler(http.HandlerFunc(a.handleBenchmarkTimings), "/api/internal/benchmarks/timings"))
+	mux.Handle("/api/internal/benchmarks/seckill-produce", otelhttp.NewHandler(http.HandlerFunc(a.handleBenchmarkSeckillProduce), "POST /api/internal/benchmarks/seckill-produce"))
 	mux.Handle("/api/internal/projections/process", otelhttp.NewHandler(http.HandlerFunc(a.handleProcessProjections), "POST /api/internal/projections/process"))
 	mux.Handle("/api/internal/checkout-intents/", otelhttp.NewHandler(http.HandlerFunc(a.handleCompleteDemoCheckout), "POST /api/internal/checkout-intents/{checkoutIntentId}/complete-demo"))
 
@@ -871,11 +926,13 @@ func (a *app) startHertzServer() (func(context.Context) error, error) {
 	)
 	server.Use(a.hertzBenchmarkTimings())
 	server.Use(a.hertzCORS())
+	server.GET("/metrics", adaptor.HertzHandler(promhttp.Handler()))
 	server.GET("/healthz", a.handleHealthzHertz)
 	server.POST("/api/buy-intents", a.handleBuyIntentsHertz)
 	server.GET("/api/internal/benchmarks", a.handleListBenchmarksHertz)
 	server.GET("/api/internal/benchmarks/timings", a.handleBenchmarkTimingsHertz)
 	server.POST("/api/internal/benchmarks/timings", a.handleBenchmarkTimingsHertz)
+	server.POST("/api/internal/benchmarks/seckill-produce", adaptor.HertzHandler(http.HandlerFunc(a.handleBenchmarkSeckillProduce)))
 
 	go func() {
 		log.Printf("go-backend listening on %s engine=%s", a.cfg.addr, a.cfg.httpEngine)
@@ -1041,7 +1098,10 @@ func (a *app) handleBuyIntents(w http.ResponseWriter, r *http.Request) {
 	a.timings.ObserveSince("buy_intent.command_build", stageStarted)
 
 	stageStarted = time.Now()
-	if decision.kind == "single_seckill" {
+	// Single-SKU seckill requests bypass the regular NATS buy-intent flow and
+	// enter the Kafka seckill reservation path. Mixed carts with seckill SKUs
+	// are rejected by classifyItemsForSeckill before this point.
+	if decision.kind == seckillRoutingSingle {
 		if err := a.publishSeckillCommand(ctx, body, command, decision.stockLimit, reqCtx); err != nil {
 			a.timings.ObserveSince("buy_intent.publish_seckill", stageStarted)
 			span.RecordError(err)
@@ -1153,7 +1213,10 @@ func (a *app) handleBuyIntentsHertz(base context.Context, c *hertzapp.RequestCon
 	a.timings.ObserveSince("buy_intent.command_build", stageStarted)
 
 	stageStarted = time.Now()
-	if decision.kind == "single_seckill" {
+	// Single-SKU seckill requests bypass the regular NATS buy-intent flow and
+	// enter the Kafka seckill reservation path. Mixed carts with seckill SKUs
+	// are rejected by classifyItemsForSeckill before this point.
+	if decision.kind == seckillRoutingSingle {
 		if err := a.publishSeckillCommand(ctx, body, command, decision.stockLimit, reqCtx); err != nil {
 			a.timings.ObserveSince("buy_intent.publish_seckill", stageStarted)
 			span.RecordError(err)
@@ -1214,6 +1277,17 @@ func (a *app) publishSeckillCommand(
 	stockLimit int,
 	reqCtx requestContext,
 ) error {
+	return a.publishSeckillCommandWithDelivery(ctx, body, command, stockLimit, reqCtx, nil)
+}
+
+func (a *app) publishSeckillCommandWithDelivery(
+	ctx context.Context,
+	body requestBody,
+	command buyIntentCommand,
+	stockLimit int,
+	reqCtx requestContext,
+	onDelivery func(error),
+) error {
 	item := body.Items[0]
 	stableKey := command.IdempotencyKey
 	if stableKey == "" {
@@ -1269,13 +1343,21 @@ func (a *app) publishSeckillCommand(
 		Headers:   headers,
 	}
 	deliveryStarted := time.Now()
+	// Produce is asynchronous: the HTTP handler returns 202 after the record is
+	// accepted into the franz-go producer, while the callback records broker ack
+	// success or failure later. This keeps HTTP acceptance off the Kafka ack RTT.
 	a.kafka.Produce(context.Background(), record, func(produced *kgo.Record, err error) {
+		if onDelivery != nil {
+			defer onDelivery(err)
+		}
 		a.timings.ObserveSince("seckill_publish.delivery_ack", deliveryStarted)
 		if err == nil {
 			a.timings.Increment("seckill_publish.delivery_success")
+			backendSeckillPublishDeliverySuccessTotal.Inc()
 			return
 		}
 		a.timings.Increment("seckill_publish.delivery_error")
+		backendSeckillPublishDeliveryErrorTotal.Inc()
 		topic := record.Topic
 		partition := record.Partition
 		if produced != nil {
@@ -1553,6 +1635,180 @@ func (a *app) handleBenchmarkTimingsHertz(base context.Context, c *hertzapp.Requ
 	}
 }
 
+func (a *app) handleBenchmarkSeckillProduce(w http.ResponseWriter, r *http.Request) {
+	ctx, span := a.tracer.Start(r.Context(), "admin.benchmark_seckill_produce")
+	defer span.End()
+
+	reqCtx := requestContextFromRequest(ctx, r)
+	if r.Method != http.MethodPost {
+		writeError(w, reqCtx, http.StatusMethodNotAllowed, "Method not allowed.")
+		return
+	}
+
+	body, err := decodeRequestBody[benchmarkSeckillProduceRequest](r)
+	if err != nil {
+		writeError(w, reqCtx, http.StatusBadRequest, "Benchmark request must be valid JSON.")
+		return
+	}
+	normalizeBenchmarkSeckillProduceRequest(&body)
+	if body.Requests < 1 || body.Requests > 1_000_000 || body.Concurrency < 1 || body.Concurrency > 10000 {
+		writeError(w, reqCtx, http.StatusBadRequest, "Benchmark request has invalid requests or concurrency.")
+		return
+	}
+	if body.ResetTimings {
+		a.timings.Reset()
+	}
+
+	var enqueueErrors int64
+	var deliverySuccess int64
+	var deliveryErrors int64
+	workerSlots := make(chan struct{}, body.Concurrency)
+	var enqueueWG sync.WaitGroup
+	var deliveryWG sync.WaitGroup
+
+	enqueueStarted := time.Now()
+	for index := 0; index < body.Requests; index++ {
+		index := index
+		workerSlots <- struct{}{}
+		enqueueWG.Add(1)
+		go func() {
+			defer enqueueWG.Done()
+			defer func() { <-workerSlots }()
+
+			deliveryWG.Add(1)
+			err := a.publishSeckillCommandWithDelivery(ctx, benchmarkSeckillRequestBody(body, index), benchmarkSeckillCommand(body, reqCtx, index), body.StockLimit, benchmarkSeckillRequestContext(reqCtx, index), func(err error) {
+				if err == nil {
+					atomic.AddInt64(&deliverySuccess, 1)
+				} else {
+					atomic.AddInt64(&deliveryErrors, 1)
+				}
+				deliveryWG.Done()
+			})
+			if err != nil {
+				atomic.AddInt64(&enqueueErrors, 1)
+				atomic.AddInt64(&deliveryErrors, 1)
+				deliveryWG.Done()
+			}
+		}()
+	}
+	enqueueWG.Wait()
+	enqueueDuration := time.Since(enqueueStarted)
+
+	deliveryDuration := time.Duration(0)
+	waitForKafkaAck := body.WaitForKafkaAck == nil || *body.WaitForKafkaAck
+	if waitForKafkaAck {
+		deliveryStarted := time.Now()
+		deliveryWG.Wait()
+		deliveryDuration = time.Since(deliveryStarted)
+	}
+	totalDuration := time.Since(enqueueStarted)
+
+	enqueued := body.Requests - int(atomic.LoadInt64(&enqueueErrors))
+	delivered := int(atomic.LoadInt64(&deliverySuccess))
+	response := benchmarkSeckillProduceResponse{
+		Requests:          body.Requests,
+		Concurrency:       body.Concurrency,
+		SkuID:             body.SkuID,
+		StockLimit:        body.StockLimit,
+		WaitForKafkaAck:   waitForKafkaAck,
+		Enqueued:          enqueued,
+		EnqueueErrors:     int(atomic.LoadInt64(&enqueueErrors)),
+		DeliverySuccess:   int(atomic.LoadInt64(&deliverySuccess)),
+		DeliveryErrors:    int(atomic.LoadInt64(&deliveryErrors)),
+		EnqueueDurationMs: roundMillis(float64(enqueueDuration.Microseconds()) / 1000),
+		EnqueuePerSecond:  roundMillis(ratePerSecond(enqueued, enqueueDuration)),
+		AckWaitDurationMs: roundMillis(float64(deliveryDuration.Microseconds()) / 1000),
+		TotalDurationMs:   roundMillis(float64(totalDuration.Microseconds()) / 1000),
+		DurablePerSecond:  roundMillis(ratePerSecond(delivered, totalDuration)),
+		Timings:           a.timings.Snapshot(),
+	}
+	writeJSON(w, http.StatusOK, reqCtx, response)
+}
+
+func normalizeBenchmarkSeckillProduceRequest(body *benchmarkSeckillProduceRequest) {
+	if body.Requests <= 0 {
+		body.Requests = 10000
+	}
+	if body.Concurrency <= 0 {
+		body.Concurrency = 300
+	}
+	if strings.TrimSpace(body.SkuID) == "" {
+		body.SkuID = "sku_hot_001"
+	}
+	if body.StockLimit <= 0 {
+		body.StockLimit = 100
+	}
+	if body.UnitPriceMinor <= 0 {
+		body.UnitPriceMinor = 1200
+	}
+	if strings.TrimSpace(body.Currency) == "" {
+		body.Currency = "TWD"
+	}
+	if strings.TrimSpace(body.BuyerPrefix) == "" {
+		body.BuyerPrefix = "benchmark_buyer"
+	}
+}
+
+func benchmarkSeckillRequestBody(config benchmarkSeckillProduceRequest, index int) requestBody {
+	buyerID := fmt.Sprintf("%s_%d", config.BuyerPrefix, index)
+	return requestBody{
+		BuyerID:        buyerID,
+		IdempotencyKey: fmt.Sprintf("internal-seckill-produce-%d", index),
+		Items: []requestItem{
+			{
+				SkuID:                config.SkuID,
+				Quantity:             1,
+				UnitPriceAmountMinor: config.UnitPriceMinor,
+				Currency:             config.Currency,
+			},
+		},
+	}
+}
+
+func benchmarkSeckillCommand(config benchmarkSeckillProduceRequest, reqCtx requestContext, index int) buyIntentCommand {
+	commandID := uuid.NewString()
+	correlationID := uuid.NewString()
+	buyerID := fmt.Sprintf("%s_%d", config.BuyerPrefix, index)
+	idempotencyKey := fmt.Sprintf("internal-seckill-produce-%d", index)
+	return buyIntentCommand{
+		CommandID:      commandID,
+		CorrelationID:  correlationID,
+		BuyerID:        buyerID,
+		IdempotencyKey: idempotencyKey,
+		Items: []checkoutItem{
+			{
+				SkuID:                config.SkuID,
+				Quantity:             1,
+				UnitPriceAmountMinor: config.UnitPriceMinor,
+				Currency:             config.Currency,
+			},
+		},
+		Metadata: eventMetadata{
+			RequestID:     fmt.Sprintf("%s-%d", reqCtx.requestID, index),
+			TraceID:       reqCtx.traceID,
+			Source:        "internal_benchmark",
+			ActorID:       buyerID,
+			CommandID:     commandID,
+			CorrelationID: correlationID,
+		},
+		IssuedAt: time.Now().UTC().Format(time.RFC3339Nano),
+	}
+}
+
+func benchmarkSeckillRequestContext(reqCtx requestContext, index int) requestContext {
+	return requestContext{
+		requestID: fmt.Sprintf("%s-%d", reqCtx.requestID, index),
+		traceID:   reqCtx.traceID,
+	}
+}
+
+func ratePerSecond(count int, duration time.Duration) float64 {
+	if count <= 0 || duration <= 0 {
+		return 0
+	}
+	return float64(count) / duration.Seconds()
+}
+
 func (a *app) handleUpdateAdminSeckill(w http.ResponseWriter, r *http.Request) {
 	ctx, span := a.tracer.Start(r.Context(), "admin.update_seckill")
 	defer span.End()
@@ -1645,12 +1901,12 @@ func (a *app) classifyItemsForSeckill(ctx context.Context, items []requestItem) 
 		if hasSeckill {
 			return seckillRoutingDecision{}, errMixedCartWithSeckill
 		}
-		return seckillRoutingDecision{kind: "default"}, nil
+		return seckillRoutingDecision{kind: seckillRoutingDefault}, nil
 	}
 
 	if stockLimit, ok := a.cfg.forcedSeckillSKUs[items[0].SkuID]; ok && stockLimit > 0 {
 		return seckillRoutingDecision{
-			kind:       "single_seckill",
+			kind:       seckillRoutingSingle,
 			skuID:      items[0].SkuID,
 			stockLimit: stockLimit,
 		}, nil
@@ -1661,10 +1917,10 @@ func (a *app) classifyItemsForSeckill(ctx context.Context, items []requestItem) 
 		return seckillRoutingDecision{}, err
 	}
 	if !cfg.enabled || cfg.stockLimit <= 0 {
-		return seckillRoutingDecision{kind: "default"}, nil
+		return seckillRoutingDecision{kind: seckillRoutingDefault}, nil
 	}
 	return seckillRoutingDecision{
-		kind:       "single_seckill",
+		kind:       seckillRoutingSingle,
 		skuID:      items[0].SkuID,
 		stockLimit: cfg.stockLimit,
 	}, nil
@@ -3531,6 +3787,17 @@ func kafkaCompressionCodec(value string) kgo.CompressionCodec {
 		return kgo.ZstdCompression()
 	default:
 		return kgo.NoCompression()
+	}
+}
+
+func kafkaRequiredAcks(value string) kgo.Acks {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "0", "none", "no", "noack":
+		return kgo.NoAck()
+	case "1", "leader", "leaderack":
+		return kgo.LeaderAck()
+	default:
+		return kgo.AllISRAcks()
 	}
 }
 

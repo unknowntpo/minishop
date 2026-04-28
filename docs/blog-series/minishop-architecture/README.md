@@ -15,6 +15,7 @@
 3. [Queue-first checkout：CommandAccepted 與 CheckoutIntentCreated 為什麼要分開](./03-queue-first-checkout.md)
 4. [Seckill 壓測路徑：為什麼 full API 與 direct Kafka 都要存在](./04-seckill-swarm-benchmark.md)
 5. [動態擴展 bucket 與 partition：Redis slot 類比的限制](./05-dynamic-bucket-partition-scaling.md)
+6. [Full HTTP seckill 瓶頸定位：不是 JSON，也不是 Go producer](./06-full-http-seckill-bottleneck.md)
 
 ## 主要資料來源
 

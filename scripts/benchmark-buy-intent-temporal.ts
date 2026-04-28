@@ -1,5 +1,6 @@
 import "dotenv/config";
 
+import { spawn } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -34,6 +35,7 @@ type BenchmarkConfig = {
   ingressSource: "http" | "direct_kafka";
   benchmarkStyle: "burst" | "steady_state";
   createdTimeoutMs: number;
+  prometheusScrapeSettleMs: number;
   resetStateBeforeRun: boolean;
   createdSource: "postgres" | "kafka_seckill_result";
   ensureSeckillEnabled: boolean;
@@ -42,6 +44,10 @@ type BenchmarkConfig = {
   seckillWorkerReplicas?: number;
   seckillRoutingEpoch?: number;
   directKafkaBatchSize: number;
+  directKafkaProducerClient: "franz-go" | "confluent-kafka-javascript";
+  directKafkaFranzPublisherBin: string;
+  httpClient: "node-fetch" | "go-http";
+  httpGoLoadgenBin: string;
   kafkaClient: string;
   appPublishBatchSize: number;
   appPublishLingerMs: number;
@@ -187,6 +193,11 @@ type BackendTimingSnapshot = {
   }>;
 };
 
+type BackendTimingTargetSnapshot = {
+  counts?: Record<string, number>;
+  stages?: Record<string, unknown>;
+};
+
 type KafkaTopicSnapshot = {
   topic: string;
   partitions: number;
@@ -210,6 +221,12 @@ type PrometheusCounterSnapshot = {
   retryTargetBucketDistribution: Record<string, number>;
 };
 
+type BackendPrometheusCounterSnapshot = {
+  sampledAt: string;
+  deliverySuccessTotal: number;
+  deliveryErrorTotal: number;
+};
+
 type SeckillWorkerReport = {
   available: boolean;
   sampledAt?: string;
@@ -227,6 +244,14 @@ type SeckillWorkerReport = {
   error?: string;
 };
 
+type ConcurrencyObservation = {
+  configured: number;
+  workers: number;
+  maxInFlight: number;
+  totalStarted: number;
+  totalCompleted: number;
+};
+
 const config = readConfig();
 
 async function main() {
@@ -240,6 +265,7 @@ async function main() {
   }
   const kafkaBefore = await readKafkaBenchmarkSnapshot(config).catch(() => null);
   const seckillWorkerBefore = await readSeckillWorkerCounterSnapshot(config).catch(() => null);
+  let backendPrometheusBefore: BackendPrometheusCounterSnapshot | null = null;
   const seckillCollector =
     config.createdSource === "kafka_seckill_result"
       ? await startSeckillOutcomeCollector(config)
@@ -263,6 +289,8 @@ async function main() {
       await resetBuyIntentBenchmarkState(pool, config.mode);
     }
     await maybeResetBackendTimings();
+    await maybeWaitForPrometheusScrape();
+    backendPrometheusBefore = await readBackendPrometheusCounterSnapshot(config).catch(() => null);
 
     const inventory = await readInventory(pool, config.skuId);
     const effectiveRequests =
@@ -285,6 +313,7 @@ async function main() {
     let cancelledResults: CheckoutResult[] = [];
     let acceptDurationMs = 0;
     let steadyState: SteadyStateStats | null = null;
+    let concurrencyObservation: ConcurrencyObservation | null = null;
 
     try {
       let pendingCreatedCommandIds: string[] = [];
@@ -301,18 +330,17 @@ async function main() {
         steadyState = steadyStateRun.steadyState;
         acceptDurationMs = config.steadyStateMeasureMs;
       } else {
-        acceptResults =
-          config.ingressSource === "direct_kafka"
-            ? await publishSeckillRequestsDirectly(
-                directKafkaPublisher,
-                effectiveRequests,
-                config,
-              )
-            : await runWithConcurrency(
-                effectiveRequests,
-                config.httpConcurrency,
-                async (index) => createBuyIntent(index),
-              );
+        if (config.ingressSource === "direct_kafka") {
+          acceptResults = await publishSeckillRequestsDirectly(
+            directKafkaPublisher,
+            effectiveRequests,
+            config,
+          );
+        } else {
+          const acceptedOverHttp = await acceptBuyIntentsOverHttp(effectiveRequests, config);
+          acceptResults = acceptedOverHttp.results;
+          concurrencyObservation = acceptedOverHttp.concurrencyObservation;
+        }
         acceptDurationMs = performance.now() - acceptStartedAt;
 
         accepted = acceptResults.filter(
@@ -378,6 +406,23 @@ async function main() {
       const kafkaAfter = await readKafkaBenchmarkSnapshot(config).catch(() => null);
       const seckillWorkerAfter = await readSeckillWorkerCounterSnapshot(config).catch(() => null);
       const backendTimings = await maybeReadBackendTimings();
+      await maybeWaitForPrometheusScrape(backendPrometheusBefore);
+      const backendPrometheusAfter = await readBackendPrometheusCounterSnapshot(config).catch(
+        () => null,
+      );
+      const kafkaDelivery = buildBackendKafkaDeliveryReport(
+        backendPrometheusBefore,
+        backendPrometheusAfter,
+        backendTimings,
+      );
+      const durableAccepted =
+        config.ingressSource === "direct_kafka" ? accepted.length : kafkaDelivery.durableAccepted;
+      const deliveryErrors =
+        config.ingressSource === "direct_kafka"
+          ? acceptResults.length - accepted.length
+          : kafkaDelivery.deliveryErrors;
+      const deliveryMetricSource =
+        config.ingressSource === "direct_kafka" ? "directKafkaProducer" : kafkaDelivery.source;
       profiling = await maybeStopProfiling(profilingPlan, profiling);
       const finishedAtIso = new Date().toISOString();
       const seckillSemanticAssertion = buildSeckillSemanticAssertion({
@@ -445,6 +490,11 @@ async function main() {
         requestPath: {
           accepted: accepted.length,
           errors: acceptResults.length - accepted.length,
+          kafkaDurableAccepted: durableAccepted,
+          kafkaDeliveryErrors: deliveryErrors,
+          kafkaDurableAcceptedRate: accepted.length > 0 ? durableAccepted / accepted.length : null,
+          kafkaDeliveryMetricSource: deliveryMetricSource,
+          concurrency: concurrencyObservation,
           acceptDurationMs: Math.round(acceptDurationMs),
           acceptRequestsPerSecond: ratePerSecond(accepted.length, acceptDurationMs),
           acceptLatencyMs: summarizeLatencies(acceptResults.map((result) => result.latencyMs)),
@@ -532,6 +582,23 @@ async function main() {
       const kafkaAfter = await readKafkaBenchmarkSnapshot(config).catch(() => null);
       const seckillWorkerAfter = await readSeckillWorkerCounterSnapshot(config).catch(() => null);
       const backendTimings = await maybeReadBackendTimings();
+      await maybeWaitForPrometheusScrape(backendPrometheusBefore);
+      const backendPrometheusAfter = await readBackendPrometheusCounterSnapshot(config).catch(
+        () => null,
+      );
+      const kafkaDelivery = buildBackendKafkaDeliveryReport(
+        backendPrometheusBefore,
+        backendPrometheusAfter,
+        backendTimings,
+      );
+      const durableAccepted =
+        config.ingressSource === "direct_kafka" ? accepted.length : kafkaDelivery.durableAccepted;
+      const deliveryErrors =
+        config.ingressSource === "direct_kafka"
+          ? Math.max(acceptResults.length - accepted.length, 0)
+          : kafkaDelivery.deliveryErrors;
+      const deliveryMetricSource =
+        config.ingressSource === "direct_kafka" ? "directKafkaProducer" : kafkaDelivery.source;
       const finishedAtIso = new Date().toISOString();
       const failureMessage = error instanceof Error ? error.message : "unknown benchmark failure";
       const intentCreation =
@@ -614,6 +681,11 @@ async function main() {
         requestPath: {
           accepted: accepted.length,
           errors: Math.max(acceptResults.length - accepted.length, 0),
+          kafkaDurableAccepted: durableAccepted,
+          kafkaDeliveryErrors: deliveryErrors,
+          kafkaDurableAcceptedRate: accepted.length > 0 ? durableAccepted / accepted.length : null,
+          kafkaDeliveryMetricSource: deliveryMetricSource,
+          concurrency: concurrencyObservation,
           acceptDurationMs: Math.round(acceptDurationMs),
           acceptRequestsPerSecond: ratePerSecond(accepted.length, acceptDurationMs),
           acceptLatencyMs: summarizeLatencies(acceptResults.map((result) => result.latencyMs)),
@@ -846,6 +918,40 @@ async function readSeckillWorkerCounterSnapshot(
     );
     return null;
   }
+}
+
+async function readBackendPrometheusCounterSnapshot(
+  config: BenchmarkConfig,
+): Promise<BackendPrometheusCounterSnapshot | null> {
+  if (config.ingressSource !== "http" || !config.prometheusUrl) {
+    return null;
+  }
+
+  const [deliverySuccessTotal, deliveryErrorTotal] = await Promise.all([
+    readPrometheusScalar(
+      config.prometheusUrl,
+      "sum(minishop_backend_seckill_publish_delivery_success_total)",
+    ),
+    readPrometheusScalar(
+      config.prometheusUrl,
+      "sum(minishop_backend_seckill_publish_delivery_error_total)",
+    ),
+  ]);
+
+  return {
+    sampledAt: new Date().toISOString(),
+    deliverySuccessTotal,
+    deliveryErrorTotal,
+  };
+}
+
+async function maybeWaitForPrometheusScrape(
+  before?: BackendPrometheusCounterSnapshot | null,
+): Promise<void> {
+  if (before === null || config.prometheusScrapeSettleMs <= 0) {
+    return;
+  }
+  await sleep(config.prometheusScrapeSettleMs);
 }
 
 async function readPrometheusScalar(prometheusUrl: string, query: string) {
@@ -1144,11 +1250,120 @@ async function createBuyIntent(index: number): Promise<AcceptResult> {
   }
 }
 
+async function acceptBuyIntentsOverHttp(
+  total: number,
+  config: BenchmarkConfig,
+): Promise<{
+  results: AcceptResult[];
+  concurrencyObservation: ConcurrencyObservation | null;
+}> {
+  if (config.httpClient === "go-http") {
+    const results = await acceptBuyIntentsWithGoHTTP(total, config);
+    return {
+      results,
+      concurrencyObservation: {
+        configured: config.httpConcurrency,
+        workers: Math.max(1, Math.min(config.httpConcurrency, total)),
+        maxInFlight: Math.max(1, Math.min(config.httpConcurrency, total)),
+        totalStarted: total,
+        totalCompleted: results.length,
+      },
+    };
+  }
+
+  const observer = createConcurrencyObserver(total, config.httpConcurrency);
+  const results = await runWithConcurrency(
+    total,
+    config.httpConcurrency,
+    async (index) => createBuyIntent(index),
+    observer,
+  );
+  return {
+    results,
+    concurrencyObservation: observer.snapshot(),
+  };
+}
+
+async function acceptBuyIntentsWithGoHTTP(
+  total: number,
+  config: BenchmarkConfig,
+): Promise<AcceptResult[]> {
+  const input = {
+    targetUrls: config.ingressAppUrls,
+    requests: total,
+    concurrency: config.httpConcurrency,
+    runId: config.runId,
+    skuId: config.skuId,
+    buyerPrefix: config.buyerPrefix,
+    unitPriceAmountMinor: config.unitPriceAmountMinor,
+    currency: config.currency,
+    collectResults: true,
+  };
+  const output = await runGoHTTPLoadgen(config.httpGoLoadgenBin, input);
+  return output.results;
+}
+
+async function runGoHTTPLoadgen(
+  binaryPath: string,
+  input: Record<string, unknown>,
+): Promise<{
+  results: AcceptResult[];
+}> {
+  const child = spawn(binaryPath, [], {
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+
+  const stdoutChunks: Buffer[] = [];
+  const stderrChunks: Buffer[] = [];
+
+  child.stdout.on("data", (chunk: Buffer) => {
+    stdoutChunks.push(chunk);
+  });
+  child.stderr.on("data", (chunk: Buffer) => {
+    stderrChunks.push(chunk);
+  });
+
+  child.stdin.end(JSON.stringify(input));
+
+  const exitCode = await new Promise<number | null>((resolve, reject) => {
+    child.on("error", reject);
+    child.on("close", resolve);
+  });
+
+  const stdout = Buffer.concat(stdoutChunks).toString("utf8").trim();
+  const stderr = Buffer.concat(stderrChunks).toString("utf8").trim();
+
+  if (exitCode !== 0) {
+    throw new Error(
+      `go HTTP loadgen failed with exit=${exitCode}${stderr ? `: ${stderr}` : ""}`,
+    );
+  }
+  if (stderr) {
+    console.warn(`[benchmark] go HTTP loadgen stderr: ${stderr}`);
+  }
+
+  const parsed = JSON.parse(stdout) as {
+    results?: AcceptResult[];
+  };
+  return {
+    results: parsed.results ?? [],
+  };
+}
+
 async function publishSeckillRequestsDirectly(
   publisher: Awaited<ReturnType<typeof startDirectSeckillRequestPublisher>> | null,
   total: number,
   config: BenchmarkConfig,
 ): Promise<AcceptResult[]> {
+  if (config.directKafkaProducerClient === "franz-go") {
+    return publishSeckillRequestsDirectlyWithFranzGo({
+      config,
+      total,
+      startIndex: 0,
+      collectResults: true,
+    }).then((result) => result.results);
+  }
+
   if (!publisher) {
     throw new Error("Direct Kafka publisher is not initialized.");
   }
@@ -1203,6 +1418,15 @@ async function publishSeckillRequestsDirectlyUntil(
   collectResults: boolean,
   startIndex = 0,
 ) {
+  if (config.directKafkaProducerClient === "franz-go") {
+    return publishSeckillRequestsDirectlyWithFranzGo({
+      config,
+      durationMs,
+      startIndex,
+      collectResults,
+    });
+  }
+
   if (!publisher) {
     throw new Error("Direct Kafka publisher is not initialized.");
   }
@@ -1298,6 +1522,31 @@ function buildDirectSeckillRequest(index: number, config: BenchmarkConfig): Seck
 }
 
 async function startDirectSeckillRequestPublisher(config: BenchmarkConfig) {
+  if (config.directKafkaProducerClient === "franz-go") {
+    const { Kafka, logLevel } = await loadConfluentKafkaJsCompat();
+    const kafka = new Kafka({
+      kafkaJS: {
+        clientId: `${createKafkaClientId()}-direct-admin`,
+        brokers: config.kafkaBrokers,
+        logLevel: logLevel.NOTHING,
+      },
+    });
+    const admin = kafka.admin();
+    await admin.connect();
+    await ensureKafkaTopics(admin, config);
+    await admin.disconnect();
+
+    return {
+      async publish(requests: SeckillBuyIntentRequest[]) {
+        void requests;
+        throw new Error("franz-go direct publisher is executed as a whole-run helper.");
+      },
+      async stop() {
+        return undefined;
+      },
+    };
+  }
+
   const { Kafka, logLevel } = await loadConfluentKafkaJsCompat();
   const kafka = new Kafka({
     kafkaJS: {
@@ -1335,6 +1584,96 @@ async function startDirectSeckillRequestPublisher(config: BenchmarkConfig) {
     async stop() {
       await producer.disconnect().catch(() => undefined);
     },
+  };
+}
+
+async function publishSeckillRequestsDirectlyWithFranzGo(inputConfig: {
+  config: BenchmarkConfig;
+  total?: number;
+  durationMs?: number;
+  startIndex: number;
+  collectResults: boolean;
+}): Promise<{
+  results: AcceptResult[];
+  nextIndex: number;
+}> {
+  const { config } = inputConfig;
+  const input = {
+    brokers: config.kafkaBrokers,
+    clientId: `${createKafkaClientId()}-direct-franz`,
+    topic: config.seckillRequestTopic,
+    runId: config.runId,
+    total: inputConfig.total,
+    durationMs: inputConfig.durationMs,
+    startIndex: inputConfig.startIndex,
+    collectResults: inputConfig.collectResults,
+    directKafkaBatchSize: config.directKafkaBatchSize,
+    skuId: config.skuId,
+    unitPriceAmountMinor: config.unitPriceAmountMinor,
+    currency: config.currency,
+    buyerPrefix: config.buyerPrefix,
+    requestedBuyClicks: config.requests,
+    seckillBucketCount: config.seckillBucketCount,
+    seckillMaxProbe: config.seckillMaxProbe,
+    lingerMs: config.producerLingerMs,
+    maxBufferedRecords: config.producerBatchNumMessages,
+    requiredAcks: "all",
+  };
+
+  const output = await runFranzGoDirectPublisher(config.directKafkaFranzPublisherBin, input);
+  return {
+    results: output.results,
+    nextIndex: output.nextIndex,
+  };
+}
+
+async function runFranzGoDirectPublisher(
+  binaryPath: string,
+  input: Record<string, unknown>,
+): Promise<{
+  results: AcceptResult[];
+  nextIndex: number;
+}> {
+  const child = spawn(binaryPath, [], {
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+
+  const stdoutChunks: Buffer[] = [];
+  const stderrChunks: Buffer[] = [];
+
+  child.stdout.on("data", (chunk: Buffer) => {
+    stdoutChunks.push(chunk);
+  });
+  child.stderr.on("data", (chunk: Buffer) => {
+    stderrChunks.push(chunk);
+  });
+
+  child.stdin.end(JSON.stringify(input));
+
+  const exitCode = await new Promise<number | null>((resolve, reject) => {
+    child.on("error", reject);
+    child.on("close", resolve);
+  });
+
+  const stdout = Buffer.concat(stdoutChunks).toString("utf8").trim();
+  const stderr = Buffer.concat(stderrChunks).toString("utf8").trim();
+
+  if (exitCode !== 0) {
+    throw new Error(
+      `franz-go direct publisher failed with exit=${exitCode}${stderr ? `: ${stderr}` : ""}`,
+    );
+  }
+  if (stderr) {
+    console.warn(`[benchmark] franz-go direct publisher stderr: ${stderr}`);
+  }
+
+  const parsed = JSON.parse(stdout) as {
+    results?: AcceptResult[];
+    nextIndex?: number;
+  };
+  return {
+    results: parsed.results ?? [],
+    nextIndex: parsed.nextIndex ?? 0,
   };
 }
 
@@ -1944,6 +2283,14 @@ function buildMeasurementsFromReport(report: {
   requestPath?: {
     accepted?: number;
     errors?: number;
+    kafkaDurableAccepted?: number;
+    kafkaDeliveryErrors?: number;
+    kafkaDurableAcceptedRate?: number | null;
+    kafkaDeliveryMetricSource?:
+      | "prometheus"
+      | "backendTimings"
+      | "directKafkaProducer"
+      | "unavailable";
     acceptRequestsPerSecond?: number;
     acceptLatencyMs?: { p95?: number };
   };
@@ -1964,6 +2311,9 @@ function buildMeasurementsFromReport(report: {
     report.conditions?.workload?.benchmarkStyle ?? report.conditions?.benchmarkStyle ?? "burst";
   const createdBoundary = report.kafka?.createdBoundary;
   const accepted = report.requestPath?.accepted ?? 0;
+  const kafkaDurableAccepted = report.requestPath?.kafkaDurableAccepted;
+  const kafkaDeliveryErrors = report.requestPath?.kafkaDeliveryErrors;
+  const kafkaDurableAcceptedRate = report.requestPath?.kafkaDurableAcceptedRate;
   const requested = report.scenario?.requestedBuyClicks ?? 0;
   const errors = report.requestPath?.errors ?? 0;
   const ingressThroughput = report.requestPath?.acceptRequestsPerSecond ?? 0;
@@ -2011,6 +2361,47 @@ function buildMeasurementsFromReport(report: {
         ? "Compare this with result topic throughput to see how much durable queued work reaches final output."
         : "Compare this with downstream throughput to see how much admitted work becomes durable business facts.",
   });
+
+  if (typeof kafkaDurableAccepted === "number") {
+    measurements.push({
+      key: "kafka_durable_accepted",
+      label: "Kafka durable accepted",
+      unit: "",
+      value: kafkaDurableAccepted,
+      definition: "Records acknowledged by Kafka/Redpanda from the Go backend async producer callback.",
+      calculation:
+        "delta(sum(minishop_backend_seckill_publish_delivery_success_total)); falls back to backendTimings.counts['seckill_publish.delivery_success']",
+      interpretation:
+        "Compare with HTTP accepted. A lower value means the HTTP layer returned accepted faster than Kafka acknowledged the queued work.",
+    });
+  }
+
+  if (typeof kafkaDurableAcceptedRate === "number") {
+    measurements.push({
+      key: "kafka_durable_accepted_rate",
+      label: "Kafka durable accepted rate",
+      unit: "",
+      value: kafkaDurableAcceptedRate,
+      definition: "Share of HTTP accepted requests that were acknowledged by Kafka/Redpanda.",
+      calculation: "kafkaDurableAccepted / requestPath.accepted",
+      interpretation:
+        "Healthy single-API runs should stay near 1.0. For multi-replica runs this requires benchmark timing snapshots from every backend replica.",
+    });
+  }
+
+  if (typeof kafkaDeliveryErrors === "number") {
+    measurements.push({
+      key: "kafka_delivery_errors",
+      label: "Kafka delivery errors",
+      unit: "",
+      value: kafkaDeliveryErrors,
+      definition: "Kafka/Redpanda delivery errors reported by the Go backend async producer callback.",
+      calculation:
+        "delta(sum(minishop_backend_seckill_publish_delivery_error_total)); falls back to backendTimings.counts['seckill_publish.delivery_error']",
+      interpretation:
+        "Non-zero values mean HTTP accepted work later failed at the durable queue boundary.",
+    });
+  }
 
   if (typeof retryPerPrimary === "number") {
     measurements.push({
@@ -2137,10 +2528,42 @@ function chunked<T>(values: T[], size: number) {
   return chunks;
 }
 
+function createConcurrencyObserver(total: number, configured: number) {
+  let inFlight = 0;
+  let maxInFlight = 0;
+  let totalStarted = 0;
+  let totalCompleted = 0;
+  const workers = Math.max(1, Math.min(configured, total));
+
+  return {
+    start() {
+      inFlight += 1;
+      totalStarted += 1;
+      if (inFlight > maxInFlight) {
+        maxInFlight = inFlight;
+      }
+    },
+    finish() {
+      inFlight -= 1;
+      totalCompleted += 1;
+    },
+    snapshot(): ConcurrencyObservation {
+      return {
+        configured,
+        workers,
+        maxInFlight,
+        totalStarted,
+        totalCompleted,
+      };
+    },
+  };
+}
+
 async function runWithConcurrency<T>(
   total: number,
   concurrency: number,
   taskFor: (index: number) => Promise<T>,
+  observer?: ReturnType<typeof createConcurrencyObserver>,
 ) {
   const results = new Array<T>(total);
   let nextIndex = 0;
@@ -2154,7 +2577,12 @@ async function runWithConcurrency<T>(
         return;
       }
 
-      results[currentIndex] = await taskFor(currentIndex);
+      observer?.start();
+      try {
+        results[currentIndex] = await taskFor(currentIndex);
+      } finally {
+        observer?.finish();
+      }
     }
   }
 
@@ -2378,6 +2806,66 @@ async function maybeReadBackendTimings(): Promise<BackendTimingSnapshot> {
   };
 }
 
+function readBackendTimingCount(snapshot: BackendTimingSnapshot, name: string): number {
+  if (!snapshot.available || !snapshot.targets?.length) {
+    return 0;
+  }
+
+  return snapshot.targets.reduce((total, target) => {
+    const targetSnapshot = asBackendTimingTargetSnapshot(target.snapshot);
+    const value = targetSnapshot?.counts?.[name];
+    return total + (typeof value === "number" && Number.isFinite(value) ? value : 0);
+  }, 0);
+}
+
+function asBackendTimingTargetSnapshot(value: unknown): BackendTimingTargetSnapshot | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  return value as BackendTimingTargetSnapshot;
+}
+
+function buildBackendKafkaDeliveryReport(
+  prometheusBefore: BackendPrometheusCounterSnapshot | null,
+  prometheusAfter: BackendPrometheusCounterSnapshot | null,
+  backendTimings: BackendTimingSnapshot,
+): {
+  durableAccepted: number;
+  deliveryErrors: number;
+  source: "prometheus" | "backendTimings" | "unavailable";
+} {
+  if (prometheusBefore && prometheusAfter) {
+    return {
+      durableAccepted: counterDelta(
+        prometheusBefore.deliverySuccessTotal,
+        prometheusAfter.deliverySuccessTotal,
+      ),
+      deliveryErrors: counterDelta(
+        prometheusBefore.deliveryErrorTotal,
+        prometheusAfter.deliveryErrorTotal,
+      ),
+      source: "prometheus",
+    };
+  }
+
+  if (backendTimings.available) {
+    return {
+      durableAccepted: readBackendTimingCount(
+        backendTimings,
+        "seckill_publish.delivery_success",
+      ),
+      deliveryErrors: readBackendTimingCount(backendTimings, "seckill_publish.delivery_error"),
+      source: "backendTimings",
+    };
+  }
+
+  return {
+    durableAccepted: 0,
+    deliveryErrors: 0,
+    source: "unavailable",
+  };
+}
+
 function readConfig(): BenchmarkConfig {
   const scenarioName = process.env.BENCHMARK_SCENARIO_NAME ?? defaultScenarioName();
   const appUrls = (
@@ -2443,6 +2931,10 @@ function readConfig(): BenchmarkConfig {
     benchmarkStyle:
       (process.env.BENCHMARK_STYLE as BenchmarkConfig["benchmarkStyle"] | undefined) ?? "burst",
     createdTimeoutMs: readPositiveIntegerEnv("BENCHMARK_CREATED_TIMEOUT_MS", 60_000),
+    prometheusScrapeSettleMs: readNonNegativeIntegerEnv(
+      "BENCHMARK_PROMETHEUS_SCRAPE_SETTLE_MS",
+      6_000,
+    ),
     resetStateBeforeRun: readBooleanWithDefault("BENCHMARK_RESET_STATE", true),
     createdSource,
     ensureSeckillEnabled:
@@ -2456,6 +2948,13 @@ function readConfig(): BenchmarkConfig {
     seckillWorkerReplicas: readOptionalPositiveIntegerEnv("BENCHMARK_SECKILL_WORKER_REPLICAS"),
     seckillRoutingEpoch: readOptionalPositiveIntegerEnv("BENCHMARK_SECKILL_ROUTING_EPOCH"),
     directKafkaBatchSize: readPositiveIntegerEnv("BENCHMARK_DIRECT_KAFKA_BATCH_SIZE", 500),
+    directKafkaProducerClient: readDirectKafkaProducerClient(),
+    directKafkaFranzPublisherBin:
+      process.env.BENCHMARK_DIRECT_KAFKA_FRANZ_PUBLISHER_BIN ??
+      "/usr/local/bin/seckill-direct-franz-publisher",
+    httpClient: readHTTPClient(),
+    httpGoLoadgenBin:
+      process.env.BENCHMARK_HTTP_GO_LOADGEN_BIN ?? "/usr/local/bin/seckill-http-loadgen",
     kafkaClient: process.env.BENCHMARK_KAFKA_CLIENT ?? "confluent-kafka-javascript",
     appPublishBatchSize: readPositiveIntegerEnv("KAFKA_SECKILL_PUBLISH_BATCH_SIZE", 64),
     appPublishLingerMs: readPositiveIntegerEnv("KAFKA_SECKILL_PUBLISH_LINGER_MS", 2),
@@ -2504,6 +3003,9 @@ function buildScenarioTags(config: BenchmarkConfig) {
   }
   if (config.ingressImpl) {
     tags.impl = config.ingressImpl;
+  }
+  if (config.ingressSource === "http") {
+    tags.httpClient = config.httpClient;
   }
   if (config.benchmarkPath) {
     tags.path = config.benchmarkPath;
@@ -2626,6 +3128,8 @@ function buildKafkaReport(
       maxProbe: config.seckillMaxProbe,
       directKafkaBatchSize:
         config.ingressSource === "direct_kafka" ? config.directKafkaBatchSize : undefined,
+      directKafkaProducerClient:
+        config.ingressSource === "direct_kafka" ? config.directKafkaProducerClient : undefined,
       steadyState:
         config.benchmarkStyle === "steady_state"
           ? {
@@ -2643,6 +3147,7 @@ function buildKafkaReport(
       lingerMs: config.producerLingerMs,
       batchNumMessages: config.producerBatchNumMessages,
     },
+    httpClient: config.ingressSource === "http" ? config.httpClient : undefined,
     requestTopicOffsets: formatKafkaTopicOffsets(before?.requestTopic, after?.requestTopic),
     resultTopicOffsets: formatKafkaTopicOffsets(before?.resultTopic, after?.resultTopic),
     dlqTopicOffsets: formatKafkaTopicOffsets(before?.dlqTopic, after?.dlqTopic),
@@ -2715,6 +3220,22 @@ function readPositiveIntegerEnv(name: string, fallback: number) {
   return parsed;
 }
 
+function readNonNegativeIntegerEnv(name: string, fallback: number) {
+  const raw = process.env[name]?.trim();
+
+  if (!raw) {
+    return fallback;
+  }
+
+  const parsed = Number.parseInt(raw, 10);
+
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new Error(`${name} must be a non-negative integer.`);
+  }
+
+  return parsed;
+}
+
 function readOptionalPositiveIntegerEnv(name: string) {
   const raw = process.env[name]?.trim();
 
@@ -2729,6 +3250,28 @@ function readOptionalPositiveIntegerEnv(name: string) {
   }
 
   return parsed;
+}
+
+function readDirectKafkaProducerClient(): BenchmarkConfig["directKafkaProducerClient"] {
+  const raw = process.env.BENCHMARK_DIRECT_KAFKA_PRODUCER_CLIENT?.trim() || "franz-go";
+
+  if (raw === "franz-go" || raw === "confluent-kafka-javascript") {
+    return raw;
+  }
+
+  throw new Error(
+    "BENCHMARK_DIRECT_KAFKA_PRODUCER_CLIENT must be franz-go or confluent-kafka-javascript.",
+  );
+}
+
+function readHTTPClient(): BenchmarkConfig["httpClient"] {
+  const raw = process.env.BENCHMARK_HTTP_CLIENT?.trim() || "node-fetch";
+
+  if (raw === "node-fetch" || raw === "go-http") {
+    return raw;
+  }
+
+  throw new Error("BENCHMARK_HTTP_CLIENT must be node-fetch or go-http.");
 }
 
 function readBooleanWithDefault(name: string, fallback: boolean) {

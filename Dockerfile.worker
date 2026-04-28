@@ -1,3 +1,23 @@
+FROM golang:1.24.3-bookworm AS seckill-direct-franz-publisher-build
+
+ARG TARGETOS
+ARG TARGETARCH
+
+WORKDIR /src/services/seckill-direct-franz-publisher
+COPY services/seckill-direct-franz-publisher/go.mod services/seckill-direct-franz-publisher/go.sum ./
+RUN go mod download
+COPY services/seckill-direct-franz-publisher/. .
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-$(go env GOARCH)} go build -buildvcs=false -o /out/seckill-direct-franz-publisher .
+
+FROM golang:1.24.3-bookworm AS seckill-http-loadgen-build
+
+ARG TARGETOS
+ARG TARGETARCH
+
+WORKDIR /src
+COPY scripts/go-seckill-http-loadgen ./scripts/go-seckill-http-loadgen
+RUN GO111MODULE=off CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-$(go env GOARCH)} go build -buildvcs=false -o /out/seckill-http-loadgen ./scripts/go-seckill-http-loadgen
+
 FROM node:24-bookworm-slim
 
 ENV PNPM_HOME="/pnpm"
@@ -12,5 +32,7 @@ COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile --config.ignore-scripts=false
 
 COPY . .
+COPY --from=seckill-direct-franz-publisher-build /out/seckill-direct-franz-publisher /usr/local/bin/seckill-direct-franz-publisher
+COPY --from=seckill-http-loadgen-build /out/seckill-http-loadgen /usr/local/bin/seckill-http-loadgen
 
 CMD ["pnpm", "worker:staged-buy-intents:process:loop"]
