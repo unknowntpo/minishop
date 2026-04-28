@@ -1,12 +1,13 @@
 # Full HTTP seckill 瓶頸定位：不是 JSON，也不是 Go producer
 
-基準版本：`codex/improve-full-http-seckit` at `981dcfc488c136c0019711b95d75bc172f614b6f`
+基準版本：`codex/improve-full-http-seckit` at `71622a5f86fd355e80fc2d663b78040e5683b61a`
 
 相關 commit：
 
 - `85685c54885b0d69974f045d1545ce450bfe80e9`：direct Kafka path 改用 Go/franz-go producer。
 - `981dcfc488c136c0019711b95d75bc172f614b6f`：go-backend 新增 internal seckill produce benchmark endpoint。
 - `372de937773409429b3f74d34cd0227a3eed7d0c`：新增 Go full HTTP load generator，用來隔離 Node.js HTTP client 的影響。
+- `71622a5f86fd355e80fc2d663b78040e5683b61a`：benchmark script 支援 `BENCHMARK_HTTP_CLIENT=go-http`，並記錄本次 Go full HTTP 結果。
 
 這篇文章記錄一次 full HTTP seckill throughput 瓶頸定位。重點不是把某一個 benchmark 數字寫成絕對效能，而是建立一條可檢查的證據鏈：哪一層慢、哪一層不慢，以及下一個實驗應該切在哪裡。
 
