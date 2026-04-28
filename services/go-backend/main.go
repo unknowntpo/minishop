@@ -21,6 +21,7 @@ import (
 
 	hertzapp "github.com/cloudwego/hertz/pkg/app"
 	hserver "github.com/cloudwego/hertz/pkg/app/server"
+	"github.com/cloudwego/hertz/pkg/common/adaptor"
 	"github.com/cloudwego/hertz/pkg/common/hlog"
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
 	gojson "github.com/goccy/go-json"
@@ -29,6 +30,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nats-io/nats.go"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"github.com/twmb/franz-go/pkg/kmsg"
@@ -89,6 +93,17 @@ type app struct {
 	timings  *benchmarkTimingRecorder
 	tracer   trace.Tracer
 }
+
+var (
+	backendSeckillPublishDeliverySuccessTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "minishop_backend_seckill_publish_delivery_success_total",
+		Help: "Total seckill request records acknowledged successfully by Kafka or Redpanda from the Go backend producer.",
+	})
+	backendSeckillPublishDeliveryErrorTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "minishop_backend_seckill_publish_delivery_error_total",
+		Help: "Total seckill request records rejected or failed by Kafka or Redpanda from the Go backend producer.",
+	})
+)
 
 type skuConfigCache struct {
 	mu      sync.RWMutex
@@ -838,6 +853,7 @@ func (a *app) startServer() (func(context.Context) error, error) {
 
 func (a *app) startNetHTTPServer() (func(context.Context) error, error) {
 	mux := http.NewServeMux()
+	mux.Handle("/metrics", promhttp.Handler())
 	mux.Handle("/healthz", otelhttp.NewHandler(http.HandlerFunc(a.handleHealthz), "GET /healthz"))
 	mux.Handle("/api/products", otelhttp.NewHandler(http.HandlerFunc(a.handleListProducts), "GET /api/products"))
 	mux.Handle("/api/products/", otelhttp.NewHandler(http.HandlerFunc(a.handleGetProductBySlug), "GET /api/products/{slug}"))
@@ -878,6 +894,7 @@ func (a *app) startHertzServer() (func(context.Context) error, error) {
 	)
 	server.Use(a.hertzBenchmarkTimings())
 	server.Use(a.hertzCORS())
+	server.GET("/metrics", adaptor.HertzHandler(promhttp.Handler()))
 	server.GET("/healthz", a.handleHealthzHertz)
 	server.POST("/api/buy-intents", a.handleBuyIntentsHertz)
 	server.GET("/api/internal/benchmarks", a.handleListBenchmarksHertz)
@@ -1289,9 +1306,11 @@ func (a *app) publishSeckillCommand(
 		a.timings.ObserveSince("seckill_publish.delivery_ack", deliveryStarted)
 		if err == nil {
 			a.timings.Increment("seckill_publish.delivery_success")
+			backendSeckillPublishDeliverySuccessTotal.Inc()
 			return
 		}
 		a.timings.Increment("seckill_publish.delivery_error")
+		backendSeckillPublishDeliveryErrorTotal.Inc()
 		topic := record.Topic
 		partition := record.Partition
 		if produced != nil {

@@ -215,6 +215,12 @@ type PrometheusCounterSnapshot = {
   retryTargetBucketDistribution: Record<string, number>;
 };
 
+type BackendPrometheusCounterSnapshot = {
+  sampledAt: string;
+  deliverySuccessTotal: number;
+  deliveryErrorTotal: number;
+};
+
 type SeckillWorkerReport = {
   available: boolean;
   sampledAt?: string;
@@ -253,6 +259,7 @@ async function main() {
   }
   const kafkaBefore = await readKafkaBenchmarkSnapshot(config).catch(() => null);
   const seckillWorkerBefore = await readSeckillWorkerCounterSnapshot(config).catch(() => null);
+  let backendPrometheusBefore: BackendPrometheusCounterSnapshot | null = null;
   const seckillCollector =
     config.createdSource === "kafka_seckill_result"
       ? await startSeckillOutcomeCollector(config)
@@ -276,6 +283,7 @@ async function main() {
       await resetBuyIntentBenchmarkState(pool, config.mode);
     }
     await maybeResetBackendTimings();
+    backendPrometheusBefore = await readBackendPrometheusCounterSnapshot(config).catch(() => null);
 
     const inventory = await readInventory(pool, config.skuId);
     const effectiveRequests =
@@ -396,13 +404,13 @@ async function main() {
       const kafkaAfter = await readKafkaBenchmarkSnapshot(config).catch(() => null);
       const seckillWorkerAfter = await readSeckillWorkerCounterSnapshot(config).catch(() => null);
       const backendTimings = await maybeReadBackendTimings();
-      const kafkaDurableAccepted = readBackendTimingCount(
-        backendTimings,
-        "seckill_publish.delivery_success",
+      const backendPrometheusAfter = await readBackendPrometheusCounterSnapshot(config).catch(
+        () => null,
       );
-      const kafkaDeliveryErrors = readBackendTimingCount(
+      const kafkaDelivery = buildBackendKafkaDeliveryReport(
+        backendPrometheusBefore,
+        backendPrometheusAfter,
         backendTimings,
-        "seckill_publish.delivery_error",
       );
       profiling = await maybeStopProfiling(profilingPlan, profiling);
       const finishedAtIso = new Date().toISOString();
@@ -471,10 +479,11 @@ async function main() {
         requestPath: {
           accepted: accepted.length,
           errors: acceptResults.length - accepted.length,
-          kafkaDurableAccepted,
-          kafkaDeliveryErrors,
+          kafkaDurableAccepted: kafkaDelivery.durableAccepted,
+          kafkaDeliveryErrors: kafkaDelivery.deliveryErrors,
           kafkaDurableAcceptedRate:
-            accepted.length > 0 ? kafkaDurableAccepted / accepted.length : null,
+            accepted.length > 0 ? kafkaDelivery.durableAccepted / accepted.length : null,
+          kafkaDeliveryMetricSource: kafkaDelivery.source,
           concurrency: concurrencyObservation,
           acceptDurationMs: Math.round(acceptDurationMs),
           acceptRequestsPerSecond: ratePerSecond(accepted.length, acceptDurationMs),
@@ -563,13 +572,13 @@ async function main() {
       const kafkaAfter = await readKafkaBenchmarkSnapshot(config).catch(() => null);
       const seckillWorkerAfter = await readSeckillWorkerCounterSnapshot(config).catch(() => null);
       const backendTimings = await maybeReadBackendTimings();
-      const kafkaDurableAccepted = readBackendTimingCount(
-        backendTimings,
-        "seckill_publish.delivery_success",
+      const backendPrometheusAfter = await readBackendPrometheusCounterSnapshot(config).catch(
+        () => null,
       );
-      const kafkaDeliveryErrors = readBackendTimingCount(
+      const kafkaDelivery = buildBackendKafkaDeliveryReport(
+        backendPrometheusBefore,
+        backendPrometheusAfter,
         backendTimings,
-        "seckill_publish.delivery_error",
       );
       const finishedAtIso = new Date().toISOString();
       const failureMessage = error instanceof Error ? error.message : "unknown benchmark failure";
@@ -653,10 +662,11 @@ async function main() {
         requestPath: {
           accepted: accepted.length,
           errors: Math.max(acceptResults.length - accepted.length, 0),
-          kafkaDurableAccepted,
-          kafkaDeliveryErrors,
+          kafkaDurableAccepted: kafkaDelivery.durableAccepted,
+          kafkaDeliveryErrors: kafkaDelivery.deliveryErrors,
           kafkaDurableAcceptedRate:
-            accepted.length > 0 ? kafkaDurableAccepted / accepted.length : null,
+            accepted.length > 0 ? kafkaDelivery.durableAccepted / accepted.length : null,
+          kafkaDeliveryMetricSource: kafkaDelivery.source,
           concurrency: concurrencyObservation,
           acceptDurationMs: Math.round(acceptDurationMs),
           acceptRequestsPerSecond: ratePerSecond(accepted.length, acceptDurationMs),
@@ -890,6 +900,31 @@ async function readSeckillWorkerCounterSnapshot(
     );
     return null;
   }
+}
+
+async function readBackendPrometheusCounterSnapshot(
+  config: BenchmarkConfig,
+): Promise<BackendPrometheusCounterSnapshot | null> {
+  if (config.ingressSource !== "http" || !config.prometheusUrl) {
+    return null;
+  }
+
+  const [deliverySuccessTotal, deliveryErrorTotal] = await Promise.all([
+    readPrometheusScalar(
+      config.prometheusUrl,
+      "sum(minishop_backend_seckill_publish_delivery_success_total)",
+    ),
+    readPrometheusScalar(
+      config.prometheusUrl,
+      "sum(minishop_backend_seckill_publish_delivery_error_total)",
+    ),
+  ]);
+
+  return {
+    sampledAt: new Date().toISOString(),
+    deliverySuccessTotal,
+    deliveryErrorTotal,
+  };
 }
 
 async function readPrometheusScalar(prometheusUrl: string, query: string) {
@@ -1991,6 +2026,7 @@ function buildMeasurementsFromReport(report: {
     kafkaDurableAccepted?: number;
     kafkaDeliveryErrors?: number;
     kafkaDurableAcceptedRate?: number | null;
+    kafkaDeliveryMetricSource?: "prometheus" | "backendTimings" | "unavailable";
     acceptRequestsPerSecond?: number;
     acceptLatencyMs?: { p95?: number };
   };
@@ -2069,9 +2105,10 @@ function buildMeasurementsFromReport(report: {
       unit: "",
       value: kafkaDurableAccepted,
       definition: "Records acknowledged by Kafka/Redpanda from the Go backend async producer callback.",
-      calculation: "sum(backendTimings.counts['seckill_publish.delivery_success'])",
+      calculation:
+        "delta(sum(minishop_backend_seckill_publish_delivery_success_total)); falls back to backendTimings.counts['seckill_publish.delivery_success']",
       interpretation:
-        "Compare with HTTP accepted. A lower value means the HTTP layer returned accepted faster than Kafka acknowledged the queued work, or the timing snapshot missed some backend replicas.",
+        "Compare with HTTP accepted. A lower value means the HTTP layer returned accepted faster than Kafka acknowledged the queued work.",
     });
   }
 
@@ -2095,7 +2132,8 @@ function buildMeasurementsFromReport(report: {
       unit: "",
       value: kafkaDeliveryErrors,
       definition: "Kafka/Redpanda delivery errors reported by the Go backend async producer callback.",
-      calculation: "sum(backendTimings.counts['seckill_publish.delivery_error'])",
+      calculation:
+        "delta(sum(minishop_backend_seckill_publish_delivery_error_total)); falls back to backendTimings.counts['seckill_publish.delivery_error']",
       interpretation:
         "Non-zero values mean HTTP accepted work later failed at the durable queue boundary.",
     });
@@ -2521,6 +2559,47 @@ function asBackendTimingTargetSnapshot(value: unknown): BackendTimingTargetSnaps
     return null;
   }
   return value as BackendTimingTargetSnapshot;
+}
+
+function buildBackendKafkaDeliveryReport(
+  prometheusBefore: BackendPrometheusCounterSnapshot | null,
+  prometheusAfter: BackendPrometheusCounterSnapshot | null,
+  backendTimings: BackendTimingSnapshot,
+): {
+  durableAccepted: number;
+  deliveryErrors: number;
+  source: "prometheus" | "backendTimings" | "unavailable";
+} {
+  if (prometheusBefore && prometheusAfter) {
+    return {
+      durableAccepted: counterDelta(
+        prometheusBefore.deliverySuccessTotal,
+        prometheusAfter.deliverySuccessTotal,
+      ),
+      deliveryErrors: counterDelta(
+        prometheusBefore.deliveryErrorTotal,
+        prometheusAfter.deliveryErrorTotal,
+      ),
+      source: "prometheus",
+    };
+  }
+
+  if (backendTimings.available) {
+    return {
+      durableAccepted: readBackendTimingCount(
+        backendTimings,
+        "seckill_publish.delivery_success",
+      ),
+      deliveryErrors: readBackendTimingCount(backendTimings, "seckill_publish.delivery_error"),
+      source: "backendTimings",
+    };
+  }
+
+  return {
+    durableAccepted: 0,
+    deliveryErrors: 0,
+    source: "unavailable",
+  };
 }
 
 function readConfig(): BenchmarkConfig {

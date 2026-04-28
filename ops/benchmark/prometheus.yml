@@ -13,3 +13,11 @@ scrape_configs:
     static_configs:
       - targets:
           - benchmark-worker-seckill:9404
+
+  - job_name: go-backend
+    metrics_path: /metrics
+    dns_sd_configs:
+      - names:
+          - tasks.benchmark-go-backend
+        type: A
+        port: 3000
