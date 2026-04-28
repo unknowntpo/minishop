@@ -227,6 +227,14 @@ type SeckillWorkerReport = {
   error?: string;
 };
 
+type ConcurrencyObservation = {
+  configured: number;
+  workers: number;
+  maxInFlight: number;
+  totalStarted: number;
+  totalCompleted: number;
+};
+
 const config = readConfig();
 
 async function main() {
@@ -285,6 +293,7 @@ async function main() {
     let cancelledResults: CheckoutResult[] = [];
     let acceptDurationMs = 0;
     let steadyState: SteadyStateStats | null = null;
+    let concurrencyObservation: ConcurrencyObservation | null = null;
 
     try {
       let pendingCreatedCommandIds: string[] = [];
@@ -301,18 +310,22 @@ async function main() {
         steadyState = steadyStateRun.steadyState;
         acceptDurationMs = config.steadyStateMeasureMs;
       } else {
-        acceptResults =
-          config.ingressSource === "direct_kafka"
-            ? await publishSeckillRequestsDirectly(
-                directKafkaPublisher,
-                effectiveRequests,
-                config,
-              )
-            : await runWithConcurrency(
-                effectiveRequests,
-                config.httpConcurrency,
-                async (index) => createBuyIntent(index),
-              );
+        if (config.ingressSource === "direct_kafka") {
+          acceptResults = await publishSeckillRequestsDirectly(
+            directKafkaPublisher,
+            effectiveRequests,
+            config,
+          );
+        } else {
+          const observer = createConcurrencyObserver(effectiveRequests, config.httpConcurrency);
+          acceptResults = await runWithConcurrency(
+            effectiveRequests,
+            config.httpConcurrency,
+            async (index) => createBuyIntent(index),
+            observer,
+          );
+          concurrencyObservation = observer.snapshot();
+        }
         acceptDurationMs = performance.now() - acceptStartedAt;
 
         accepted = acceptResults.filter(
@@ -445,6 +458,7 @@ async function main() {
         requestPath: {
           accepted: accepted.length,
           errors: acceptResults.length - accepted.length,
+          concurrency: concurrencyObservation,
           acceptDurationMs: Math.round(acceptDurationMs),
           acceptRequestsPerSecond: ratePerSecond(accepted.length, acceptDurationMs),
           acceptLatencyMs: summarizeLatencies(acceptResults.map((result) => result.latencyMs)),
@@ -614,6 +628,7 @@ async function main() {
         requestPath: {
           accepted: accepted.length,
           errors: Math.max(acceptResults.length - accepted.length, 0),
+          concurrency: concurrencyObservation,
           acceptDurationMs: Math.round(acceptDurationMs),
           acceptRequestsPerSecond: ratePerSecond(accepted.length, acceptDurationMs),
           acceptLatencyMs: summarizeLatencies(acceptResults.map((result) => result.latencyMs)),
@@ -2137,10 +2152,42 @@ function chunked<T>(values: T[], size: number) {
   return chunks;
 }
 
+function createConcurrencyObserver(total: number, configured: number) {
+  let inFlight = 0;
+  let maxInFlight = 0;
+  let totalStarted = 0;
+  let totalCompleted = 0;
+  const workers = Math.max(1, Math.min(configured, total));
+
+  return {
+    start() {
+      inFlight += 1;
+      totalStarted += 1;
+      if (inFlight > maxInFlight) {
+        maxInFlight = inFlight;
+      }
+    },
+    finish() {
+      inFlight -= 1;
+      totalCompleted += 1;
+    },
+    snapshot(): ConcurrencyObservation {
+      return {
+        configured,
+        workers,
+        maxInFlight,
+        totalStarted,
+        totalCompleted,
+      };
+    },
+  };
+}
+
 async function runWithConcurrency<T>(
   total: number,
   concurrency: number,
   taskFor: (index: number) => Promise<T>,
+  observer?: ReturnType<typeof createConcurrencyObserver>,
 ) {
   const results = new Array<T>(total);
   let nextIndex = 0;
@@ -2154,7 +2201,12 @@ async function runWithConcurrency<T>(
         return;
       }
 
-      results[currentIndex] = await taskFor(currentIndex);
+      observer?.start();
+      try {
+        results[currentIndex] = await taskFor(currentIndex);
+      } finally {
+        observer?.finish();
+      }
     }
   }
 

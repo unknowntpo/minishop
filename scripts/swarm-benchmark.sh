@@ -183,6 +183,17 @@ reset_topic() {
   "
 }
 
+delete_old_seckill_worker_changelog_topics() {
+  local id
+  id="$(service_container_id "benchmark-redpanda")"
+  docker_cmd exec "${id}" sh -lc "
+    topics=\$(rpk topic list 2>/dev/null | awk '/^minishop-seckill-worker-benchmark(-.*)?-(dedupe-store|inventory-store)-changelog[[:space:]]/ { print \$1 }')
+    if [ -n \"\$topics\" ]; then
+      rpk topic delete \$topics >/dev/null 2>&1 || true
+    fi
+  "
+}
+
 wait_for_consumer_group() {
   local group_id="$1"
   local expected_members="${2:-1}"
@@ -384,22 +395,51 @@ prepare_seckill_run() {
   local partitions="${BENCHMARK_SECKILL_BUCKET_COUNT:-4}"
   local worker_group="minishop-seckill-worker-benchmark-${run_id}"
   local sink_group="minishop-seckill-result-sink-benchmark-${run_id}"
+  local worker_replicas
+  worker_replicas="$(service_replica_count "benchmark-worker-seckill")"
 
   wait_for_redpanda_ready
+  docker_cmd service scale "$(service_name "benchmark-worker-seckill")=0" >/dev/null
+  wait_for_service_replicas "benchmark-worker-seckill" "0"
+  delete_old_seckill_worker_changelog_topics
   reset_topic "${request_topic}" "${partitions}"
   reset_topic "${result_topic}" "${partitions}"
   reset_topic "${dlq_topic}" "${partitions}"
 
   docker_cmd service update --detach=true --force \
+    --env-add "KAFKA_SECKILL_BUCKET_COUNT=${partitions}" \
+    --env-add "KAFKA_SECKILL_REQUEST_TOPIC_PARTITIONS=${partitions}" \
+    --env-add "KAFKA_SECKILL_RESULT_TOPIC_PARTITIONS=${partitions}" \
+    --env-add "KAFKA_SECKILL_DLQ_TOPIC_PARTITIONS=${partitions}" \
+    --env-add "KAFKA_SECKILL_MAX_PROBE=${BENCHMARK_SECKILL_MAX_PROBE:-4}" \
+    --env-add "KAFKA_SECKILL_CLIENT_LINGER_MS=${KAFKA_SECKILL_CLIENT_LINGER_MS:-1}" \
+    --env-add "KAFKA_SECKILL_CLIENT_BATCH_NUM_MESSAGES=${KAFKA_SECKILL_CLIENT_BATCH_NUM_MESSAGES:-10000}" \
+    --env-add "KAFKA_SECKILL_CLIENT_REQUIRED_ACKS=${KAFKA_SECKILL_CLIENT_REQUIRED_ACKS:-all}" \
+    "$(service_name "benchmark-go-backend")" >/dev/null
+
+  docker_cmd service update --detach=true --force \
     --env-add "KAFKA_SECKILL_APPLICATION_ID=${worker_group}" \
     --env-add "KAFKA_SECKILL_CLEAR_STATE_ON_START=1" \
+    --env-add "KAFKA_SECKILL_REQUEST_TOPIC_PARTITIONS=${partitions}" \
+    --env-add "KAFKA_SECKILL_RESULT_TOPIC_PARTITIONS=${partitions}" \
+    --env-add "KAFKA_SECKILL_DLQ_TOPIC_PARTITIONS=${partitions}" \
     "$(service_name "benchmark-worker-seckill")" >/dev/null
 
   docker_cmd service update --detach=true --force \
     --env-add "KAFKA_SECKILL_RESULT_SINK_GROUP_ID=${sink_group}" \
     --env-add "KAFKA_SECKILL_RESULT_SINK_CLIENT_ID=${sink_group}" \
+    --env-add "KAFKA_SECKILL_RESULT_SINK_PARTITIONS_CONCURRENTLY=${partitions}" \
     "$(service_name "benchmark-worker-seckill-result-sink")" >/dev/null
 
+  if docker_cmd service inspect "$(service_name "benchmark-go-seckill-result-sink")" >/dev/null 2>&1; then
+    docker_cmd service update --detach=true --force \
+      --env-add "KAFKA_SECKILL_RESULT_SINK_GROUP_ID=${sink_group}" \
+      --env-add "KAFKA_SECKILL_RESULT_SINK_CLIENT_ID=${sink_group}" \
+      --env-add "KAFKA_SECKILL_RESULT_SINK_PARTITIONS_CONCURRENTLY=${partitions}" \
+      "$(service_name "benchmark-go-seckill-result-sink")" >/dev/null
+  fi
+
+  docker_cmd service scale "$(service_name "benchmark-worker-seckill")=${worker_replicas}" >/dev/null
   export KAFKA_SECKILL_APPLICATION_ID="${worker_group}"
   export KAFKA_SECKILL_RESULT_SINK_GROUP_ID="${sink_group}"
 }
@@ -435,12 +475,42 @@ run_benchmark() {
     seckill_worker_replicas="$(service_replica_count "benchmark-worker-seckill")"
   fi
 
+  local runner_exports
+  runner_exports="$(
+    for key in \
+      BENCHMARK_REQUESTS \
+      BENCHMARK_HTTP_CONCURRENCY \
+      BENCHMARK_STYLE \
+      BENCHMARK_STEADY_STATE_WARMUP_MS \
+      BENCHMARK_STEADY_STATE_MEASURE_MS \
+      BENCHMARK_STEADY_STATE_COOLDOWN_MS \
+      BENCHMARK_CREATED_TIMEOUT_MS \
+      BENCHMARK_SECKILL_BUCKET_COUNT \
+      BENCHMARK_SECKILL_MAX_PROBE \
+      BENCHMARK_RESULT_SINK_IMPL \
+      BENCHMARK_PROFILE \
+      BENCHMARK_SKU_ID \
+      BENCHMARK_UNIT_PRICE_MINOR \
+      BENCHMARK_CURRENCY \
+      KAFKA_SECKILL_PUBLISH_BATCH_SIZE \
+      KAFKA_SECKILL_PUBLISH_LINGER_MS \
+      KAFKA_SECKILL_CLIENT_LINGER_MS \
+      KAFKA_SECKILL_CLIENT_BATCH_NUM_MESSAGES \
+      KAFKA_SECKILL_CLIENT_REQUIRED_ACKS
+    do
+      if [[ -n "${!key:-}" ]]; then
+        printf 'export %s=%q && ' "${key}" "${!key}"
+      fi
+    done
+  )"
+
   echo "run_id=${run_id}"
   docker_cmd exec "${id}" sh -lc "
     mkdir -p '${results_dir}' &&
     export BENCHMARK_RUN_ID='${run_id}' &&
     export BENCHMARK_RESULTS_DIR='${results_dir}' &&
     export BENCHMARK_SECKILL_WORKER_REPLICAS='${seckill_worker_replicas}' &&
+    ${runner_exports}
     $*
   "
 }

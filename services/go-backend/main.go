@@ -65,6 +65,7 @@ type config struct {
 	kafkaBatchSize       int
 	kafkaLingerMs        int
 	kafkaCompression     string
+	kafkaRequiredAcks    string
 	seckillConfigTTL     time.Duration
 	forcedSeckillSKUs    map[string]int
 	benchmarkResultsRoot string
@@ -372,6 +373,11 @@ type completeDemoCheckoutResponse struct {
 	Reason           *string `json:"reason,omitempty"`
 }
 
+const (
+	seckillRoutingDefault = "default"
+	seckillRoutingSingle  = "single_seckill"
+)
+
 type seckillRoutingDecision struct {
 	kind       string
 	skuID      string
@@ -635,7 +641,7 @@ func main() {
 	kafkaClient, err := kgo.NewClient(
 		kgo.SeedBrokers(cfg.kafkaBrokers...),
 		kgo.ClientID(cfg.kafkaClientID),
-		kgo.RequiredAcks(kgo.AllISRAcks()),
+		kgo.RequiredAcks(kafkaRequiredAcks(cfg.kafkaRequiredAcks)),
 		kgo.RecordPartitioner(kgo.ManualPartitioner()),
 		kgo.ProducerLinger(time.Duration(cfg.kafkaLingerMs)*time.Millisecond),
 		kgo.MaxBufferedRecords(cfg.kafkaBatchSize),
@@ -723,6 +729,7 @@ func readConfig() config {
 		kafkaBatchSize:       envInt("KAFKA_SECKILL_CLIENT_BATCH_NUM_MESSAGES", 10000),
 		kafkaLingerMs:        envInt("KAFKA_SECKILL_CLIENT_LINGER_MS", 1),
 		kafkaCompression:     envDefault("KAFKA_SECKILL_CLIENT_COMPRESSION", "none"),
+		kafkaRequiredAcks:    envDefault("KAFKA_SECKILL_CLIENT_REQUIRED_ACKS", "all"),
 		seckillConfigTTL:     time.Duration(envInt("KAFKA_SECKILL_CONFIG_CACHE_TTL_MS", 60000)) * time.Millisecond,
 		forcedSeckillSKUs:    readForcedSeckillSKUs(),
 		benchmarkResultsRoot: envDefault("GO_BACKEND_BENCHMARK_RESULTS_ROOT", defaultBenchmarkResultsRoot()),
@@ -1041,7 +1048,10 @@ func (a *app) handleBuyIntents(w http.ResponseWriter, r *http.Request) {
 	a.timings.ObserveSince("buy_intent.command_build", stageStarted)
 
 	stageStarted = time.Now()
-	if decision.kind == "single_seckill" {
+	// Single-SKU seckill requests bypass the regular NATS buy-intent flow and
+	// enter the Kafka seckill reservation path. Mixed carts with seckill SKUs
+	// are rejected by classifyItemsForSeckill before this point.
+	if decision.kind == seckillRoutingSingle {
 		if err := a.publishSeckillCommand(ctx, body, command, decision.stockLimit, reqCtx); err != nil {
 			a.timings.ObserveSince("buy_intent.publish_seckill", stageStarted)
 			span.RecordError(err)
@@ -1153,7 +1163,10 @@ func (a *app) handleBuyIntentsHertz(base context.Context, c *hertzapp.RequestCon
 	a.timings.ObserveSince("buy_intent.command_build", stageStarted)
 
 	stageStarted = time.Now()
-	if decision.kind == "single_seckill" {
+	// Single-SKU seckill requests bypass the regular NATS buy-intent flow and
+	// enter the Kafka seckill reservation path. Mixed carts with seckill SKUs
+	// are rejected by classifyItemsForSeckill before this point.
+	if decision.kind == seckillRoutingSingle {
 		if err := a.publishSeckillCommand(ctx, body, command, decision.stockLimit, reqCtx); err != nil {
 			a.timings.ObserveSince("buy_intent.publish_seckill", stageStarted)
 			span.RecordError(err)
@@ -1269,6 +1282,9 @@ func (a *app) publishSeckillCommand(
 		Headers:   headers,
 	}
 	deliveryStarted := time.Now()
+	// Produce is asynchronous: the HTTP handler returns 202 after the record is
+	// accepted into the franz-go producer, while the callback records broker ack
+	// success or failure later. This keeps HTTP acceptance off the Kafka ack RTT.
 	a.kafka.Produce(context.Background(), record, func(produced *kgo.Record, err error) {
 		a.timings.ObserveSince("seckill_publish.delivery_ack", deliveryStarted)
 		if err == nil {
@@ -1645,12 +1661,12 @@ func (a *app) classifyItemsForSeckill(ctx context.Context, items []requestItem) 
 		if hasSeckill {
 			return seckillRoutingDecision{}, errMixedCartWithSeckill
 		}
-		return seckillRoutingDecision{kind: "default"}, nil
+		return seckillRoutingDecision{kind: seckillRoutingDefault}, nil
 	}
 
 	if stockLimit, ok := a.cfg.forcedSeckillSKUs[items[0].SkuID]; ok && stockLimit > 0 {
 		return seckillRoutingDecision{
-			kind:       "single_seckill",
+			kind:       seckillRoutingSingle,
 			skuID:      items[0].SkuID,
 			stockLimit: stockLimit,
 		}, nil
@@ -1661,10 +1677,10 @@ func (a *app) classifyItemsForSeckill(ctx context.Context, items []requestItem) 
 		return seckillRoutingDecision{}, err
 	}
 	if !cfg.enabled || cfg.stockLimit <= 0 {
-		return seckillRoutingDecision{kind: "default"}, nil
+		return seckillRoutingDecision{kind: seckillRoutingDefault}, nil
 	}
 	return seckillRoutingDecision{
-		kind:       "single_seckill",
+		kind:       seckillRoutingSingle,
 		skuID:      items[0].SkuID,
 		stockLimit: cfg.stockLimit,
 	}, nil
@@ -3531,6 +3547,17 @@ func kafkaCompressionCodec(value string) kgo.CompressionCodec {
 		return kgo.ZstdCompression()
 	default:
 		return kgo.NoCompression()
+	}
+}
+
+func kafkaRequiredAcks(value string) kgo.Acks {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "0", "none", "no", "noack":
+		return kgo.NoAck()
+	case "1", "leader", "leaderack":
+		return kgo.LeaderAck()
+	default:
+		return kgo.AllISRAcks()
 	}
 }
 

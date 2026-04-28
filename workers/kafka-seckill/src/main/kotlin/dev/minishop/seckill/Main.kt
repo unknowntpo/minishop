@@ -128,8 +128,11 @@ data class AppConfig(
     val brokers: String,
     val applicationId: String,
     val requestTopic: String,
+    val requestTopicPartitions: Int,
     val resultTopic: String,
+    val resultTopicPartitions: Int,
     val dlqTopic: String?,
+    val dlqTopicPartitions: Int,
     val deserializationExceptionHandler: String,
     val processingExceptionHandler: String,
     val productionExceptionHandler: String,
@@ -173,8 +176,11 @@ data class AppConfig(
                 brokers = env("KAFKA_BROKERS"),
                 applicationId = env("KAFKA_SECKILL_APPLICATION_ID", "minishop-seckill-worker"),
                 requestTopic = env("KAFKA_SECKILL_REQUEST_TOPIC", "inventory.seckill.requested"),
+                requestTopicPartitions = envInt("KAFKA_SECKILL_REQUEST_TOPIC_PARTITIONS", 6),
                 resultTopic = env("KAFKA_SECKILL_RESULT_TOPIC", "inventory.seckill.result"),
+                resultTopicPartitions = envInt("KAFKA_SECKILL_RESULT_TOPIC_PARTITIONS", 6),
                 dlqTopic = optionalEnv("KAFKA_SECKILL_DLQ_TOPIC"),
+                dlqTopicPartitions = envInt("KAFKA_SECKILL_DLQ_TOPIC_PARTITIONS", 6),
                 deserializationExceptionHandler = env(
                     "KAFKA_SECKILL_DESERIALIZATION_EXCEPTION_HANDLER",
                     "org.apache.kafka.streams.errors.LogAndContinueExceptionHandler",
@@ -202,6 +208,10 @@ data class AppConfig(
             System.getenv(name)?.trim()?.takeIf { it.isNotEmpty() }
                 ?: default
                 ?: error("$name is required")
+
+        private fun envInt(name: String, default: Int): Int =
+            env(name, default.toString()).toIntOrNull()?.takeIf { it > 0 }
+                ?: error("$name must be a positive integer")
     }
 }
 
@@ -753,11 +763,11 @@ fun ensureTopics(config: AppConfig) {
     }
     Admin.create(properties).use { admin ->
         val topics = mutableListOf(
-            NewTopic(config.requestTopic, 6, 1),
-            NewTopic(config.resultTopic, 6, 1),
+            NewTopic(config.requestTopic, config.requestTopicPartitions, 1),
+            NewTopic(config.resultTopic, config.resultTopicPartitions, 1),
         )
         if (!config.dlqTopic.isNullOrBlank()) {
-            topics.add(NewTopic(config.dlqTopic, 6, 1))
+            topics.add(NewTopic(config.dlqTopic, config.dlqTopicPartitions, 1))
         }
         try {
             admin.createTopics(topics).all().get()
