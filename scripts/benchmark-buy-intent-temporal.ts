@@ -1,5 +1,6 @@
 import "dotenv/config";
 
+import { spawn } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -43,6 +44,8 @@ type BenchmarkConfig = {
   seckillWorkerReplicas?: number;
   seckillRoutingEpoch?: number;
   directKafkaBatchSize: number;
+  directKafkaProducerClient: "franz-go" | "confluent-kafka-javascript";
+  directKafkaFranzPublisherBin: string;
   kafkaClient: string;
   appPublishBatchSize: number;
   appPublishLingerMs: number;
@@ -415,6 +418,14 @@ async function main() {
         backendPrometheusAfter,
         backendTimings,
       );
+      const durableAccepted =
+        config.ingressSource === "direct_kafka" ? accepted.length : kafkaDelivery.durableAccepted;
+      const deliveryErrors =
+        config.ingressSource === "direct_kafka"
+          ? acceptResults.length - accepted.length
+          : kafkaDelivery.deliveryErrors;
+      const deliveryMetricSource =
+        config.ingressSource === "direct_kafka" ? "directKafkaProducer" : kafkaDelivery.source;
       profiling = await maybeStopProfiling(profilingPlan, profiling);
       const finishedAtIso = new Date().toISOString();
       const seckillSemanticAssertion = buildSeckillSemanticAssertion({
@@ -482,11 +493,10 @@ async function main() {
         requestPath: {
           accepted: accepted.length,
           errors: acceptResults.length - accepted.length,
-          kafkaDurableAccepted: kafkaDelivery.durableAccepted,
-          kafkaDeliveryErrors: kafkaDelivery.deliveryErrors,
-          kafkaDurableAcceptedRate:
-            accepted.length > 0 ? kafkaDelivery.durableAccepted / accepted.length : null,
-          kafkaDeliveryMetricSource: kafkaDelivery.source,
+          kafkaDurableAccepted: durableAccepted,
+          kafkaDeliveryErrors: deliveryErrors,
+          kafkaDurableAcceptedRate: accepted.length > 0 ? durableAccepted / accepted.length : null,
+          kafkaDeliveryMetricSource: deliveryMetricSource,
           concurrency: concurrencyObservation,
           acceptDurationMs: Math.round(acceptDurationMs),
           acceptRequestsPerSecond: ratePerSecond(accepted.length, acceptDurationMs),
@@ -584,6 +594,14 @@ async function main() {
         backendPrometheusAfter,
         backendTimings,
       );
+      const durableAccepted =
+        config.ingressSource === "direct_kafka" ? accepted.length : kafkaDelivery.durableAccepted;
+      const deliveryErrors =
+        config.ingressSource === "direct_kafka"
+          ? Math.max(acceptResults.length - accepted.length, 0)
+          : kafkaDelivery.deliveryErrors;
+      const deliveryMetricSource =
+        config.ingressSource === "direct_kafka" ? "directKafkaProducer" : kafkaDelivery.source;
       const finishedAtIso = new Date().toISOString();
       const failureMessage = error instanceof Error ? error.message : "unknown benchmark failure";
       const intentCreation =
@@ -666,11 +684,10 @@ async function main() {
         requestPath: {
           accepted: accepted.length,
           errors: Math.max(acceptResults.length - accepted.length, 0),
-          kafkaDurableAccepted: kafkaDelivery.durableAccepted,
-          kafkaDeliveryErrors: kafkaDelivery.deliveryErrors,
-          kafkaDurableAcceptedRate:
-            accepted.length > 0 ? kafkaDelivery.durableAccepted / accepted.length : null,
-          kafkaDeliveryMetricSource: kafkaDelivery.source,
+          kafkaDurableAccepted: durableAccepted,
+          kafkaDeliveryErrors: deliveryErrors,
+          kafkaDurableAcceptedRate: accepted.length > 0 ? durableAccepted / accepted.length : null,
+          kafkaDeliveryMetricSource: deliveryMetricSource,
           concurrency: concurrencyObservation,
           acceptDurationMs: Math.round(acceptDurationMs),
           acceptRequestsPerSecond: ratePerSecond(accepted.length, acceptDurationMs),
@@ -1241,6 +1258,15 @@ async function publishSeckillRequestsDirectly(
   total: number,
   config: BenchmarkConfig,
 ): Promise<AcceptResult[]> {
+  if (config.directKafkaProducerClient === "franz-go") {
+    return publishSeckillRequestsDirectlyWithFranzGo({
+      config,
+      total,
+      startIndex: 0,
+      collectResults: true,
+    }).then((result) => result.results);
+  }
+
   if (!publisher) {
     throw new Error("Direct Kafka publisher is not initialized.");
   }
@@ -1295,6 +1321,15 @@ async function publishSeckillRequestsDirectlyUntil(
   collectResults: boolean,
   startIndex = 0,
 ) {
+  if (config.directKafkaProducerClient === "franz-go") {
+    return publishSeckillRequestsDirectlyWithFranzGo({
+      config,
+      durationMs,
+      startIndex,
+      collectResults,
+    });
+  }
+
   if (!publisher) {
     throw new Error("Direct Kafka publisher is not initialized.");
   }
@@ -1390,6 +1425,31 @@ function buildDirectSeckillRequest(index: number, config: BenchmarkConfig): Seck
 }
 
 async function startDirectSeckillRequestPublisher(config: BenchmarkConfig) {
+  if (config.directKafkaProducerClient === "franz-go") {
+    const { Kafka, logLevel } = await loadConfluentKafkaJsCompat();
+    const kafka = new Kafka({
+      kafkaJS: {
+        clientId: `${createKafkaClientId()}-direct-admin`,
+        brokers: config.kafkaBrokers,
+        logLevel: logLevel.NOTHING,
+      },
+    });
+    const admin = kafka.admin();
+    await admin.connect();
+    await ensureKafkaTopics(admin, config);
+    await admin.disconnect();
+
+    return {
+      async publish(requests: SeckillBuyIntentRequest[]) {
+        void requests;
+        throw new Error("franz-go direct publisher is executed as a whole-run helper.");
+      },
+      async stop() {
+        return undefined;
+      },
+    };
+  }
+
   const { Kafka, logLevel } = await loadConfluentKafkaJsCompat();
   const kafka = new Kafka({
     kafkaJS: {
@@ -1427,6 +1487,96 @@ async function startDirectSeckillRequestPublisher(config: BenchmarkConfig) {
     async stop() {
       await producer.disconnect().catch(() => undefined);
     },
+  };
+}
+
+async function publishSeckillRequestsDirectlyWithFranzGo(inputConfig: {
+  config: BenchmarkConfig;
+  total?: number;
+  durationMs?: number;
+  startIndex: number;
+  collectResults: boolean;
+}): Promise<{
+  results: AcceptResult[];
+  nextIndex: number;
+}> {
+  const { config } = inputConfig;
+  const input = {
+    brokers: config.kafkaBrokers,
+    clientId: `${createKafkaClientId()}-direct-franz`,
+    topic: config.seckillRequestTopic,
+    runId: config.runId,
+    total: inputConfig.total,
+    durationMs: inputConfig.durationMs,
+    startIndex: inputConfig.startIndex,
+    collectResults: inputConfig.collectResults,
+    directKafkaBatchSize: config.directKafkaBatchSize,
+    skuId: config.skuId,
+    unitPriceAmountMinor: config.unitPriceAmountMinor,
+    currency: config.currency,
+    buyerPrefix: config.buyerPrefix,
+    requestedBuyClicks: config.requests,
+    seckillBucketCount: config.seckillBucketCount,
+    seckillMaxProbe: config.seckillMaxProbe,
+    lingerMs: config.producerLingerMs,
+    maxBufferedRecords: config.producerBatchNumMessages,
+    requiredAcks: "all",
+  };
+
+  const output = await runFranzGoDirectPublisher(config.directKafkaFranzPublisherBin, input);
+  return {
+    results: output.results,
+    nextIndex: output.nextIndex,
+  };
+}
+
+async function runFranzGoDirectPublisher(
+  binaryPath: string,
+  input: Record<string, unknown>,
+): Promise<{
+  results: AcceptResult[];
+  nextIndex: number;
+}> {
+  const child = spawn(binaryPath, [], {
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+
+  const stdoutChunks: Buffer[] = [];
+  const stderrChunks: Buffer[] = [];
+
+  child.stdout.on("data", (chunk: Buffer) => {
+    stdoutChunks.push(chunk);
+  });
+  child.stderr.on("data", (chunk: Buffer) => {
+    stderrChunks.push(chunk);
+  });
+
+  child.stdin.end(JSON.stringify(input));
+
+  const exitCode = await new Promise<number | null>((resolve, reject) => {
+    child.on("error", reject);
+    child.on("close", resolve);
+  });
+
+  const stdout = Buffer.concat(stdoutChunks).toString("utf8").trim();
+  const stderr = Buffer.concat(stderrChunks).toString("utf8").trim();
+
+  if (exitCode !== 0) {
+    throw new Error(
+      `franz-go direct publisher failed with exit=${exitCode}${stderr ? `: ${stderr}` : ""}`,
+    );
+  }
+  if (stderr) {
+    console.warn(`[benchmark] franz-go direct publisher stderr: ${stderr}`);
+  }
+
+  const parsed = JSON.parse(stdout) as {
+    results?: AcceptResult[];
+    nextIndex?: number;
+  };
+  return {
+    results: parsed.results ?? [],
+    nextIndex: parsed.nextIndex ?? 0,
   };
 }
 
@@ -2039,7 +2189,11 @@ function buildMeasurementsFromReport(report: {
     kafkaDurableAccepted?: number;
     kafkaDeliveryErrors?: number;
     kafkaDurableAcceptedRate?: number | null;
-    kafkaDeliveryMetricSource?: "prometheus" | "backendTimings" | "unavailable";
+    kafkaDeliveryMetricSource?:
+      | "prometheus"
+      | "backendTimings"
+      | "directKafkaProducer"
+      | "unavailable";
     acceptRequestsPerSecond?: number;
     acceptLatencyMs?: { p95?: number };
   };
@@ -2697,6 +2851,10 @@ function readConfig(): BenchmarkConfig {
     seckillWorkerReplicas: readOptionalPositiveIntegerEnv("BENCHMARK_SECKILL_WORKER_REPLICAS"),
     seckillRoutingEpoch: readOptionalPositiveIntegerEnv("BENCHMARK_SECKILL_ROUTING_EPOCH"),
     directKafkaBatchSize: readPositiveIntegerEnv("BENCHMARK_DIRECT_KAFKA_BATCH_SIZE", 500),
+    directKafkaProducerClient: readDirectKafkaProducerClient(),
+    directKafkaFranzPublisherBin:
+      process.env.BENCHMARK_DIRECT_KAFKA_FRANZ_PUBLISHER_BIN ??
+      "/usr/local/bin/seckill-direct-franz-publisher",
     kafkaClient: process.env.BENCHMARK_KAFKA_CLIENT ?? "confluent-kafka-javascript",
     appPublishBatchSize: readPositiveIntegerEnv("KAFKA_SECKILL_PUBLISH_BATCH_SIZE", 64),
     appPublishLingerMs: readPositiveIntegerEnv("KAFKA_SECKILL_PUBLISH_LINGER_MS", 2),
@@ -2867,6 +3025,8 @@ function buildKafkaReport(
       maxProbe: config.seckillMaxProbe,
       directKafkaBatchSize:
         config.ingressSource === "direct_kafka" ? config.directKafkaBatchSize : undefined,
+      directKafkaProducerClient:
+        config.ingressSource === "direct_kafka" ? config.directKafkaProducerClient : undefined,
       steadyState:
         config.benchmarkStyle === "steady_state"
           ? {
@@ -2986,6 +3146,18 @@ function readOptionalPositiveIntegerEnv(name: string) {
   }
 
   return parsed;
+}
+
+function readDirectKafkaProducerClient(): BenchmarkConfig["directKafkaProducerClient"] {
+  const raw = process.env.BENCHMARK_DIRECT_KAFKA_PRODUCER_CLIENT?.trim() || "franz-go";
+
+  if (raw === "franz-go" || raw === "confluent-kafka-javascript") {
+    return raw;
+  }
+
+  throw new Error(
+    "BENCHMARK_DIRECT_KAFKA_PRODUCER_CLIENT must be franz-go or confluent-kafka-javascript.",
+  );
 }
 
 function readBooleanWithDefault(name: string, fallback: boolean) {
