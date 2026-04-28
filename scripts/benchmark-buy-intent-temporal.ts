@@ -187,6 +187,11 @@ type BackendTimingSnapshot = {
   }>;
 };
 
+type BackendTimingTargetSnapshot = {
+  counts?: Record<string, number>;
+  stages?: Record<string, unknown>;
+};
+
 type KafkaTopicSnapshot = {
   topic: string;
   partitions: number;
@@ -391,6 +396,14 @@ async function main() {
       const kafkaAfter = await readKafkaBenchmarkSnapshot(config).catch(() => null);
       const seckillWorkerAfter = await readSeckillWorkerCounterSnapshot(config).catch(() => null);
       const backendTimings = await maybeReadBackendTimings();
+      const kafkaDurableAccepted = readBackendTimingCount(
+        backendTimings,
+        "seckill_publish.delivery_success",
+      );
+      const kafkaDeliveryErrors = readBackendTimingCount(
+        backendTimings,
+        "seckill_publish.delivery_error",
+      );
       profiling = await maybeStopProfiling(profilingPlan, profiling);
       const finishedAtIso = new Date().toISOString();
       const seckillSemanticAssertion = buildSeckillSemanticAssertion({
@@ -458,6 +471,10 @@ async function main() {
         requestPath: {
           accepted: accepted.length,
           errors: acceptResults.length - accepted.length,
+          kafkaDurableAccepted,
+          kafkaDeliveryErrors,
+          kafkaDurableAcceptedRate:
+            accepted.length > 0 ? kafkaDurableAccepted / accepted.length : null,
           concurrency: concurrencyObservation,
           acceptDurationMs: Math.round(acceptDurationMs),
           acceptRequestsPerSecond: ratePerSecond(accepted.length, acceptDurationMs),
@@ -546,6 +563,14 @@ async function main() {
       const kafkaAfter = await readKafkaBenchmarkSnapshot(config).catch(() => null);
       const seckillWorkerAfter = await readSeckillWorkerCounterSnapshot(config).catch(() => null);
       const backendTimings = await maybeReadBackendTimings();
+      const kafkaDurableAccepted = readBackendTimingCount(
+        backendTimings,
+        "seckill_publish.delivery_success",
+      );
+      const kafkaDeliveryErrors = readBackendTimingCount(
+        backendTimings,
+        "seckill_publish.delivery_error",
+      );
       const finishedAtIso = new Date().toISOString();
       const failureMessage = error instanceof Error ? error.message : "unknown benchmark failure";
       const intentCreation =
@@ -628,6 +653,10 @@ async function main() {
         requestPath: {
           accepted: accepted.length,
           errors: Math.max(acceptResults.length - accepted.length, 0),
+          kafkaDurableAccepted,
+          kafkaDeliveryErrors,
+          kafkaDurableAcceptedRate:
+            accepted.length > 0 ? kafkaDurableAccepted / accepted.length : null,
           concurrency: concurrencyObservation,
           acceptDurationMs: Math.round(acceptDurationMs),
           acceptRequestsPerSecond: ratePerSecond(accepted.length, acceptDurationMs),
@@ -1959,6 +1988,9 @@ function buildMeasurementsFromReport(report: {
   requestPath?: {
     accepted?: number;
     errors?: number;
+    kafkaDurableAccepted?: number;
+    kafkaDeliveryErrors?: number;
+    kafkaDurableAcceptedRate?: number | null;
     acceptRequestsPerSecond?: number;
     acceptLatencyMs?: { p95?: number };
   };
@@ -1979,6 +2011,9 @@ function buildMeasurementsFromReport(report: {
     report.conditions?.workload?.benchmarkStyle ?? report.conditions?.benchmarkStyle ?? "burst";
   const createdBoundary = report.kafka?.createdBoundary;
   const accepted = report.requestPath?.accepted ?? 0;
+  const kafkaDurableAccepted = report.requestPath?.kafkaDurableAccepted;
+  const kafkaDeliveryErrors = report.requestPath?.kafkaDeliveryErrors;
+  const kafkaDurableAcceptedRate = report.requestPath?.kafkaDurableAcceptedRate;
   const requested = report.scenario?.requestedBuyClicks ?? 0;
   const errors = report.requestPath?.errors ?? 0;
   const ingressThroughput = report.requestPath?.acceptRequestsPerSecond ?? 0;
@@ -2026,6 +2061,45 @@ function buildMeasurementsFromReport(report: {
         ? "Compare this with result topic throughput to see how much durable queued work reaches final output."
         : "Compare this with downstream throughput to see how much admitted work becomes durable business facts.",
   });
+
+  if (typeof kafkaDurableAccepted === "number") {
+    measurements.push({
+      key: "kafka_durable_accepted",
+      label: "Kafka durable accepted",
+      unit: "",
+      value: kafkaDurableAccepted,
+      definition: "Records acknowledged by Kafka/Redpanda from the Go backend async producer callback.",
+      calculation: "sum(backendTimings.counts['seckill_publish.delivery_success'])",
+      interpretation:
+        "Compare with HTTP accepted. A lower value means the HTTP layer returned accepted faster than Kafka acknowledged the queued work, or the timing snapshot missed some backend replicas.",
+    });
+  }
+
+  if (typeof kafkaDurableAcceptedRate === "number") {
+    measurements.push({
+      key: "kafka_durable_accepted_rate",
+      label: "Kafka durable accepted rate",
+      unit: "",
+      value: kafkaDurableAcceptedRate,
+      definition: "Share of HTTP accepted requests that were acknowledged by Kafka/Redpanda.",
+      calculation: "kafkaDurableAccepted / requestPath.accepted",
+      interpretation:
+        "Healthy single-API runs should stay near 1.0. For multi-replica runs this requires benchmark timing snapshots from every backend replica.",
+    });
+  }
+
+  if (typeof kafkaDeliveryErrors === "number") {
+    measurements.push({
+      key: "kafka_delivery_errors",
+      label: "Kafka delivery errors",
+      unit: "",
+      value: kafkaDeliveryErrors,
+      definition: "Kafka/Redpanda delivery errors reported by the Go backend async producer callback.",
+      calculation: "sum(backendTimings.counts['seckill_publish.delivery_error'])",
+      interpretation:
+        "Non-zero values mean HTTP accepted work later failed at the durable queue boundary.",
+    });
+  }
 
   if (typeof retryPerPrimary === "number") {
     measurements.push({
@@ -2428,6 +2502,25 @@ async function maybeReadBackendTimings(): Promise<BackendTimingSnapshot> {
     available: targets.some((target) => target.snapshot),
     targets,
   };
+}
+
+function readBackendTimingCount(snapshot: BackendTimingSnapshot, name: string): number {
+  if (!snapshot.available || !snapshot.targets?.length) {
+    return 0;
+  }
+
+  return snapshot.targets.reduce((total, target) => {
+    const targetSnapshot = asBackendTimingTargetSnapshot(target.snapshot);
+    const value = targetSnapshot?.counts?.[name];
+    return total + (typeof value === "number" && Number.isFinite(value) ? value : 0);
+  }, 0);
+}
+
+function asBackendTimingTargetSnapshot(value: unknown): BackendTimingTargetSnapshot | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  return value as BackendTimingTargetSnapshot;
 }
 
 function readConfig(): BenchmarkConfig {
