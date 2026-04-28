@@ -34,6 +34,7 @@ type BenchmarkConfig = {
   ingressSource: "http" | "direct_kafka";
   benchmarkStyle: "burst" | "steady_state";
   createdTimeoutMs: number;
+  prometheusScrapeSettleMs: number;
   resetStateBeforeRun: boolean;
   createdSource: "postgres" | "kafka_seckill_result";
   ensureSeckillEnabled: boolean;
@@ -283,6 +284,7 @@ async function main() {
       await resetBuyIntentBenchmarkState(pool, config.mode);
     }
     await maybeResetBackendTimings();
+    await maybeWaitForPrometheusScrape();
     backendPrometheusBefore = await readBackendPrometheusCounterSnapshot(config).catch(() => null);
 
     const inventory = await readInventory(pool, config.skuId);
@@ -404,6 +406,7 @@ async function main() {
       const kafkaAfter = await readKafkaBenchmarkSnapshot(config).catch(() => null);
       const seckillWorkerAfter = await readSeckillWorkerCounterSnapshot(config).catch(() => null);
       const backendTimings = await maybeReadBackendTimings();
+      await maybeWaitForPrometheusScrape(backendPrometheusBefore);
       const backendPrometheusAfter = await readBackendPrometheusCounterSnapshot(config).catch(
         () => null,
       );
@@ -572,6 +575,7 @@ async function main() {
       const kafkaAfter = await readKafkaBenchmarkSnapshot(config).catch(() => null);
       const seckillWorkerAfter = await readSeckillWorkerCounterSnapshot(config).catch(() => null);
       const backendTimings = await maybeReadBackendTimings();
+      await maybeWaitForPrometheusScrape(backendPrometheusBefore);
       const backendPrometheusAfter = await readBackendPrometheusCounterSnapshot(config).catch(
         () => null,
       );
@@ -925,6 +929,15 @@ async function readBackendPrometheusCounterSnapshot(
     deliverySuccessTotal,
     deliveryErrorTotal,
   };
+}
+
+async function maybeWaitForPrometheusScrape(
+  before?: BackendPrometheusCounterSnapshot | null,
+): Promise<void> {
+  if (before === null || config.prometheusScrapeSettleMs <= 0) {
+    return;
+  }
+  await sleep(config.prometheusScrapeSettleMs);
 }
 
 async function readPrometheusScalar(prometheusUrl: string, query: string) {
@@ -2667,6 +2680,10 @@ function readConfig(): BenchmarkConfig {
     benchmarkStyle:
       (process.env.BENCHMARK_STYLE as BenchmarkConfig["benchmarkStyle"] | undefined) ?? "burst",
     createdTimeoutMs: readPositiveIntegerEnv("BENCHMARK_CREATED_TIMEOUT_MS", 60_000),
+    prometheusScrapeSettleMs: readNonNegativeIntegerEnv(
+      "BENCHMARK_PROMETHEUS_SCRAPE_SETTLE_MS",
+      6_000,
+    ),
     resetStateBeforeRun: readBooleanWithDefault("BENCHMARK_RESET_STATE", true),
     createdSource,
     ensureSeckillEnabled:
@@ -2934,6 +2951,22 @@ function readPositiveIntegerEnv(name: string, fallback: number) {
 
   if (!Number.isFinite(parsed) || parsed <= 0) {
     throw new Error(`${name} must be a positive integer.`);
+  }
+
+  return parsed;
+}
+
+function readNonNegativeIntegerEnv(name: string, fallback: number) {
+  const raw = process.env[name]?.trim();
+
+  if (!raw) {
+    return fallback;
+  }
+
+  const parsed = Number.parseInt(raw, 10);
+
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new Error(`${name} must be a non-negative integer.`);
   }
 
   return parsed;
