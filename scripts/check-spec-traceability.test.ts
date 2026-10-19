@@ -277,7 +277,12 @@ describe("traceabilityMode", () => {
     expect(traceabilityMode("Traceability: not enforced\n")).toBeUndefined();
     expect(traceabilityMode("Traceability: enforced-ish\n")).toBeUndefined();
     expect(traceabilityMode("# Spec without the line\n")).toBeUndefined();
+    expect(traceabilityMode("Traceability: pending\n")).toBeUndefined();
+    expect(traceabilityMode("  Traceability: enforced\n")).toBeUndefined();
+    expect(traceabilityMode("note: Traceability: enforced\n")).toBeUndefined();
+    expect(traceabilityMode("Traceability: enforced ish\n")).toBeUndefined();
     expect(traceabilityMode("Traceability: draft\n")).toBe("draft");
+    expect(traceabilityMode("Traceability: enforced (x)\n")).toBe("enforced");
   });
 
   test("an enforced spec with a parenthetical yields items; a draft one does not", () => {
