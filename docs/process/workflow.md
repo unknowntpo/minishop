@@ -90,7 +90,8 @@ Prompt shape:
 > Verify commit `<sha>` against `<spec path>`. Do not trust the PR text or the
 > implementer's claims. For each acceptance ID, run it against the running
 > system and record pass / fail / unverifiable with evidence. Run the gates.
-> Run your own mutation pass and report survivors. Report spec/behavior
+> Run your own mutation pass (one mutant per behavior, plus boundary and
+> type-edge mutants) and report survivors. Report spec/behavior
 > mismatches even when tests pass.
 
 - The verifier works in its own fresh worktree, keeps scratch files in its own
@@ -125,10 +126,13 @@ rebase or force-push), CI on the new head, then
 There is no Dev or Prod deployment. Changes move through:
 
 1. **Local** (this machine, Node 24 via `.nvmrc`, Go per module):
-   - `pnpm check:traceability`: fails when an untagged acceptance ID in an
-     enforced spec has no Vitest, Ginkgo, or `t.Run` test named `<ID>:`, or
-     when a spec's case file is run by no test (TypeScript: imported and
-     iterated with `.each`; Go: a `_test.go` file names the file).
+   - `pnpm check:traceability`: fails when a spec's `Traceability:` line does
+     not start with `draft` or `enforced`, when an untagged acceptance ID in an
+     enforced spec has no test named `<ID>:` (Vitest `src/**/*.test.ts` and
+     `scripts/**/*.test.ts`, Playwright `e2e/**/*.spec.ts`, Ginkgo, or Go
+     `t.Run`), or when a spec's case file is run by no test (TypeScript:
+     imported and iterated with `.each`; Go: a `_test.go` file names the
+     file).
    - `pnpm check:test-plan`: fails when a generated table differs from its case
      file; `pnpm docs:test-plan` rewrites it.
    - `pnpm test:gates`: the gates' own tests.
@@ -136,8 +140,9 @@ There is no Dev or Prod deployment. Changes move through:
      locally only: `pnpm test:e2e:go-backend:compose` (Ginkgo against
      `docker-compose.go-backend-e2e.yml`).
 2. **CI** (`.github/workflows/ci.yml`, on pull requests and pushes to `main`):
-   the three gate commands above, plus `go vet` and `go test` for every Go
-   module (`go test` skips `services/go-backend-e2e`, which needs Docker).
+   the three gate commands above, plus `go vet` for every Go module and for
+   the module-less `scripts/go-seckill-http-loadgen`, and `go test` for every
+   module except `services/go-backend-e2e`, which needs Docker.
    `pnpm typecheck`, `pnpm lint`, `pnpm test`, and `pnpm deps:check` fail on
    `main` today and stay out of CI until fixed (`docs/gardening.md`).
 3. **Benchmark environments**, in order; the remote run starts only after the

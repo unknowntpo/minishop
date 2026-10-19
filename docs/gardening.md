@@ -10,9 +10,11 @@ Reserve the next `G` number when briefing parallel agents.
 Observed on `origin/main` @ `d52c863`, Node 24.15.0, 2026-10-19.
 
 - **G1. `pnpm typecheck` fails.** Two `TS2345` errors in
-  `scripts/benchmark-buy-intent-temporal.ts` (lines 572 and 764): the artifact
-  object is not assignable to the writer's parameter type. Layer: static check
-  (add to CI once fixed).
+  `scripts/benchmark-buy-intent-temporal.ts` (572:57 and 764:57): `report` is
+  not assignable to the parameter of `buildMeasurementsFromReport`, because
+  `requestPath.kafkaDeliveryMetricSource` is typed `string` where the
+  parameter expects `"directKafkaProducer" | "prometheus" | "backendTimings" |
+  "unavailable"`. Layer: static check (add to CI once fixed).
 - **G2. `pnpm lint` fails.** Biome reports 48 errors and 10 warnings across
   existing files. Layer: static check (fix or adjust `biome.json`, then add to
   CI).
