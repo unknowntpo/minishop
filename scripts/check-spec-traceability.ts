@@ -4,7 +4,7 @@
  * listed. Rows of a spec's test-plan case file count for that spec when some test runs the case
  * file. See docs/process/workflow.md.
  */
-import { globSync, readFileSync } from "node:fs";
+import { globSync, readFileSync, realpathSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadCaseRows, specPaths } from "./render-test-plan";
@@ -12,8 +12,11 @@ import { loadCaseRows, specPaths } from "./render-test-plan";
 const tsTestGlobs = ["src/**/*.test.ts", "scripts/**/*.test.ts", "e2e/**/*.spec.ts"];
 const goTestGlob = "**/*_test.go";
 const excludedDirs = ["**/node_modules", "**/vendor", "**/.git"];
-/** This gate's own tests hold fixture titles for fake specs, so they never trace a real one. */
-const gateTestPath = "scripts/check-spec-traceability.test.ts";
+/** The gates' own tests hold fixture titles for fake specs, so they never trace a real one. */
+const gateTestPaths = new Set([
+  "scripts/check-spec-traceability.test.ts",
+  "scripts/render-test-plan.test.ts",
+]);
 
 export interface AcceptanceItem {
   readonly spec: string;
@@ -21,8 +24,14 @@ export interface AcceptanceItem {
   readonly tag?: "deploy" | "measure";
 }
 
+/** `draft` or `enforced` from the spec's `Traceability:` line; undefined when missing or unknown. */
+export function traceabilityMode(markdown: string): "draft" | "enforced" | undefined {
+  const match = /^Traceability:\s*(draft|enforced)(?:\s+\(.*\))?\s*$/mu.exec(markdown);
+  return match?.[1] as "draft" | "enforced" | undefined;
+}
+
 export function acceptanceItems(spec: string, markdown: string): readonly AcceptanceItem[] {
-  if (!/^Traceability:\s*enforced\s*$/mu.test(markdown)) return [];
+  if (traceabilityMode(markdown) !== "enforced") return [];
   const lines = markdown.split("\n");
   const start = lines.findIndex((line) => /^## Acceptance\s*$/u.test(line));
   if (start < 0) return [];
@@ -101,7 +110,7 @@ export async function checkTraceability(root: string): Promise<{
   const sources = new Map<string, string>();
   for (const pattern of [...tsTestGlobs, goTestGlob]) {
     for (const path of globSync(pattern, { cwd: root, exclude: excludedDirs })) {
-      if (path === gateTestPath) continue;
+      if (gateTestPaths.has(path)) continue;
       sources.set(path, readFileSync(resolve(root, path), "utf8"));
     }
   }
@@ -114,6 +123,10 @@ export async function checkTraceability(root: string): Promise<{
   const caseIds = new Set<string>();
   for (const spec of specPaths(root)) {
     const markdown = readFileSync(resolve(root, spec), "utf8");
+    if (traceabilityMode(markdown) === undefined) {
+      errors.push(`${spec}: Traceability must start with "draft" or "enforced"`);
+      continue;
+    }
     const specItems = acceptanceItems(spec, markdown);
     if (specItems.length === 0) continue;
     items.push(...specItems);
@@ -144,7 +157,10 @@ async function main() {
   console.log(`traceability ok: ${items.length} acceptance items in enforced specs`);
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (
+  process.argv[1] &&
+  realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))
+) {
   main().catch((error) => {
     console.error(error);
     process.exit(1);

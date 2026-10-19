@@ -1,5 +1,7 @@
 // @vitest-environment node
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+
+import { spawnSync } from "node:child_process";
+import { copyFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, test } from "vitest";
@@ -10,6 +12,7 @@ import {
   runsCaseFile,
   testPlanCaseFiles,
   testTitles,
+  traceabilityMode,
   untracedItems,
 } from "./check-spec-traceability";
 
@@ -260,5 +263,153 @@ describe("checkTraceability", () => {
     expect((await checkTraceability(fixtureRepo(bare))).errors).toEqual([]);
     const enforced = { ...bare, "docs/specs/001-x/spec.md": spec("enforced") };
     expect((await checkTraceability(fixtureRepo(enforced))).errors.length).toBeGreaterThan(0);
+  });
+});
+
+describe("traceabilityMode", () => {
+  test("reads draft or enforced as the first word, with an optional parenthetical", () => {
+    expect(traceabilityMode("Traceability: enforced\n")).toBe("enforced");
+    expect(traceabilityMode("Traceability: enforced (since PR 12)\n")).toBe("enforced");
+    expect(traceabilityMode("Traceability: draft (becomes `enforced` later)\n")).toBe("draft");
+  });
+
+  test("rejects an unknown value or a missing line (positive control: a valid line parses)", () => {
+    expect(traceabilityMode("Traceability: not enforced\n")).toBeUndefined();
+    expect(traceabilityMode("Traceability: enforced-ish\n")).toBeUndefined();
+    expect(traceabilityMode("# Spec without the line\n")).toBeUndefined();
+    expect(traceabilityMode("Traceability: draft\n")).toBe("draft");
+  });
+
+  test("an enforced spec with a parenthetical yields items; a draft one does not", () => {
+    expect(acceptanceItems("s.md", enforcedSpec("enforced (since PR 12)"))).toHaveLength(3);
+    expect(acceptanceItems("s.md", enforcedSpec("draft (until PR 12)"))).toEqual([]);
+  });
+});
+
+describe("acceptance ID and tag edges", () => {
+  const spec = (body: string) =>
+    `Traceability: enforced\n\n## Acceptance\n\n${body}\n## Non-goals\n`;
+
+  test("parses multi-digit and multi-letter IDs", () => {
+    expect(acceptanceItems("s.md", spec("- L1: one.\n- L10: ten.\n- XL1: two letters.\n"))).toEqual(
+      [
+        { spec: "s.md", id: "L1" },
+        { spec: "s.md", id: "L10" },
+        { spec: "s.md", id: "XL1" },
+      ],
+    );
+  });
+
+  test("an unknown bracket tag is not a tag, so the item still needs a test", () => {
+    const items = acceptanceItems("s.md", spec("- X4: [skip] not a real tag.\n"));
+    expect(items).toEqual([{ spec: "s.md", id: "X4" }]);
+    expect(untracedItems(items, [])).toEqual(items);
+  });
+
+  test("Ginkgo When titles count", () => {
+    expect(goTestTitles('When("X7: pool is full", func() {})')).toEqual(["X7: pool is full"]);
+  });
+
+  test("an ID preceded by a digit is a different ID (positive control: X1: alone traces)", () => {
+    const items = acceptanceItems("s.md", spec("- X1: one.\n"));
+    expect(untracedItems(items, ["1X1: other"])).toEqual(items);
+    expect(untracedItems(items, ["X1: one"])).toEqual([]);
+  });
+
+  test("TypeScript case import must name the module exactly", () => {
+    expect(
+      runsCaseFile(
+        "src/a.test.ts",
+        'import { x } from "./ledger.cases-extra";\ntest.each(x)("%s", () => {});',
+        "src/ledger.cases.ts",
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("checkTraceability sources and spec headers", () => {
+  const spec = (traceability: string) =>
+    `# Spec 001\n\nTraceability: ${traceability}\n\n## Acceptance\n\n- L1: behavior.\n`;
+
+  test("node_modules titles never trace (positive control: the same title in src traces)", async () => {
+    const leak = 't.Run("L1: go", nil)';
+    const ignored = await checkTraceability(
+      fixtureRepo({
+        "docs/specs/001-x/spec.md": spec("enforced"),
+        "node_modules/pkg/x_test.go": leak,
+      }),
+    );
+    expect(ignored.errors).toEqual(['docs/specs/001-x/spec.md L1: no test name contains "L1:"']);
+    const counted = await checkTraceability(
+      fixtureRepo({ "docs/specs/001-x/spec.md": spec("enforced"), "services/x/x_test.go": leak }),
+    );
+    expect(counted.errors).toEqual([]);
+  });
+
+  test("Playwright e2e/**/*.spec.ts titles trace", async () => {
+    const result = await checkTraceability(
+      fixtureRepo({
+        "docs/specs/001-x/spec.md": spec("enforced"),
+        "e2e/a.spec.ts": 'test("L1: buyer flow", async () => {});',
+      }),
+    );
+    expect(result.errors).toEqual([]);
+  });
+
+  test("ignores fixture titles in both gate test files (positive control: other files trace)", async () => {
+    const leak = 'test("L1: ts", () => {});';
+    for (const gateTest of [
+      "scripts/check-spec-traceability.test.ts",
+      "scripts/render-test-plan.test.ts",
+    ]) {
+      const result = await checkTraceability(
+        fixtureRepo({ "docs/specs/001-x/spec.md": spec("enforced"), [gateTest]: leak }),
+      );
+      expect(result.errors).toEqual(['docs/specs/001-x/spec.md L1: no test name contains "L1:"']);
+    }
+    const other = await checkTraceability(
+      fixtureRepo({ "docs/specs/001-x/spec.md": spec("enforced"), "scripts/x.test.ts": leak }),
+    );
+    expect(other.errors).toEqual([]);
+  });
+
+  test("fails on an unknown or missing Traceability value in a non-template spec", async () => {
+    const result = await checkTraceability(
+      fixtureRepo({
+        "docs/specs/001-x/spec.md": spec("not enforced"),
+        "docs/specs/002-y/spec.md": "# Spec 002\n",
+        "docs/specs/003-z/spec.md": spec("draft (later)"),
+        "docs/specs/_template/spec.md": "# template without the line\n",
+      }),
+    );
+    expect(result.errors).toEqual([
+      'docs/specs/001-x/spec.md: Traceability must start with "draft" or "enforced"',
+      'docs/specs/002-y/spec.md: Traceability must start with "draft" or "enforced"',
+    ]);
+  });
+});
+
+describe("check:traceability CLI", () => {
+  const run = (files: Record<string, string>) => {
+    const root = fixtureRepo(files);
+    mkdirSync(join(root, "scripts"), { recursive: true });
+    for (const script of ["check-spec-traceability.ts", "render-test-plan.ts"]) {
+      copyFileSync(join(import.meta.dirname, script), join(root, "scripts", script));
+    }
+    return spawnSync(
+      join(import.meta.dirname, "../node_modules/.bin/tsx"),
+      [join(root, "scripts/check-spec-traceability.ts")],
+      { encoding: "utf8", timeout: 60_000 },
+    );
+  };
+  const spec = "Traceability: enforced\n\n## Acceptance\n\n- L1: behavior.\n";
+
+  test("exits 1 on an untraced item and 0 once a test names it", () => {
+    const failing = run({ "docs/specs/001-x/spec.md": spec });
+    expect(failing.status).toBe(1);
+    expect(failing.stderr).toContain('L1: no test name contains "L1:"');
+    expect(
+      run({ "docs/specs/001-x/spec.md": spec, "src/a.test.ts": 'test("L1: x", () => {});' }).status,
+    ).toBe(0);
   });
 });

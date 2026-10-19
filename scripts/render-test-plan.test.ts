@@ -1,5 +1,6 @@
 // @vitest-environment node
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, test } from "vitest";
@@ -117,5 +118,46 @@ describe("renderSpecs", () => {
       "cases/x.cases.json": '[{ "id": "X1", "expected": 201 }]',
     });
     expect(await renderSpecs(root, { check: true })).toEqual([specPath]);
+  });
+});
+
+describe("renderSpec with several plans", () => {
+  test("renders each marker block from its own case file", async () => {
+    const markdown =
+      "<!-- test-plan:start a.cases.json -->\n| old a |\n<!-- test-plan:end -->\nmiddle\n<!-- test-plan:start b.cases.json -->\n| old b |\n<!-- test-plan:end -->\n";
+    const rendered = await renderSpec(markdown, async (casePath) => [{ id: casePath }]);
+    expect(rendered).toBe(
+      "<!-- test-plan:start a.cases.json -->\n| id |\n| --- |\n| a.cases.json |\n<!-- test-plan:end -->\nmiddle\n<!-- test-plan:start b.cases.json -->\n| id |\n| --- |\n| b.cases.json |\n<!-- test-plan:end -->\n",
+    );
+  });
+});
+
+describe("test-plan CLI", () => {
+  const run = (args: string[]) => {
+    const root = fixtureRepo({
+      "docs/specs/001-x/spec.md":
+        "<!-- test-plan:start cases/x.cases.json -->\n| stale |\n<!-- test-plan:end -->\n",
+      "cases/x.cases.json": '[{ "id": "X1" }]',
+    });
+    mkdirSync(join(root, "scripts"), { recursive: true });
+    copyFileSync(
+      join(import.meta.dirname, "render-test-plan.ts"),
+      join(root, "scripts/render-test-plan.ts"),
+    );
+    const result = spawnSync(
+      join(import.meta.dirname, "../node_modules/.bin/tsx"),
+      [join(root, "scripts/render-test-plan.ts"), ...args],
+      { encoding: "utf8", timeout: 60_000 },
+    );
+    return { ...result, spec: readFileSync(join(root, "docs/specs/001-x/spec.md"), "utf8") };
+  };
+
+  test("--check exits 1 on drift without writing; without it the table is written", () => {
+    const checked = run(["--check"]);
+    expect(checked.status).toBe(1);
+    expect(checked.spec).toContain("| stale |");
+    const written = run([]);
+    expect(written.status).toBe(0);
+    expect(written.spec).toContain("| X1 |");
   });
 });

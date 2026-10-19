@@ -10,8 +10,8 @@
  * A case file is a TypeScript module exporting `testPlanRows` or a `.json` file holding an array
  * of row objects (readable from Go table tests).
  */
-import { globSync, readFileSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { globSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 type Cell = string | number | boolean | null;
@@ -96,7 +96,10 @@ async function main() {
   console.log(check ? "test plans ok" : `test plans rendered (${changed.length} updated)`);
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (
+  process.argv[1] &&
+  realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))
+) {
   main().catch((error) => {
     console.error(error);
     process.exit(1);
