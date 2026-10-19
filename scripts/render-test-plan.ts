@@ -51,7 +51,7 @@ export async function renderSpec(
   let rendered = markdown;
   for (const match of markdown.matchAll(block)) {
     const table = renderTable(await loadRows(match[2] as string));
-    rendered = rendered.replace(match[0], `${match[1]}${table}${match[3]}`);
+    rendered = rendered.replace(match[0], () => `${match[1]}${table}${match[3]}`);
   }
   return rendered;
 }

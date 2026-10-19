@@ -55,6 +55,14 @@ describe("renderSpec", () => {
     );
   });
 
+  test("keeps dollar sequences in cells literal", async () => {
+    const rendered = await renderSpec(
+      "<!-- test-plan:start a.cases.json -->\n<!-- test-plan:end -->\n",
+      async () => [{ id: "X1", body: "$& $1 $'" }],
+    );
+    expect(rendered).toContain("| X1 | $& $1 $' |");
+  });
+
   test("leaves a spec without markers unchanged (positive control: a marker is rendered)", async () => {
     const load = async () => [{ id: "X1" }];
     expect(await renderSpec("no plan here\n", load)).toBe("no plan here\n");
