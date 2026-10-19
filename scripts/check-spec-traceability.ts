@@ -12,6 +12,8 @@ import { loadCaseRows, specPaths } from "./render-test-plan";
 const tsTestGlobs = ["src/**/*.test.ts", "scripts/**/*.test.ts", "e2e/**/*.spec.ts"];
 const goTestGlob = "**/*_test.go";
 const excludedDirs = ["**/node_modules", "**/vendor", "**/.git"];
+/** This gate's own tests hold fixture titles for fake specs, so they never trace a real one. */
+const gateTestPath = "scripts/check-spec-traceability.test.ts";
 
 export interface AcceptanceItem {
   readonly spec: string;
@@ -99,6 +101,7 @@ export async function checkTraceability(root: string): Promise<{
   const sources = new Map<string, string>();
   for (const pattern of [...tsTestGlobs, goTestGlob]) {
     for (const path of globSync(pattern, { cwd: root, exclude: excludedDirs })) {
+      if (path === gateTestPath) continue;
       sources.set(path, readFileSync(resolve(root, path), "utf8"));
     }
   }

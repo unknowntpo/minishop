@@ -236,6 +236,22 @@ describe("checkTraceability", () => {
     ]);
   });
 
+  test("ignores fixture titles in the gate's own tests (positive control: same text elsewhere traces)", async () => {
+    const leak = 'test("L1: ts", () => {});';
+    const gateTest = await checkTraceability(
+      fixtureRepo({
+        ...files,
+        "src/a.test.ts": "",
+        "scripts/check-spec-traceability.test.ts": leak,
+      }),
+    );
+    expect(gateTest.errors).toEqual(['docs/specs/001-x/spec.md L1: no test name contains "L1:"']);
+    const elsewhere = await checkTraceability(
+      fixtureRepo({ ...files, "src/a.test.ts": "", "scripts/other.test.ts": leak }),
+    );
+    expect(elsewhere.errors).toEqual([]);
+  });
+
   test("ignores a draft spec (positive control: the enforced copy fails on the same tests)", async () => {
     const bare = {
       "docs/specs/001-x/spec.md": spec("draft"),
